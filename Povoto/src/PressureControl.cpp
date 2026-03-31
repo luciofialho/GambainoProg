@@ -464,7 +464,7 @@ bool processPressureRelays() {
     else {
       digitalWrite(PINTRANSFERVALVE, LOW);
       digitalWrite(PINRELIEFVALVE, LOW);
-      ControlData.transferValve = false;
+      ControlData.transferValve = false;  
       ControlData.reliefValve = false;
       if (timeToFinishRelief && millis() >= timeToFinishRelief) {
         timeToFinishRelief = 0;
