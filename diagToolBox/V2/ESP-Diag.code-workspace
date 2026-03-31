@@ -1,0 +1,20 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../../../Nuvem/Arduino/Sketches/libraries/__IOTK"
+		},
+		{
+			"path": "../../../Nuvem/Arduino/Sketches/libraries/__IOTK_ESP32"
+		},
+		{
+			"path": "../../../Nuvem/Arduino/Sketches/libraries/__IOTK_ESP8266"
+		},
+		{
+			"path": "../../../Nuvem/Arduino/Sketches/libraries/__IOTK_Dallas"
+		}
+	],
+  "settings": {}
+}

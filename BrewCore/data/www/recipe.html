@@ -1,0 +1,160 @@
+<script>
+  function asFloat(value1,isAddition) {
+    if(!isAddition)
+      return parseFloat(value1);
+    else {
+      if (value1.trim() == "" || value1.trim().toUpperCase()=="N/A" || value1.trim().toUpperCase()=="NO")
+        return -1;
+      else
+        return parseFloat(value1);
+    }
+  }
+  function getClassName(value1, value2) {
+    if (asFloat(value1)==asFloat(value2))
+      return "RcpItem";
+    else
+      return "RcpItemChanged";
+  }
+
+  function callGambaino(str) {
+    var url = str;
+    var request = new XMLHttpRequest();
+    request.open("GET", url, false);
+    request.send(null);  
+    return;
+  }
+
+  function saveRcp() {
+    var RcpEditItems = document.getElementsByClassName("RcpItemChanged");
+    for (var i = RcpEditItems.length-1; i >= 0; i--) {
+      console.log("gravando " + RcpEditItems[i].id+"_"+RcpEditItems[i].value);
+      callGambaino("fo_"+RcpEditItems[i].id+"_"+RcpEditItems[i].value);
+      RcpEditItems[i].className = "RcpItem";
+    }
+    document.location.reload();
+  };
+</script>
+
+<html>
+<head>
+<style>
+  html *
+  {
+     font-size: 12;
+     font-family: Arial;
+  }
+
+  table, th, td {
+    border: 1px solid black;
+    border-collapse: collapse;
+    width: 500px;
+  }
+
+  th, td {
+    padding: 5px;
+    text-align: left;  
+  }
+  
+  .RcpItem {
+    text-align:right;
+  }
+  
+  #rcpTable {
+    position: relative;  
+    float: left;  
+    width: 600px;
+  }
+  
+  #clbrTable {
+    position: relative;
+    width: 600px;  
+    float: left;
+    overflow: hidden;
+  }
+  
+  .RcpItem {
+    text-align:right;
+  }
+
+  .RcpItemChanged {
+    text-align:right;
+    border: 2px solid red;
+  }
+  
+  
+</style>
+</head>
+
+
+<body onload=loadValues()>
+
+<div id="Container">
+
+<div id="rcpTable">
+<table>
+<tr><td>
+  <table> <col style="width:40%;"> <col style="width:10%"> <col style="width:40%;"> 
+    <tr><th colspan="3" style="text-align:center;">PROCESS PARAMETERS</th></tr>
+    <tr><td>Batch number</td><td style="text-align:center;"><input type="number" min="0" max="999" id="RcpBatchNum" class="RcpItem"></td><td></td></tr>
+    <tr><td>Start time</td><td style="text-align:center;"><input type="number" min="0" max="23.9" step="0.1" id="RcpStartTime" class="RcpItem"></td><td></td></tr>  
+    <tr><td>Fermenter cleaning</td><td style="text-align:center"><select size="1"  id="RcpFermenterCleaning" name="RcpFermenterCleaning" class="RcpItem"><option value="0">Detergent</option><option value="1">Rinse</option><option value="2">Sanitizer only</option></select></td><td></td></tr>
+    <tr><td>Target Fermenter</td><td style="text-align:center"><select size="1"  id="RcpTargetFermenter" name="RcpTargetFermenter" class="RcpItem"><option value="1">F1</option><option value="2">F2</option></td><td></td></tr>
+    <tr><td>Top up water</td><td style="text-align:center"><select size="1" id="RcpTopupWater" class="RcpItem"><option value="0">No</option><option value="1">Yes</option></select></td><td></td></tr>
+
+    <tr><th colspan="3" style="text-align:center;">MASHING</th></tr>
+    <tr><td>Grain weight (kg)</td><td style="text-align:center"><input size="1" type="text" id="RcpGrainWeight" class="RcpItem"></td><td></td></tr>      
+    <tr><td>Mash time (min)</td><td style="text-align:center"><input size="1" type="text" id="RcpMashTime" class="RcpItem"></td><td></td></tr>    
+    <tr><td>Mash temp (ºC)</td><td style="text-align:center"><input size="1" type="text" id="RcpMashTemp" class="RcpItem"></td><td></td></tr>  
+    <tr><td>Water/Grain Ratio (l/kg)</td><td style="text-align:center"><input size="1" type="text" id="RcpWaterGrainRatio" class="RcpItem"></td><td></td></tr>
+
+    <tr><th colspan="3" style="text-align:center;">INFUSION RAMP</th></tr>
+    <tr><td>Ramp grain weight (kg)</td><td style="text-align:center"><input size="1" type="text" id="RcpRampGrainWeight" class="RcpItem"></td><td>0 for no ramp</td></tr>    
+    <tr><td>Ramp rest time (min)</td><td style="text-align:center"><input size="1" type="text" id="RcpRampTime" class="RcpItem"></td><td></td></tr>    
+    <tr><td>Ramp temp (ºC)</td><td style="text-align:center"><input size="1" type="text" id="RcpRampTemp" class="RcpItem"></td><td></td></tr>  
+
+    <tr><th colspan="3" style="text-align:center;">BOILING</th></tr>
+    <tr><td>Caramelization boil time (min)</td><td style="text-align:center"><input size="1" type="text" id="RcpCaramelizationBoil" class="RcpItem"></td><td>0 for no caramelization boil</td></tr>
+    <tr><td>Boil Time (min)</td><td style="text-align:center"><input size="1" type="text" id="RcpBoilTime" class="RcpItem"></td><td></td></tr>
+    <tr><td>Sub/controlled boil temperature (ºC)</td><td style="text-align:center"><input size="1" type="text" id="RcpBoilTemp" class="RcpItem"> </td><td>100 or greater for constant boil</td></tr>        
+  </table>
+  </td>  
+  <td>
+  <table> <col style="width:40%;"> <col style="width:10%"> <col style="width:40%;"> 
+    <tr><th colspan="3" style="text-align:center;">HOPPING</th></tr>
+    <tr><td>First Wort Hopping</td><td style="text-align:center"><select size="1" id="RcpFirstWortHopping" class="RcpItem"><option value="0">No</option><option value="1">Yes</option></select>      </td><td>0=no, 1=yes</td></tr>
+
+    <tr><td>Addition 1 (min to boil finish)</td><td style="text-align:center"><input size="1" type="text" id="RcpAddition1" class="RcpItem"></td><td>-1 for no addition</td></tr>
+    <tr><td>Addition 2 (min to boil finish)</td><td style="text-align:center"><input size="1" type="text" id="RcpAddition2" class="RcpItem"></td><td>-1 for no addition</td></tr>  
+    <tr><td>Addition 3 (min to boil finish)</td><td style="text-align:center"><input size="1" type="text" id="RcpAddition3" class="RcpItem"></td><td>-1 for no addition</td></tr>  
+    <tr><td>Addition 4 (min to boil finish)</td><td style="text-align:center"><input size="1" type="text" id="RcpAddition4" class="RcpItem"></td><td>-1 for no addition</td></tr>  
+    <tr><td>Addition 5 (min to boil finish)</td><td style="text-align:center"><input size="1" type="text" id="RcpAddition5" class="RcpItem"></td><td>-1 for no addition</td></tr>  
+    <tr><td>Whirlpool hopping time (min)</td><td style="text-align:center"><input size="1" type="text" id="RcpWhirlpoolHoppingTime" class="RcpItem"></td><td>0 for no whirlpool hopping</td></tr>  
+    <tr><td>Whirlpool hopping start temp (ºC)</td><td style="text-align:center"><input size="1" type="text" id="RcpWhirlpoolHoppingTemp" class="RcpItem"></td><td></td></tr>  
+
+    <tr><th colspan="3" style="text-align:center;">Whirlpool / chilling</th></tr>
+    <tr><td>Whirlpool terminal temp (ºC)</td><td style="text-align:center"><input size="1" type="text" id="RcpWhirlpoolTerminalTemp" class="RcpItem"></td><td>0 for no temp control in whirlpool finish</td></tr>
+    <tr><td>Whirlpool minimum time (min)</td><td style="text-align:center"><input size="1" type="text" id="RcpWhirlpoolMinimumTime" class="RcpItem"></td><td>Can take longer if terminal temp or whp hopping used</td></tr>
+    <tr><td>Whirlpool rest time (min)</td><td style="text-align:center"><input size="1" type="text" id="RcpWhirlpoolRestTime" class="RcpItem"></td><td></td></tr>
+    <tr><td>Inoculation Temp (ºC)</td><td style="text-align:center"><input size="1" type="text" id="RcpInoculationTemp" class="RcpItem"></td><td></td></tr>
+    <tr><th colspan="3" style="text-align:center;">KETTLE SOUR PROGRAM PARAMETERS</th></tr>
+    <tr><td>Souring temp (ºC)</td><td style="text-align:center"><input size="1" type="text" id="RcpKettleSourSouringTemp" class="RcpItem"></td><td>0 means no kettle sour</td></tr>  
+    <tr><td>First boil time (min)</td><td style="text-align:center"><input size="1" type="text" id="RcpKettleSourFirstBoilTime" class="RcpItem"></td><td></td></tr>  
+  </table>
+  </td>
+  </tr>
+  </table>
+  <BR>
+  <div style="text-align:center;">
+    <button onclick="saveRcp();">Save</button>&nbsp&nbsp&nbsp
+    <button onclick="window.open('showmath','_blank');">Calculate</button>
+  </div>
+
+</div>
+</div>
+
+</body>
+
+
+
+</html>
+

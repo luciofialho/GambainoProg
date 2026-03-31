@@ -1,0 +1,902 @@
+<html>
+<head>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>  
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-annotation/1.4.0/chartjs-plugin-annotation.js"></script>  
+  <link rel="stylesheet" href="zebra_dialog.min.css">  
+  <link rel="icon" href="data:,">
+</head>
+
+<script>
+var reloadInterval = 2000;  
+  function loadScriptWithTimeout(src, timeout = 5000) {
+    return new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = src;
+      script.async = true;
+
+      // Define o timeout para o carregamento
+      const timeoutId = setTimeout(() => {
+        script.remove(); // Remove o script caso o timeout seja excedido
+        reject(new Error('Timeout ao carregar o script: ' + src));
+      }, timeout);
+
+      // Callback quando o script é carregado com sucesso
+      script.onload = () => {
+        clearTimeout(timeoutId);
+        resolve(src);
+      };
+
+      // Callback quando ocorre um erro no carregamento
+      script.onerror = () => {
+        clearTimeout(timeoutId);
+        reject(new Error('Erro ao carregar o script: ' + src));
+      };
+
+      // Adiciona o script ao documento
+      document.head.appendChild(script);
+    });
+  }
+
+document.addEventListener('DOMContentLoaded', () => {
+
+  loadScriptWithTimeout('./jquery-2.1.1.min.js', 8000)
+  .then(() => {
+    console.log('JQuery carregado.');
+    return loadScriptWithTimeout('./zebra_dialog.min.js', 8000);
+  })
+  .then(() => {
+    console.log('ZebraDialog carregado.');
+    return loadScriptWithTimeout('./gambaino.js', 8000);
+  })
+  .then(() => {
+    console.log('Gambaino.js carregado.');
+    return loadScriptWithTimeout('./GambainoCharts.js', 8000);
+  })
+  .then(() => {
+    console.log('GambainoCharts.js carregado.');
+    return loadScriptWithTimeout('./GambainoDialogs.js', 8000);
+  })
+  .then(() => {
+    console.log('GambainoDialogs.js carregado.');
+  })
+
+  .catch(error => {
+    console.error(error);
+  });    
+});
+  
+</script>
+
+<style>
+
+html *
+{
+   font-size: 12;
+   font-family: Arial;
+}
+
+table{
+    border-radius:6px;
+    border-collapse:separate;
+    border-spacing:5px;
+  width: 340;
+  border-style:hidden;
+  box-shadow: 0 0 0 1px #666;
+
+}
+
+th{
+    border: 0px solid black;
+    border-collapse: collapse;
+      width: 340%;
+    text-align: left;  
+}
+
+td {
+    border: 0px solid black;
+    border-collapse: collapse;
+      width: 330%;
+    text-align: left;  
+}
+
+tr {
+    border: 1px solid black;
+}
+
+.StatusName {
+  text-align:center;
+  font-size: 250%;
+  font-variant: small-caps;
+  font-weight:  bold;
+  color:Blue;
+}
+
+.SubStatusName {
+  text-align:center;
+  font-size: 150%;
+  font-variant: small-caps;
+  font-weight:  bold;
+  color:Blue;
+}
+.ConsoleMessage {
+  text-align:center;
+  font-size: 200%;
+  color:DarkRed;
+  font-weight:  bold;
+}
+
+
+.IPCStatusName {
+  text-align:center;
+  font-size: 150%;
+  font-variant: small-caps;
+  font-weight:  bold;
+  color:DarkCyan;
+}
+
+.Text {
+  text-align:center;
+}
+
+.TextLeft {
+  text-align:left;
+}
+
+.TimeInStatus {
+  text-align:center;
+  font-size: 300%;
+  font-weight:  bold;  
+  color:DarkBlue; 
+  cursor: pointer;
+}
+
+.Thermometer {
+  height: 22px;
+  width: 53px;
+  background-image: url("./img/Thermometer.png");
+  background-repeat: no-repeat;
+  background-size: 12px 18px;
+  background-position: left;
+  text-align: left;
+  vertical-align:center;
+  line-height:29px;
+  position: absolute;
+  cursor: pointer;  
+}
+
+
+.ThermometerVert {
+  height: 40px;
+  width: 50px;
+  background-image: url("./img/Thermometer.png");
+  background-repeat: no-repeat;
+  background-size: 12px 18px;
+  background-position: top center;
+  text-align: center;
+  vertical-align:bottom;
+  line-height:49px;
+  position: absolute;
+  cursor: pointer;  
+}
+
+
+.Flow {
+  height: auto;
+  width: auto;
+  background-size: 16px 12px;
+  background-image: url("./img/Speed.png");
+  background-repeat: no-repeat;
+  background-position: left center;
+  padding-left:18px;
+  text-align: left;
+  vertical-align: top;
+    position: absolute;
+  cursor: pointer;  
+  white-space: nowrap;
+}
+
+
+.Volume {
+  height: 40px;
+  width: 55px;
+  background-image: url("./img/Volume.png");
+  background-repeat: no-repeat;
+  background-position: top center;
+  text-align: center;
+  vertical-align:bottom;
+  line-height:71px;
+  position: absolute;
+  cursor: pointer;  
+} 
+
+.VolumeFMT {
+  height: 22px;
+  width: 53px;
+  background-image: url("./img/Volume.png");
+  background-repeat: no-repeat;
+  background-size: 12px 18px;  
+  background-position: left;
+  text-align: left;
+  vertical-align:center;
+  line-height:29px;
+  position: absolute;
+  cursor: pointer;  
+} 
+
+.RemainingVolume {
+  height: auto;
+  width: auto;
+  background-size: 16px 16px;
+  background-image: url("./img/VolumeTarget.png");
+  background-repeat: no-repeat;
+  background-position: left center;
+  padding-left:18px;
+  text-align: left;
+  vertical-align: top;
+  position: absolute;
+  cursor: pointer;  
+  white-space: nowrap;
+} 
+
+.TargetLevel {
+  position: absolute;
+  width: 50px;
+    height: 32px;
+  background-image: url("./img/Target.png");
+  background-size: 50px 32px;
+  background-repeat: no-repeat;
+  background-position: center;
+  text-align: center;
+    vertical-align: center;
+    line-height:32px;
+  cursor: pointer;    
+}
+
+.TargetTemp {
+  position: absolute;
+  width: 50px;
+  height: 32px;
+  background-image: url("./img/TargetTemp.png");
+  background-size: 50px 32px;
+  background-repeat: no-repeat;
+  background-position: center;
+  text-align: center;
+    vertical-align: center;
+    line-height:32px;
+  cursor: pointer;    
+}
+
+.Pump {
+    margin: 0px;
+  height: 29px;
+  width: 29px;
+  background-size: 29px 29px;
+  background-repeat: no-repeat;
+  position: absolute;
+  cursor: pointer;  
+}
+
+.Chiller {
+  margin: 0px;
+  height: 32px;
+  width: 38px;
+  background-size: contain;
+  background-repeat: no-repeat;
+  position: absolute;
+  cursor: pointer;  
+}
+
+.ColdBankControl {
+  margin: 0px;
+  height: 31px;
+  width: 28px;
+  background-size: contain;
+  background-repeat: no-repeat;
+  position: absolute;
+  cursor: pointer;  
+}
+  
+    
+.Valve2 {
+  height: 37px;
+  width: 37px;
+  background-size: contain;
+  background-repeat: no-repeat;
+  position: absolute;
+  cursor: pointer;
+}
+
+.Drain {
+  height: 37px;
+  width: 37px;
+  background-size: contain;
+  background-repeat: no-repeat;
+  position: absolute;
+  cursor: pointer;
+}
+
+.WaterIntake {
+  height: 20px;
+  width: 20px;
+  background-size: 20px 20px;
+  background-repeat: no-repeat;
+    background-position: center;
+  position: absolute;  
+  cursor: pointer;
+}
+
+.HotWaterIntake {
+  height: 20px;
+  width: 20px;
+  background-size: 20px 20px;
+  background-repeat: no-repeat;
+    background-position: center;
+  position: absolute;  
+  cursor: pointer;
+}
+
+ 
+.Valve3 {
+  height: 37px;
+  width: 37px;
+  background-size: contain;
+  background-repeat: no-repeat;
+  position: absolute;
+  cursor: pointer;  
+}
+
+.Heater {
+  position: absolute;  
+  height: 27px;
+  width: 60px;
+  top: 180px;
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  cursor: pointer;
+}
+
+.TopLevel {
+  height: 30px;
+  width: 20px;
+  background-size: contain;
+  background-repeat: no-repeat;
+  position: absolute;    
+  top: 30px;  
+  cursor: pointer;
+}
+
+.HLTBKLevel {
+  height: 30px;
+  width: 20px;
+  background-size: contain;
+  background-repeat: no-repeat;
+  position: absolute;    
+  top: 30px;  
+  cursor: pointer;
+}
+
+.Diagram {
+  position: relative;  
+  float: left;  
+  height: 411px;
+  width: 600px;
+  pointer-events: none;
+    background-size: cover, cover;
+    background-position: right top, right top;
+  background-repeat: no-repeat, no-repeat;
+            -webkit-background-size: cover, cover;
+        -moz-background-size: cover, cover;
+        -o-background-size: cover,cover ;
+
+  margin-top: 0;
+  z-index: -1;
+}
+
+.ControlButton {
+  color:gray;
+  border-radius:6px;
+  text-shadow: 0 2px 2px rgba(0,0,0,0.2);
+}
+
+.ControlDiv{
+  border-radius: 8px;
+  border: 1px solid DimGray;
+  background: Beige;
+  padding: 5px;
+  visibility: hidden;
+  height:100%;
+}
+
+.ButtonControl,.ButtonControlStop,.ButtonControlOther {
+  color:white;
+  border-radius:6px;
+  background:DarkSeaGreen;
+  text-shadow: 0 2px 2px rgba(0,0,0,0.6);
+  width: 120px;
+  height:30px;
+  font-size:120%;
+}
+
+.ButtonControlStop {
+  background:red;
+}
+
+.ButtonControlOther {
+
+  background:rgb(131, 141, 245);
+}
+
+
+.TodoPane {
+  border-radius: 8px;
+  border: 1px solid DimGray;
+  background: Beige;
+  padding: 5px;
+}
+
+.TodoHeader {
+  font-size: 150%;
+  font-variant: small-caps;
+  font-weight:  bold;
+  color:Maroon;
+}
+
+.TodoNormalItem,
+.TodoOverdueItem,
+.TodoStandbyItem,
+.TodoSleepingItem {
+  cursor:pointer;
+  text-indent: 25px;
+}
+
+.TodoNormalItem {
+  color:Navy;
+  font-size:115%;
+  font-weight: bold;
+}
+
+.TodoSleepingItem {
+  color:Grey;
+  font-size:115%;
+}
+
+.TodoOverdueItem {
+  color: Red;
+  font-weight: bold;
+  font-size: 135%;
+}
+
+.TodoStandbyItem {
+  color: Tomato;
+  font-weight: bold;
+  font-size: 125%;
+}
+
+.menuPrincial {
+  position:fixed;
+}
+
+.sidenav {
+  position: absolute;
+  z-index: 20;
+  top: 0;
+  left: 0;
+  background-color: rgb(118, 118, 79);
+  overflow-x: hidden;
+  transition: 0.5s;
+  padding-top: 60px;
+  border: 1px solid dimgray;
+  visibility: hidden;
+  border-radius: 6px;
+
+}
+
+.sidenav a { 
+  padding: 8px 8px 8px 32px;
+  text-decoration: none;
+  font-size: 30px;
+  color: #390202;
+  display: block;
+  transition: 0.3s;
+}
+
+.sidenav a:hover {
+  color: #bc0404;
+}
+
+.sidenav .closebtn {
+  position: absolute;
+  top: 0;
+  right: 25px;
+  font-size: 40px;
+  margin-left: 50px;
+}
+
+@media screen and (max-height: 450px) {
+  .sidenav {padding-top: 15px;}
+  .sidenav a {font-size: 18px;}
+}
+
+#Controls {
+  position: relative;
+  max-width:450px;
+
+  overflow: hidden;
+  left: 5px; top:8px;
+  z-index: 10;
+}
+
+#LineCharts {
+  position: absolute;
+  top: 412px;
+  left: 0;
+  width: 100vw;
+  height: 220px;
+  display: flex;
+  padding: 0;
+  margin: 0;
+}
+
+.bigChartContainer {
+  flex: 0 0 65%;
+  height: 220px;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  visibility: hidden;
+  z-index: 1;
+}
+
+.smallChartContainer {
+  flex: 1 0 0;
+  height: 220px;
+  padding: 0;
+  margin: 0;
+  margin-left: -70px;
+  min-width: 0;
+  visibility: hidden;
+  z-index: 2;
+}
+
+
+
+#HLTTemp               {left:  25px; top: 48px; }
+#HLTOutTemp            {left: 150px; top: 19px; transform: scale(0.8,1) }
+#HLTTargetTemp         {left:  75px; top: 45px; }
+#HLTVolume             {left:  25px; top: 85px;}
+#HLTTargetVolume       {left:  75px; top: 85px; }
+#HLTHeater             {left:  60px; top: 130px; }
+#HLTPump               {left:  30px; top: 197px;}
+#HLTWaterIn            {left:  84px; top: 260px; }
+#HLTValve              {left: 86px; top: 192px; transform: scale(1,-1) rotate(-90deg); }
+#HLTDrain              {left: 113px; top: 224px; transform: scale(0.5,0.5);}
+
+
+#MLTTopTemp            {left: 203px;  top: 45px;  }
+#MLTTemp               {left: 203px;  top: 82px; }
+#MLTOutTemp         {left: 203px;  top: 119px; }
+#MLTTargetTemp         {left: 255px;  top: 79px;  }
+#MLTTopLevel           {left: 294px;  top: 48px; }
+
+#MLTValveA             {left: 203px; top: 193px}
+#MLTValveB             {left: 298px; top: 193px;}
+#MLTPump               {left: 246px; top: 172px; }
+#MLTDrain              {left: 242px; top: 207px; transform:rotate(-90deg) scale(0.5,0.5);}
+
+
+#BKTemp                {left: 395px; top: 78px; }
+#TopUpWaterTemp        {left: 537px; top: 25px; transform: scale(0.8,1)}
+#TopUpWaterHeater      {left: 531px; top: 50px; transform: scale(0.6,0.5)}
+#BKTargetTemp          {left: 450px; top: 75px;  }
+#BKHeater              {left: 418px; Top: 130px; }
+#BKPump                {left: 538px; top: 194px}
+#BKValveA              {left: 537px; top: 85px;}
+#BKValveB              {left: 537px; top: 125px;}
+#BKLevel               {left: 483px; top: 48px;}
+#BKWaterIn             {left: 375px; top: 191px; transform: rotate(90deg) }
+#BKDrain               {left: 340px; top: 210px; transform: rotate(-90deg) scale(0.5,0.5);}
+
+#WhirlpoolValve        {left: 422px; top: 190px; transform: scale(-1,1)}
+                     
+#Chiller1              {left: 483px; top: 193px; transform: rotate(00deg)}
+#Chiller1Temp          {left: 442px; top: 183px; transform: scale(0.8,0.8)}
+#Chiller2              {left: 297px; top: 285px}
+#Chiller2WasteTemp     {left: 309px; top: 265px; transform:scale(0.7,0.7)}
+#Chiller2Temp          {left: 257px; top: 280px; width:60; transform:scale(0.8,0.8);}
+
+#ColdBankWaterIn       {left: 394px; top: 322px; transform: rotate(90deg); }
+#ColdBankTemp          {left: 340px; top: 320px;}
+#ColdBankControl       {left: 348px; top: 345px;}
+#ColdBankPump          {left: 298px; top: 385px;}
+#ColdBankValve         {left: 294px; top: 330px; transform: scale(-1,-1);}
+
+                        
+
+#FermenterTemp         {left: 204px; top: 322px; } 
+#TransferVolume        {left: 204px; top: 300px; }
+#TransferFlow          {left: 260px; top: 325px; transform: rotate(-90deg)}
+#WaterInTarget         {left: 24px; top: 327px; transform:cale(1.9,1.9); }
+#WaterInFlow           {left: 24px; top: 305px; }
+#HLT2MLTFlow           {left: 128px; top: 212px; }
+
+
+
+#HotWaterIn            {left: 24px; top: 390px; } 
+#ColdWaterIn           {left: 24px; top: 359px; } 
+#DrainBlock            {left: 565px; top: 227px; transform:scale(0.7,0.7) }
+
+
+#FMTPump              {left: 153px; top: 320px;}
+#FMTDrain             {left: 248px; top: 375px; transform: scale(0.7,0.7)  }
+#FMTWaterIn           {left:  91px; top: 372px}
+#FMTCycle             {left: 148px; top: 372px; }
+
+#KegPump             {left: 524px; top: 359px;}
+#KegWaterIn          {left: 467px; top: 292px; transform: rotate(90deg); }
+#KegDetergentPump    {left: 568px; top: 278px; }
+#KegDetergentValve   {left: 563px; top: 354px; transform: rotate(90deg); }
+#KegDrain            {left: 421px; top: 380px; transform: scale(-0.7,0.7)  }
+#KegCycle            {left: 467px; top: 357px; transform: rotate(90deg); }
+
+
+.dlg-btn-large {
+  padding: 20px 30px;
+  font-size: 18px;
+  min-height: 60px;
+  font-weight: bold;
+  width: 170px;
+  margin: 5px 15px;
+}
+  
+</style>
+
+<body onload="RenderAll(); GetStatusList(); GetIPCStatusList(); ControlButtonVisibility(0); setupCharts();">
+<div id="Layout" background-color:yellow>
+
+
+  <div id="HLTVolume"   title="HLT" onclick="Override(this);" class="Volume"></div>
+  
+  <div id="MLTTopTemp"    onclick="Override(this);" class="Thermometer"></div>    
+  <div id="MLTTemp"       onclick="Override(this);" class="Thermometer"></div>    
+  <div id="MLTOutTemp" onclick="Override(this);" class="Thermometer"></div>    
+  <div id="FermenterTemp" onclick="Override(this);" class="Thermometer"></div>
+  <div id="TransferVolume" onclick="Override(this);" class="VolumeFMT"></div>  
+  <div id="ColdBankTemp"  onclick="Override(this);" class="Thermometer"></div>
+  
+  <div id="HLTHeater" Title="HLTHeater" onclick="OverrideOnOff(this);" class="Heater"></div>
+  <div id="BKHeater" Title="BKHeater" onclick="OverrideBK(this);" class="Heater"></div>
+
+  <div id="HLTPump" Title="HLTPump" onclick="OverrideOnOff(this);" class="Pump"></div>  
+  <div id="BKPump" Title="BKPump" onclick="OverrideOnOff(this);" class="Pump"></div>  
+  <div id="MLTPump" Title="MLTPump" onclick="OverrideOnOff(this);" class="Pump"></div>  
+  <div id="ColdBankPump" Title="ColdBankPump" onclick="OverrideOnOff(this);" class="Pump"></div>  
+  <div id="Chiller2" class="Chiller"></div>  
+
+  <div id="MLTValveA" Title="MLTValveA" onclick="OverrideOpenClosed(this);" class="Valve2"></div>
+  <div id="HLTWaterIn" Title="HLTWaterIn" onclick="OverrideOpenClosed(this);" class="Valve2"></div>
+  <div id="BKValveA" Title="BKValveA" onclick="OverrideOpenClosed(this);" class="Valve2"></div>
+  <div id="BKValveB" Title="BKValveB" onclick="OverrideOpenClosed(this);" class="Valve2"></div>  
+  <div id="Chiller1"  Title="Chiller1" onclick="OverrideOnOff(this);" class="Chiller"></div>
+  
+  <div id="MLTValveB"  Title="MLTValveB" onclick="OverrideOpenClosed(this);" class="Valve2"></div>
+  <div id="HLTValve"  Title="HLTValve" onclick="OverrideAB(this);" class="Valve3"></div>  
+  
+  <div id="MLTDrain" Title="MLTDrain" onclick="OverrideOpenClosed(this);" class="Valve2"></div>  
+  <div id="HLTDrain" Title="HLTDrain" onclick="OverrideOpenClosed(this);" class="Valve2"></div>  
+  <div id="BKDrain" Title="BKDrain" onclick="OverrideOpenClosed(this);" class="Valve2"></div>  
+  <div id="HotWaterIn"  Title="HotWaterIn" onclick="OverrideOnOff(this);" class="HotWaterIntake"></div>
+  <div id="ColdWaterIn"  Title="ColdWaterIn" onclick="OverrideOnOff(this);" class="WaterIntake"></div>  
+  <div id="DrainBlock"  Title="DrainBlock" onclick="OverrideOnOff(this);" class="Drain"></div>
+  <div id="ServiceHotWaterTarget"  onclick="Override(this);" class="WaterTarget"></div>
+  <div id="FMTPump" Title="FMTPump" onclick="OverrideOnOff(this);" class="Pump"></div>
+  <div id="FMTDrain" Title="FMTDrain" onclick="OverrideOpenClosed(this);" class="Drain"></div>
+  <div id="FMTWaterIn" Title="FMTWaterIn" onclick="OverrideOpenClosed(this);" class="Valve2"></div>
+  <div id="BKWaterIn" Title="BKWaterIn" onclick="OverrideOpenClosed(this);" class="Valve2"></div>  
+  <div id="ColdBankWaterIn"  Title="ColdBankWaterIn" onclick="OverrideOpenClosed(this);" class="Valve2"></div>    
+  <div id="FMTCycle" Title="FMTCycle" onclick="OverrideOpenClosed(this);" class="Valve2"></div>
+  
+
+  <div id="WhirlpoolValve" Title="WhirlpoolValve" onclick="OverrideAB(this);" class="Valve3"></div>  
+  <div id="ColdBankValve" Title="ColdBankValve" onclick="OverrideAB(this);" class="Valve3"></div>  
+
+  
+  <div id="LineConfiguration" class="Diagram"> </div>    
+  
+  
+  
+  <div id="HLTTemp"       onclick="Override(this);" class="ThermometerVert"></div>
+  <div id="HLTOutTemp"    onclick="Override(this);" class="Thermometer"></div>
+  <div id="BKTemp"        onclick="Override(this);" class="Thermometer"></div>
+  <div id="TopUpWaterTemp" onclick="Override(this);" class="Thermometer"></div>
+  <div id="TopUpWaterHeater" onclick="OverrideOnOff(this);" class="Heater"></div>  
+  <div id="MLTTargetTemp" onclick="Override(this)" class="TargetTemp"></div>
+  <div id="HLTTargetTemp" onclick="Override(this)" class="TargetTemp"></div>
+  <div id="BKTargetTemp" onclick="Override(this)" class="TargetTemp"></div>  
+  <div id="HLTTargetVolume" onclick="Override(this)" class="TargetLevel"></div>    
+  <div id="TransferFlow"   onclick="Override(this)" class="Flow"></div>  
+  <div id="Chiller1Temp"  onclick="Override(this);" class="Thermometer"></div>
+  <div id="Chiller2Temp"  onclick="Override(this);" class="Thermometer"></div>
+  <div id="ColdBankControl" Title="ColdBankControl"  onclick="OverrideOnOff(this);" class="ColdBankControl"></div>
+  <div id="Chiller2WasteTemp" onclick="Override(this);" class="Thermometer"></div>
+
+  <div id="MLTTopLevel" onclick="Override(this);" class="TopLevel"></div>  
+  <div id="BKLevel" onclick="Override(this);" class="HLTBKLevel"></div>  
+
+
+  <div id="KegPump" onclick="OverrideOnOff(this);" class="Pump"></div>  
+  <div id="KegWaterIn" onclick="OverrideOpenClosed(this);" class="Valve2"></div>  
+  <div id="KegDetergentPump" onclick="OverrideOnOff(this);" class="Pump"></div>  
+  <div id="KegDetergentValve" onclick="OverrideOpenClosed(this);" class="Valve2"></div>  
+  <div id="KegDrain" onclick="OverrideOpenClosed(this);" class="Drain"></div> 
+  <div id="KegCycle" onclick="OverrideOpenClosed(this);" class="Valve2"></div>   
+
+  <div id="WaterInTarget" onclick="Override(this);" class="RemainingVolume"></div>
+  <div id="WaterInFlow"   onclick="Override(this);" class="Flow"></div>
+  <div id="HLT2MLTFlow"   onclick="Override(this);" class="Flow"></div>
+
+</div>
+
+<div id="Controls">
+  <div id="TimeInStatus" class="TimeInStatus" onclick="OverrideHM(this);"></div>
+  <div id="StatusName" class="StatusName"></div>
+  <div id="SubStatusName" class="SubStatusName"></div>
+  <br>  
+  <div id="IPCStatusName" class="IPCStatusName"></div>
+  <br>  
+  <br>  
+  <div id="ConsoleMessage" class = "ConsoleMessage"></div>
+  <br>  
+  <div id="AlertMessage"   class = "Text" onclick="DismissTodo(99)"> </div> </font>
+    
+  <div id="divTodoList" class=TodoPane> </div>
+  
+  <div style="text-align:right;">
+    <button id="ControlButton" class="ControlButton" onclick="if(controlDiv.style.visibility=='visible') ControlButtonVisibility(0); else ControlButtonVisibility(1);">Control</button>
+  </div>
+  
+  <div id="controlDiv" class="ControlDiv" style="position: relative; height:300px">
+
+      
+      <div id="ProgramOptions">
+        <span style="font-size:30px;cursor:pointer" onclick="openNav('BrewMenu')">&#9776; Brew</span><p></p>
+        <span style="font-size:30px;cursor:pointer" onclick="openNav('CIPMenu')">&#9776; Clean</span><p></p>
+        <span style="font-size:30px;cursor:pointer" onclick="openNav('ToolsMenu')">&#9776; Tools</span><p></p>
+        <span style="font-size:30px;cursor:pointer" onclick="openNav('ControlMenu')">&#9776; Control</span><p></p>
+      </div>
+      <div id="StopProgramOption">
+        <span style="font-size:30px;cursor:pointer" onclick="startProgram(0);">&#9776; Stop program</span><p></p>
+      </div>
+
+      <div id="BrewMenu" class="sidenav">
+        <a href="javascript:void(0)" class="closebtn" onclick="closeNav('BrewMenu')">Brew&nbsp&nbsp&times;</a>
+        <a href="javascript:void(0)" onclick="window.open(URLArduino+'recipe')">Recipe</a>
+        <a href="javascript:void(0)" onclick="startProgram(2);">Start</a>
+        <a href="javascript:void(0)" onclick="">Parameters (WIP)</a>
+      </div>
+      
+      <div id="CIPMenu" class="sidenav">
+        <a href="javascript:void(0)" class="closebtn" onclick="closeNav('CIPMenu')">Clean&nbsp&nbsp&times;</a>
+        <a href="javascript:void(0)" onclick="menuLineCIP();">Line CIP</a>
+        <a href="javascript:void(0)" onclick="menuFMTCIP();">FMT CIP</a>
+        <a href="javascript:void(0)" onclick="menuKegClean();">Keg Clean</a>
+        <a href="javascript:void(0)" onclick="startProgram(105);">Manual line/keg cleaning</a>    
+        <a href="javascript:void(0)" onclick="startProgram(107);">Manual FMT cleaning</a>
+      </div>
+      
+      <div id="ToolsMenu" class="sidenav">
+        <a href="javascript:void(0)" class="closebtn" onclick="closeNav('ToolsMenu')">Tools&nbsp&nbsp&times;</a>
+        <a href="javascript:void(0)" onclick="menuDiagnostics();">Diagnostics</a>
+        <a href="javascript:void(0)" onclick="menuFlowMeterCalibration();">Flow meter calibration</a>
+      </div>
+      
+      <div id="ControlMenu" class="sidenav">
+        <a href="javascript:void(0)" class="closebtn" onclick="closeNav('ControlMenu')">Control&nbsp&nbsp&times;</a>
+        <div id="ResumeOption"> 
+          <a href="javascript:void(0)" onclick="Action('resume')">Resume program</a> 
+        </div>
+        <div id="SaveOption"> 
+          <a href="javascript:void(0)" onclick="Action('save')">Save program</a>  
+        </div>
+
+        <a href="javascript:void(0)" onclick="menuDiagram();">Change diagram</a>        
+        <a href="javascript:void(0)" onclick="statusSelection.style.display='block'; StatusList.value = parseInt(AV['Status']); IPCStatusList.value = parseInt(AV['IPCStatus']);">Change Status</a>
+        <div id="statusSelection">
+          Status:&nbsp&nbsp&nbsp <select id="StatusList"></select>
+          <button onclick="ChangeStatus();ControlButtonVisibility(0);">Ok</button>&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp
+          <button onclick="Action('fo_SkipToNextStatus_1');ControlButtonVisibility(0);">Next</button>
+          <br><br>
+          IPCStatus: <select id="IPCStatusList"></select>
+          <button onclick="ChangeIPCStatus();ControlButtonVisibility(0);">Ok</button>&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp
+          <br><br>
+        </div>
+      </div>
+
+
+    </div>      
+ 
+
+      
+<script>
+  var originalMenuFontColor = 0;
+
+  function openNav(name) {
+    var nav = document.getElementById(name);
+    nav.style.width = "430px";
+    nav.style.height = "auto";     
+    nav.style.visibility = "visible";   
+    var controlDiv = document.getElementById('controlDiv');
+    originalMenuFontColor = controlDiv.style.color;
+    controlDiv.style.color = "rgb(208, 208, 170)"; 
+  }
+      
+  function closeNav(name) {
+    var nav = document.getElementById(name);
+    nav.style.width = "0";
+    nav.style.visibility = "hidden";           
+    controlDiv.style.color=originalMenuFontColor;
+  }
+
+  document.addEventListener('click', function(event) {
+  var isClickInsideMenuPrincipal = document.getElementById('controlDiv').contains(event.target);
+  var isClickInsideControlButton = document.getElementById('ControlButton').contains(event.target);
+  var isClickInsideSidenav = Array.from(document.getElementsByClassName('sidenav')).some(sidenav => sidenav.contains(event.target));
+
+  if (!isClickInsideMenuPrincipal && !isClickInsideControlButton && !isClickInsideSidenav) {
+    ControlButtonVisibility(0);
+  }
+});  
+</script>
+      
+  
+      
+      
+    <br><br><br>
+  </div>
+  <br>  
+</div>
+<!-- fim de #Controls -->
+    
+
+  
+<div id="LineCharts">
+  <div id="bigChart-container" class="bigChartContainer"><canvas id="bigChartCanvas"></canvas> </div>
+  <div id="smallChart-container" class="smallChartContainer"><canvas id="smallChartCanvas"></canvas> </div>
+</div>
+<div id="GaugeCharts">
+  <div id="FlowChartContainer" class="gaugeChartContainer" style="left:0"></div>
+  <div id="Chiller1ChartContainer" class="gaugeChartContainer" style="left:16vw"></div>
+  <div id="Chiller2ChartContainer" class="gaugeChartContainer" style="left:32vw"></div>
+  <div id="WasteContainer" class="gaugeChartContainer" style="left:48vw"></div>  
+  <div id="FmtAvgChartContainer" class="gaugeChartContainer" style="left:64vw; width:32vw"></div>
+</div>
+
+
+<div id="Dialogs">
+  <div id="divOverride" title="Override">
+  </div>
+</div>
+
+
+
+<script>
+  setInterval(function(){
+    RenderAll(); 
+    lastGraphLoad+=reloadInterval; 
+    if (lastGraphLoad>=GraphUpdateInterval) {
+      lastGraphLoad=0;
+      updateCharts()
+    }
+  },reloadInterval);
+</script>
+
+</body>
+</html>
+<script>
+
+
+
+
+
+
+</script>

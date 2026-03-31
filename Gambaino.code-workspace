@@ -1,0 +1,50 @@
+{
+	"folders": [
+    {
+      "path": "BrewCore"
+    },
+    {
+      "path": "Povoto"
+    },
+    {
+      "path": "SideKick"
+    },
+    {
+      "path": "Common"
+    },
+    {
+      "path": "../../Arduino/Sketches/libraries/__IOTK_GLog"
+    },
+    {
+      "path": "../../Arduino/Sketches/libraries/__IOTK_ESP32"
+    },
+    {
+      "path": "../../Arduino/Sketches/libraries/__IOTK_ESPAsyncServer"
+    },
+    {
+      "path": "../../Arduino/Sketches/libraries/__CoredumpDownload"
+    },
+    {
+      "path": "../../Arduino/Sketches/libraries/__IOTK"
+    },
+    {
+      "path": "../../Arduino/Sketches/libraries/__IOTK_NTP"
+    }
+  ],
+  "settings": {
+    "files.associations": {
+      "random": "cpp",
+      "string_view": "cpp",
+      "regex": "cpp",
+      "thread": "cpp"
+    },
+    "chat.tools.terminal.autoApprove": {
+      "Test-Path": true,
+      "C:\\Users\\lucio\\.platformio\\penv\\Scripts\\platformio.exe": true,
+      "/^& \"C:\\\\Users\\\\lucio\\\\\\.platformio\\\\packages\\\\toolchain-xtensa-esp32\\\\bin\\\\xtensa-esp32-elf-addr2line\\.exe\" -pfiaC -e \"C:\\\\ArduinoCompile\\\\Sidekick\\\\Sidekick\\\\firmware\\.elf\" 0x40106a81 0x400d2b97 0x400d6ace$/": {
+        "approve": true,
+        "matchCommandLine": true
+      }
+    }
+  }
+}

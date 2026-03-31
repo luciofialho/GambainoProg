@@ -1,0 +1,101 @@
+<html>
+<head>
+  <meta name="viewport" http-equiv="Content-Type" content="width=300, initial-scale=1">
+  <style> 
+    html * { 
+      font-size: 12; 
+      font-family: Arial; 
+    }  
+    table, th, td { 
+      border: 1px solid black; 
+      border-collapse: collapse; 
+      width: 350px; 
+    }  
+    th, td { 
+      padding: 3px; 
+      line-height: 22px;
+      text-align: left; 
+    } 
+    input{
+      width: 35px;
+      border: none;
+      text-align: center;
+      width: 50px;
+      height:20px
+    }
+  </style>
+</head>
+
+<body onload=loadValues()>
+ <form action="/saveColdSide" method="put" id="formCold">
+  <table>
+    <tbody>
+      <tr>
+        <th colspan="4"><b></b><center><b>G A M B A I N O &nbsp; &nbsp; C O L D &nbsp; &nbsp; S I D E</b></center></th>
+      </tr>
+      <tr>
+        <td><b>What</b></td><td><b><center>Temperature</center></b></td>
+        <td><b><center>Target</center></b></td>
+        <td><b><center>Status</center></b></td>
+      </tr>
+      <tr>
+        <td>Fermenter 1</td>
+        <td><center><span  id="f1at"></span>  </center></td>
+        <td><center><input onClick="this.select();" id="f1t" name="f1t" width=5></center></td>
+        <td><center><span  id="f1st"></span> </center></td>
+      </tr>
+      <tr>
+        <td>Fermenter 2</td>
+        <td><center><span  id="f2at"></span>  </center></td>
+        <td><center><input onClick="this.select();" id="f2t" name="f2t" width=5></center></td>
+        <td><center><span  id="f2st"></span> </center></td>
+      </tr>
+      <tr>
+        <td>Cellar</td>
+        <td><center><span  id="cat"></span>  </center></td>
+        <td><center><input onClick="this.select();" id="ct" name="ct" width=5></center></td>
+        <td><center><span  id="cst"></span> </center></td>
+      </tr>
+      <tr>
+        <td>Cold bank</td>
+        <td><center><span  id="cbat"></span>  </center></td>
+        <td><center><input onClick="this.select();" id="cbt" name="cbt" width=5></center></td>
+        <td><center><span  id="cbst"></span> </center></td>
+      </tr>
+      <tr>
+        <td>Environment</td>
+        <td><center><span  id="env"></span></center></td>
+        <td><center></center></td>
+        <td><center></center></td>
+      </tr>
+      <tr>
+        <td colspan="2">Fermenter 1 future target temp</td>
+        <td><center><input onClick="this.select();" id="f1lt" name="f1lt" width=5></center></td>
+        <td><center></center></td>
+      </tr>
+      <tr>
+        <td colspan="2">Fermenter 2 future target temp</td>
+        <td><center><input onClick="this.select();" id="f2lt" name="f2lt" width=5></center></td>
+        <td><center></center></td>
+      </tr>
+      <tr>
+        <th colspan="2"><center><span  id="time"></span></center></th>
+        <th colspan="2"><center>Uptime: <span  id="uptime"></span></center></th>
+      </tr>
+    </tbody>
+  </table>
+  <br>
+
+  <button id="btnSave" type="submit" form="formCold" hidden="hidden">Save</button>
+ </form> 
+</body>
+<script> 
+  function ttChange() {btnSave.hidden=""};
+  f1t .addEventListener('input',ttChange);  
+  f2t .addEventListener('input',ttChange);  
+  f1lt .addEventListener('input',ttChange);  
+  f2lt .addEventListener('input',ttChange);  
+  ct  .addEventListener('input',ttChange);  
+  cbt .addEventListener('input',ttChange);  
+</script>
+</html>

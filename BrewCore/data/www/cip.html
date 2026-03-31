@@ -1,0 +1,136 @@
+<script>
+  function asFloat(value1,isAddition) {
+    if(!isAddition)
+      return parseFloat(value1);
+    else {
+      if (value1.trim() == "" || value1.trim().toUpperCase()=="N/A" || value1.trim().toUpperCase()=="NO")
+        return -1;
+      else
+        return parseFloat(value1);
+    }
+  }
+  function getClassName(value1, value2) {
+    if (asFloat(value1)==asFloat(value2))
+      return "RcpItem";
+    else
+      return "RcpItemChanged";
+  }
+</script>
+
+<html>
+<head>
+<style>
+  html *
+  {
+     font-size: 12;
+     font-family: Arial;
+  }
+
+  table, th, td {
+    border: 1px solid black;
+    border-collapse: collapse;
+    width: 500px;
+  }
+
+  th, td {
+    padding: 5px;
+    text-align: left;  
+  }
+  
+  .RcpItem {
+    text-align:right;
+  }
+  
+  #rcpTable {
+    position: relative;  
+    float: left;  
+    width: 600px;
+  }
+  
+  #clbrTable {
+    position: relative;
+    width: 600px;  
+    float: left;
+    overflow: hidden;
+  }
+  
+  .RcpItem {
+    text-align:right;
+  }
+
+  .RcpItemChanged {
+    text-align:right;
+    border: 2px solid red;
+  }
+  
+  
+</style>
+</head>
+
+
+<body onload=loadValues()>
+
+<div id="Container">
+
+<div id="rcpTable">
+<table>
+<tr><td>
+  <table> <col style="width:40%;"> <col style="width:10%"> <col style="width:40%;"> 
+    <tr><th colspan="3"><center>PROCESS PARAMETERS</center></th></tr>
+    <tr><td>Start time</td><td><center><input type="number" min="0" max="23.9" step="0.1" id="RcpStartTime" class="RcpItem"></td><td></td></tr>  
+    <tr><td>Target Fermenter</td><td><center><select size="1"  id="RcpTargetFermenter" name="RcpTargetFermenter" class="RcpItem"><option value="1">F1</option><option value="2">F2</option></td><td></td></tr>
+
+    <tr><th colspan="3"><center>MASHING</center></th></tr>
+    <tr><td>Grain weight (kg)</td><td><center><input size="1" type="text" id="RcpGrainWeight" class="RcpItem"></td><td></td></tr>      
+    <tr><td>Mash time (min)</td><td><center><input size="1" type="text" id="RcpMashTime" class="RcpItem"></td><td></td></tr>    
+    <tr><td>Mash temp (ºC)</td><td><center><input size="1" type="text" id="RcpMashTemp" class="RcpItem"></td><td></td></tr>  
+    <tr><td>Water/Grain Ratio (l/kg)</td><td><center><input size="1" type="text" id="RcpWaterGrainRatio" class="RcpItem"></td><td></td></tr>
+
+    <tr><th colspan="3"><center>INFUSION RAMP</center></th></tr>
+    <tr><td>Ramp grain weight (kg)</td><td><center><input size="1" type="text" id="RcpRampGrainWeight" class="RcpItem"></td><td>0 for no ramp</td></tr>    
+    <tr><td>Ramp rest time (min)</td><td><center><input size="1" type="text" id="RcpRampTime" class="RcpItem"></td><td></td></tr>    
+    <tr><td>Ramp temp (ºC)</td><td><center><input size="1" type="text" id="RcpRampTemp" class="RcpItem"></td><td></td></tr>  
+
+    <tr><th colspan="3"><center>BOILING</center></th></tr>
+    <tr><td>Caramelization boil time (min)</td><td><center><input size="1" type="text" id="RcpCaramelizationBoil" class="RcpItem"></td><td>0 for no caramelization boil</td></tr>
+    <tr><td>Boil Time (min)</td><td><center><input size="1" type="text" id="RcpBoilTime" class="RcpItem"></td><td></td></tr>
+    <tr><td>Sub/controlled boil temperature (ºC)</td><td><center><input size="1" type="text" id="RcpBoilTemp" class="RcpItem"> </td><td>100 or greater for constant boil</td></tr>        
+    
+    
+    
+  </table>
+  </td>  <td>
+  <table> <col style="width:40%;"> <col style="width:10%"> <col style="width:40%;"> 
+    <tr><th colspan="3"><center>HOPPING</center></th></tr>
+    <tr><td>First Wort Hopping</td><td><center><input type="checkbox" id="RcpFirstWortHopping" class="RcpItem"></td><td>0=no, 1=yes</td></tr>
+    <tr><td>Addition 1 (min to boil finish)</td><td><center><input align="right" size="1" type="text" id="RcpAddition1" class="RcpItem"></td><td>-1 for no addition</td></tr>
+    <tr><td>Addition 2 (min to boil finish)</td><td><center><input size="1" type="text" id="RcpAddition2" class="RcpItem"></td><td>-1 for no addition</td></tr>  
+    <tr><td>Addition 3 (min to boil finish)</td><td><center><input size="1" type="text" id="RcpAddition3" class="RcpItem"></td><td>-1 for no addition</td></tr>  
+    <tr><td>Addition 4 (min to boil finish)</td><td><center><input size="1" type="text" id="RcpAddition4" class="RcpItem"></td><td>-1 for no addition</td></tr>  
+    <tr><td>Addition 5 (min to boil finish)</td><td><center><input size="1" type="text" id="RcpAddition5" class="RcpItem"></td><td>-1 for no addition</td></tr>  
+    <tr><td>Whirlpool hopping time (min)</td><td><center><input size="1" type="text" id="RcpWhirlpoolHoppingTime" class="RcpItem"></td><td>0 for no whirlpool hopping</td></tr>  
+    <tr><td>Whirlpool hopping start temp (ºC)</td><td><center><input size="1" type="text" id="RcpWhirlpoolHoppingTemp" class="RcpItem"></td><td></td></tr>  
+
+    <tr><th colspan="3"><center>Whirlpool / chilling</center></th></tr>
+    <tr><td>Whirlpool terminal temp (ºC)</td><td><center><input size="1" type="text" id="RcpWhirlpoolTerminalTemp" class="RcpItem"></td><td>0 for no temp control in whirlpool finish</td></tr>
+    <tr><td>Whirlpool minimum time (min)</td><td><center><input size="1" type="text" id="RcpWhirlpoolMinimumTime" class="RcpItem"></td><td>Can take longer if terminal temp or whp hopping used</td></tr>
+    <tr><td>Whirlpool rest time (min)</td><td><center><input size="1" type="text" id="RcpWhirlpoolRestTime" class="RcpItem"></td><td></td></tr>
+    <tr><td>Inoculation Temp (ºC)</td><td><center><input size="1" type="text" id="RcpInoculationTemp" class="RcpItem"></td><td></td></tr>
+    <tr><th colspan="3"><center>KETTLE SOUR PROGRAM PARAMETERS</center></th></tr>
+    <tr><td>Souring temp (ºC)</td><td><center><input size="1" type="text" id="RcpKettleSourSouringTemp" class="RcpItem"></td><td>0 means no kettle sour</td></tr>  
+    <tr><td>First boil time (min)</td><td><center><input size="1" type="text" id="RcpKettleSourFirstBoilTime" class="RcpItem"></td><td></td></tr>  
+  </table>
+  </td>
+  </tr>
+  </table>
+  <center><button onclick="saveRcp();">Save</button>&nbsp&nbsp&nbsp<button onclick="window.open('http://192.168.13.178/showmath','_blank');">Calculate</button>  </center>
+
+</div>
+</div>
+
+</body>
+
+
+
+</html>
+
