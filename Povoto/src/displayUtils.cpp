@@ -172,9 +172,16 @@ void screenSaver(bool enable) {
   }
   else {
     Serial.println(">>> SCREEN SAVER OFF <<<");
-    tft.writecommand(0x11);         // Sleep OUT (acorda display)
-    delay(120);                      // Espera display acordar (datasheet recomenda 120ms)
-    digitalWrite(TFT_BL, HIGH);     // Liga backlight
+    // Hard reset do hardware para garantir recuperação após longos períodos de sleep.
+    // O Sleep OUT (0x11) sozinho não é suficientemente confiável após sleeps longos:
+    // o controlador fica num estado inconsistente e o display fica em branco.
+    digitalWrite(TFT_BL, LOW);      // Mantém backlight desligado durante reset
+    digitalWrite(TFT_RST, LOW);
+    delay(10);
+    digitalWrite(TFT_RST, HIGH);
+    delay(120);                      // Aguarda estabilização pós-reset (datasheet)
+    tft.init();                      // Re-inicializa completamente o controlador
+    digitalWrite(TFT_BL, HIGH);     // Liga backlight só após init completo
     mainScreen();
   }
 }
