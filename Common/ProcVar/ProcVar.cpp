@@ -812,7 +812,7 @@ bool  ProcVar::modeIsDallas()
 }
 
 bool ProcVar::isValidTemp() {
-  return value()!=85 && value()!=-127;
+  return value()!=85 && value()!=NOTaTEMP;
 }
 
 void  ProcVar::acquireDallas()
@@ -839,7 +839,7 @@ void  ProcVar::acquireDallas()
                 byte bus = ProcVars[i]->pin();
                 if (ProcVars[i]->DallasAddr()) {
                     float x = DallasDevs[bus]->getTempC(ProcVars[i]->DallasAddr());
-                    if (debugging && (x==85 || x==-127)) x = 20; //else {;Serial.print("x dallas =  ");Serial.println(x);}
+                    if (debugging && (x==85 || x==NOTaTEMP)) x = 20; //else {;Serial.print("x dallas =  ");Serial.println(x);}
                     if (x == DEVICE_DISCONNECTED_C || x == DEVICE_DISCONNECTED_RAW || x == 85 || x > 110) {
                         if (ProcVars[i]->getProgValue() != NOTaTEMP) {
                             ds->lossesCount ++;

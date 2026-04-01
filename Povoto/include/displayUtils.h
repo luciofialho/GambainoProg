@@ -20,6 +20,14 @@ bool isScreenSaverActive();
 void forceScreenSaver(bool enable);
 void resetDisplayHardware();
 
+// Teclado numérico
+bool isTempKeyboardActive();
+void openTempKeyboard();
+void openSlowTempKeyboard();
+void openPressureKeyboard();
+void openNumKeyboard(const char* title, float initVal, float minVal, float maxVal,
+                     int decimals, bool allowEmpty, float emptyValue, bool pinTheme, void (*callback)(float));
+
 
 // Funções de touch I2C
 //bool readTouchI2C(uint16_t *x, uint16_t *y);

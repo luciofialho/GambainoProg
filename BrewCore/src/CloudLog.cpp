@@ -10,7 +10,7 @@ float mode(bool chill, bool heat) {
 }
 
 bool isValidTemp(float f) {
-  return (f  != 85 && f!=-127);
+  return (f  != 85 && f!=NOTaTEMP);
 }
 
 void returnCloudLog(AsyncWebServerRequest * request) {

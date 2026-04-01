@@ -157,23 +157,14 @@ void screenData() {
   else
     textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,105, "n/a");
 
-  // SLOW TEMPERATURE TARGET or TIME SINCE TARGET SET
-  if (SetPointData.setPointSlowTemp != NOTaTEMP) {
-    tft.setTextColor(TFT_YELLOW,0); 
+  // SLOW TEMPERATURE TARGET 
+  tft.setTextColor(0,tft.color565(153,153,204)); 
+  textOut(LEFT,&Swiss_911_Extra_Compressed_Regular12pt7b,320,130, "Slow target");
+  tft.setTextColor(TFT_YELLOW,0); 
+  if (SetPointData.setPointSlowTemp != NOTaTEMP) 
     textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,131, "   %.1f",SetPointData.setPointSlowTemp);
-    tft.setTextColor(0,tft.color565(153,153,204)); 
-    textOut(LEFT,&Swiss_911_Extra_Compressed_Regular12pt7b,320,128, "Slow target");
-  }
-  else {
-    tft.setTextColor(0,tft.color565(153,153,204)); 
-    textOut(LEFT,&Swiss_911_Extra_Compressed_Regular12pt7b,320,128, "since                 ");
-
-    tft.setTextColor(TFT_YELLOW,0);
-    char buf[22];
-    NTPFormatedDate(buf);
-    buf[5] = '\0'; // remove year
-    textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,131, buf);
-  }
+  else
+    textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,131, "   n/a");
 
   // PRESSURE 
   tft.setTextColor(TFT_WHITE,tft.color565(153,153,255)); 
@@ -214,6 +205,7 @@ void screenData() {
 }
 
 void mainScreen() {
+  if (isTempKeyboardActive()) return; // não sobrescreve o teclado
   screenBackground();
   screenData();
 }

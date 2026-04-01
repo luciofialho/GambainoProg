@@ -21,6 +21,7 @@ struct FMTData_t {
   float FMTOFFTimeDuringBrew;
   float FMTAltitude;
   int   FMTScreensaverTime;
+  int   FMTKeypadPin;   // PIN de 4 dígitos para desbloquear o teclado no display
   uint32_t checksum;
 } __attribute__((packed));
 

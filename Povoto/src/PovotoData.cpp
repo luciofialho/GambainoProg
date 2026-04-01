@@ -26,6 +26,7 @@ FMTData_t FMTData = {
   .FMTOFFTimeDuringBrew = 5.0,
   .FMTAltitude = 0.0,
   .FMTScreensaverTime = 120,
+  .FMTKeypadPin = 6350,
   .checksum = 0
 };
 

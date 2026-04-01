@@ -314,6 +314,15 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
   strncat(html, "</div>", remaining);
 
   remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<div class='form-group'>"
+               "<label for='FMTKeypadPin'>Keypad PIN (4 digits):</label>", remaining);
+  sprintf(buffer, "<input type='number' id='FMTKeypadPin' name='FMTKeypadPin' value='%d' step='1' min='0' max='9999'>", FMTData.FMTKeypadPin);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, buffer, remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "</div>", remaining);
+
+  remaining = BUFFER_SIZE - strlen(html) - 1;
     strncat(html, "<button type='submit'>Save</button> "
                  "<button type='button' class='btn-secondary' onclick='window.location=\"/\"'>Cancel</button>"
                  "</form>"
@@ -366,6 +375,11 @@ void handleFMTDataUpdate(AsyncWebServerRequest *request) {
   }
   if (request->hasParam("FMTScreensaverTime", true)) {
     FMTData.FMTScreensaverTime = request->getParam("FMTScreensaverTime", true)->value().toInt();
+  }
+  if (request->hasParam("FMTKeypadPin", true)) {
+    int pin = request->getParam("FMTKeypadPin", true)->value().toInt();
+    if (pin >= 0 && pin <= 9999)
+      FMTData.FMTKeypadPin = pin;
   }
   writeFMTDataToNIV();
   updatePatmFromFMTAltitude();
@@ -798,7 +812,12 @@ void handleSetPointDataPage(AsyncWebServerRequest *request) {
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='form-group'>"
                "<label for='setPointTemp'>Set Point Temperature (°C):</label>", remaining);
-  sprintf(buffer, "<input type='number' id='setPointTemp' name='setPointTemp' value='%.1f' step='0.1'>", SetPointData.setPointTemp);
+  {
+    char tmp[16];
+    if (SetPointData.setPointTemp == NOTaTEMP) snprintf(tmp, sizeof(tmp), "N/A");
+    else snprintf(tmp, sizeof(tmp), "%.1f", SetPointData.setPointTemp);
+    sprintf(buffer, "<input type='text' id='setPointTemp' name='setPointTemp' value='%s'>", tmp);
+  }
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -807,7 +826,12 @@ void handleSetPointDataPage(AsyncWebServerRequest *request) {
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='form-group'>"
                "<label for='setPointSlowTemp'>Set Point Slow Temperature (°C):</label>", remaining);
-  sprintf(buffer, "<input type='number' id='setPointSlowTemp' name='setPointSlowTemp' value='%.1f' step='0.1'>", SetPointData.setPointSlowTemp);
+  {
+    char tmp[16];
+    if (SetPointData.setPointSlowTemp == NOTaTEMP) snprintf(tmp, sizeof(tmp), "N/A");
+    else snprintf(tmp, sizeof(tmp), "%.1f", SetPointData.setPointSlowTemp);
+    sprintf(buffer, "<input type='text' id='setPointSlowTemp' name='setPointSlowTemp' value='%s'>", tmp);
+  }
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -842,10 +866,20 @@ void handleSetPointDataUpdate(AsyncWebServerRequest *request) {
     SetPointData.mode = request->getParam("mode", true)->value().toInt();
   }
   if (request->hasParam("setPointTemp", true)) {
-    SetPointData.setPointTemp = request->getParam("setPointTemp", true)->value().toFloat();
+    String v = request->getParam("setPointTemp", true)->value();
+    v.trim();
+    if (v.length() == 0 || v.equalsIgnoreCase("N/A"))
+      SetPointData.setPointTemp = NOTaTEMP;
+    else
+      SetPointData.setPointTemp = v.toFloat();
   }
   if (request->hasParam("setPointSlowTemp", true)) {
-    SetPointData.setPointSlowTemp = request->getParam("setPointSlowTemp", true)->value().toFloat();
+    String v = request->getParam("setPointSlowTemp", true)->value();
+    v.trim();
+    if (v.length() == 0 || v.equalsIgnoreCase("N/A"))
+      SetPointData.setPointSlowTemp = NOTaTEMP;
+    else
+      SetPointData.setPointSlowTemp = v.toFloat();
   }
   if (request->hasParam("setPointPressure", true)) {
     SetPointData.setPointPressure = request->getParam("setPointPressure", true)->value().toFloat();

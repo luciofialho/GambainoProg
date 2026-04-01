@@ -217,22 +217,24 @@ void loop() {
   { // controla sinalização de conexão do wifi
     static bool first = true;
     if (WiFi.status() != WL_CONNECTED)  {
-      TFTWaintingWifiConnection();
+      if (!isTempKeyboardActive())
+        TFTWaintingWifiConnection();
       first = true;
     }
     else {
       if (first) {
         first = false;
-        mainScreen();
+        if (!isTempKeyboardActive())
+          mainScreen();
       }
     }
   }
 
   processTouch();
 
-  // a cada 1 segundo: atualiza temperatura e tela
+  // a cada 1 segundo: atualiza temperatura e tela (não durante o teclado)
   static unsigned long lastTempUpdate = 0;
-  if (millis() - lastTempUpdate > 1000) {
+  if (!isTempKeyboardActive() && millis() - lastTempUpdate > 1000) {
     lastTempUpdate = millis();
     //temperature += 0.1;
     screenData();
