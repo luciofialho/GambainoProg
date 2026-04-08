@@ -41,6 +41,9 @@ CalibrationData_t CalibrationData = {
   .pressure1Current = 8.5,
   .pressure2Bar = 1.0,
   .pressure2Current = 12.5,
+  .maximumPressure = 2.3f,
+  .co2TransferTime = 180,
+  .nucleationWindow = 5,
   .checksum = 0
 };
 
@@ -55,7 +58,6 @@ BatchData_t BatchData = {
   .addedPlato = 0.0f,
   .startPressure = 0.0f,
   .startTemperature = 0.0f,
-  .addedReliefs = 0,
   .checksum = 0
 };
 
@@ -95,7 +97,9 @@ ControlData_t ControlData = {
 CountersData_t CountersData = {
   .totalReliefCount = 0,
   .totalMolsEjected = 0.0f,
-  .totalCO2MolsProduced = 0.0f,
+  .CO2InSolution = 0.0f,
+  .headSpaceVolume = 0.0f,
+  .correctionPlato = 0.0f,
   .SGAttenuation = 0.0f,
   .totalChillTime = 0,
   .totalHeatTime = 0,
@@ -241,7 +245,8 @@ void resetCountersForNewBatch() {
   //zera totalbubblecount 
   CountersData.totalReliefCount = 0;
   CountersData.totalMolsEjected = 0.0f;
-  CountersData.totalCO2MolsProduced = 0.0f;
+  CountersData.CO2InSolution = 0.0f;
+  CountersData.headSpaceVolume = 0.0f;
   CountersData.SGAttenuation = 0.0f;
   CountersData.totalChillTime = 0;
   CountersData.totalHeatTime = 0;

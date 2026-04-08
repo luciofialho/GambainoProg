@@ -3,6 +3,7 @@
 #include "PovotoData.h"
 #include "PovotoCommon.h"
 #include "GambainoCommon.h"
+#include "PovotoTasks.h"
 #include <Adafruit_INA219.h>
 #include <Arduino.h>
 #include <IOTK.h>
@@ -115,7 +116,7 @@ float kelvin(float x) {
 
 float CO2Mass(float mols) {
   if (mols == -1) 
-    return CountersData.totalCO2MolsProduced * CO2MOLAR_MASS;
+    return (CountersData.totalMolsEjected + CountersData.CO2InSolution + headSpaceCO2Mols) * CO2MOLAR_MASS;
   else
     return mols * CO2MOLAR_MASS;
 }
@@ -138,13 +139,13 @@ float CO2DissolvedMols(float pressureBar, float sg, float temperatureC, float vo
   }
 
   const float tempK = temperatureC + 273.15f;
-  const float kH_298 = 0.0334f; // mol/(L*atm) at 25C for CO2 in water
-  const float pressureAtm = pressureBar * 0.986923f;
+  const float kH_298 = 0.0334f; // mol/(L*atm) at 25C for CO2 in water fonte: Sander, R. (2015). Compilation of Henry's law constants (version 4.0) for water as solvent. Atmospheric Chemistry and Physics, 15(8), 4399-4981. https://doi.org/10.5194/acp-15-4399-2015
+  const float pressureAtm = (pressureBar+Patm) * 0.986923f; // constant is bar --> atm conversion
 
   float kH = kH_298 * expf(2400.0f * (1.0f / 298.15f - 1.0f / tempK));
 
   float sgPoints = (sg - 1.0f) * 1000.0f;
-  float sgCorrection = 1.0f - (sgPoints * 0.0015f);
+  float sgCorrection = 1.0f - (sgPoints * 0.0015f); // Correção linear: cada ponto de SG reduz a solubilidade em 0.15%. Ex: SG 1.050 tem correção de 7.5%, SG 1.100 tem correção de 15%. Fonte: https://www.brewersfriend.com/2012/11/19/co2-solubility-in-beer/
   if (sgCorrection < 0.5f) sgCorrection = 0.5f;
   if (sgCorrection > 1.0f) sgCorrection = 1.0f;
 
@@ -370,9 +371,10 @@ void processPressure(bool relieving) {
   else 
     headSpaceCO2Mols = 0;  
   
-  //float lastTotalCO2MolsProceduced = CountersData.totalCO2MolsProduced; está sendo usado ou não?
+  //float lastTotalCO2MolsProceduced = CountersData.CO2InSolution + headSpaceCO2Mols + CountersData.totalMolsEjected; está sendo usado ou não?
 
-  CountersData.totalCO2MolsProduced = CountersData.totalMolsEjected + dissolvedCO2Mols + headSpaceCO2Mols;
+  CountersData.CO2InSolution = dissolvedCO2Mols;
+  CountersData.headSpaceVolume = headSpaceVolume;
 
 //  float massCO2Produced = CO2Mass(CountersData.totalCO2MolsProduced - lastTotalCO2MolsProceduced);
 //  CountersData.SGAttenuation += 2.047*massCO2Produced/(beerVolume)/1000;
@@ -382,8 +384,9 @@ void processPressure(bool relieving) {
 
   float Pi = SGToPlato(BatchData.batchOG) + BatchData.addedPlato;
   float SGu = 1 + (Pi / (258.6-(Pi/258.2)*227.1));
-  beerPlato = (100*(10*beerVolume*SGu*Pi - 90.08 * CountersData.totalCO2MolsProduced)
-                / (1000*beerVolume*SGu - 44.01 * CountersData.totalCO2MolsProduced) 
+  float totalCO2Mols = CountersData.totalMolsEjected + CountersData.CO2InSolution + headSpaceCO2Mols;
+  beerPlato = (100*(10*beerVolume*SGu*Pi - 90.08 * totalCO2Mols)
+                / (1000*beerVolume*SGu - 44.01 * totalCO2Mols) 
              - 0.1808*Pi ) 
              / 0.8192;
   beerSG = PlatoToSG(beerPlato);
@@ -755,7 +758,10 @@ void pressureControl() {
     else 
       if (SetPointData.setPointPressure > 0.0f && 
         ControlData.pressure < 2.5f &&
-        ControlData.pressure > (SetPointData.setPointPressure / sqrt(pressureDropFactor))) 
+        ControlData.pressure > (SetPointData.setPointPressure / sqrt(pressureDropFactor)) &&
+        (taskWindowType == 0 || taskWindowEndTime < millis())) 
+          pressureRelief(false);
+      if (ControlData.pressure > CalibrationData.maximumPressure)
           pressureRelief(false);
   }
 
@@ -810,7 +816,7 @@ char *getPressureControlStatus(char *st) {
              (unsigned long)CountersData.totalReliefCount, CountersData.totalMolsEjected, dissolvedCO2Mols);
     strncat(st, tmp, 2000);
     snprintf(tmp, sizeof(tmp), "Headspace CO2 mols: %.3f<br>Total CO2 mols: %.3f<br>Total CO2 mass: %.2f g<br>",
-             headSpaceCO2Mols, CountersData.totalCO2MolsProduced, CO2Mass());
+             headSpaceCO2Mols, CountersData.totalMolsEjected + CountersData.CO2InSolution + headSpaceCO2Mols, CO2Mass());
     strncat(st, tmp, 2000);
   } else {
     snprintf(tmp, sizeof(tmp), "INA219 Pressure Sensor: DISCONNECTED<br>Atmospheric pressure: %.3f bar<br>", Patm);

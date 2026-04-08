@@ -8,6 +8,7 @@
 #include "TemperatureControl.h"
 #include "GambainoCommon.h"
 #include "IOTK_GLog.h"
+#include "PovotoTasks.h"
 
 // ========== MAIN MENU ==========
 
@@ -48,6 +49,7 @@ void handleMainMenu(AsyncWebServerRequest *request) {
   html += "<div class='status-item'><strong>Date/Time:</strong> " + String(dateTimeBuf) + "</div>";
   html += "</div>";
   html += "<div class='menu-grid'>";
+  html += "<a href='/tasks' class='menu-button'><span class='icon'>&#9881;&#65039;</span>Tasks</a>";
   html += "<a href='/setpoint' class='menu-button'><span class='icon'>&#127777;</span>Set Points</a>";
   html += "<a href='/batch' class='menu-button'><span class='icon'>&#128218;</span>Batch Data</a>";
   html += "<a href='/control' class='menu-button'><span class='icon'>&#128736;</span>Control</a>";
@@ -526,6 +528,42 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "</div></div>", remaining);
 
+  // Maximum security pressure
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<div class='form-group'>"
+               "<label for='maximumPressure'>Maximum security pressure (bar):</label>", remaining);
+  snprintf(buffer, sizeof(buffer),
+    "<input type='number' id='maximumPressure' name='maximumPressure' value='%.2f' step='0.01' min='0'>",
+    CalibrationData.maximumPressure);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, buffer, remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "</div>", remaining);
+
+  // CO2 transfer time
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<div class='form-group'>"
+               "<label for='co2TransferTime'>CO2 transfer time constant (mins):</label>", remaining);
+  snprintf(buffer, sizeof(buffer),
+    "<input type='number' id='co2TransferTime' name='co2TransferTime' value='%d' step='1' min='0'>",
+    CalibrationData.co2TransferTime);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, buffer, remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "</div>", remaining);
+
+  // Nucleation window
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<div class='form-group'>"
+               "<label for='nucleationWindow'>Nucleation window (min):</label>", remaining);
+  snprintf(buffer, sizeof(buffer),
+    "<input type='number' id='nucleationWindow' name='nucleationWindow' value='%d' step='1' min='0'>",
+    CalibrationData.nucleationWindow);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, buffer, remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "</div>", remaining);
+
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<button type='submit'>Save</button> "
                "<button type='button' class='btn-secondary' onclick='window.location=\"/\"'>Cancel</button>"
@@ -552,6 +590,15 @@ void handleCalibrationDataUpdate(AsyncWebServerRequest *request) {
   }
   if (request->hasParam("pressure2Current", true)) {
     CalibrationData.pressure2Current = request->getParam("pressure2Current", true)->value().toFloat();
+  }
+  if (request->hasParam("maximumPressure", true)) {
+    CalibrationData.maximumPressure = request->getParam("maximumPressure", true)->value().toFloat();
+  }
+  if (request->hasParam("co2TransferTime", true)) {
+    CalibrationData.co2TransferTime = request->getParam("co2TransferTime", true)->value().toInt();
+  }
+  if (request->hasParam("nucleationWindow", true)) {
+    CalibrationData.nucleationWindow = request->getParam("nucleationWindow", true)->value().toInt();
   }
   
   writeCalibrationDataToNIV();
@@ -682,8 +729,8 @@ void handleBatchDataPage(AsyncWebServerRequest *request) {
 
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='form-group'>"
-               "<label for='addedReliefs'>Add to Relief Count:</label>", remaining);
-  sprintf(buffer, "<input type='number' id='addedReliefs' name='addedReliefs' value='%d' step='1'>", BatchData.addedReliefs);
+               "<label for='correctionPlato'>Correction &deg;P:</label>", remaining);
+  sprintf(buffer, "<input type='number' id='correctionPlato' name='correctionPlato' value='%.2f' step='0.01'>", CountersData.correctionPlato);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -726,11 +773,12 @@ void handleBatchDataUpdate(AsyncWebServerRequest *request) {
   if (request->hasParam("startTemperature", true)) {
     BatchData.startTemperature = request->getParam("startTemperature", true)->value().toFloat();
   }
-  if (request->hasParam("addedReliefs", true)) {
-    BatchData.addedReliefs = (int16_t)request->getParam("addedReliefs", true)->value().toInt();
+  if (request->hasParam("correctionPlato", true)) {
+    CountersData.correctionPlato = request->getParam("correctionPlato", true)->value().toFloat();
   }
   
   writeBatchDataToNIV();
+  writeCountersDataToNIV();
   
   String html = "<!DOCTYPE html><html><head>";
   html += "<meta charset='UTF-8'>";
@@ -1095,6 +1143,143 @@ void handleControlReliefOnce(AsyncWebServerRequest *request) {
   Serial.println("Relief once requested");
   pressureRelief(false);
   request->redirect("/control");
+}
+
+// ========== TASKS HANDLERS ==========
+
+static const char* taskName(byte type) {
+  switch (type) {
+    case 1: return "Dump";
+    case 2: return "Gas venting/injection";
+    case 3: return "Liquid addition";
+    case 4: return "Dry hopping";
+    case 5: return "Dynamic hopping";
+    default: return "Unknown";
+  }
+}
+
+void handleTasksPage(AsyncWebServerRequest *request) {
+  String html = "<!DOCTYPE html><html><head>";
+  html += "<meta charset='UTF-8'>";
+  html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
+  html += "<title>Tasks</title>";
+  html += "<style>";
+  html += "body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; }";
+  html += ".container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); }";
+  html += "h1 { color: #333; text-align: center; margin-bottom: 30px; }";
+  html += ".menu-grid { display: grid; grid-template-columns: 1fr; gap: 15px; margin-top: 20px; }";
+  html += ".menu-button { display: block; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; text-align: center; border-radius: 10px; font-size: 18px; font-weight: bold; transition: transform 0.2s; }";
+  html += ".menu-button:hover { transform: translateY(-2px); }";
+  html += ".back-link { text-align: center; margin-top: 20px; }";
+  html += ".back-link a { color: #666; font-size: 14px; }";
+  html += "</style></head><body>";
+  html += "<div class='container'>";
+  html += "<h1>&#9881;&#65039; Tasks</h1>";
+  if (taskWindowType != 0) {
+    html += "<div style='background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:12px;margin-bottom:20px;text-align:center;font-weight:bold;color:#856404;'>";
+    html += "Active task: ";
+    html += taskName(taskWindowType);
+    html += " &mdash; <a href='/tasks/active'>Go to task</a></div>";
+  }
+  html += "<div class='menu-grid'>";
+  html += "<a href='/tasks/start?type=1' class='menu-button'>Dump</a>";
+  html += "<a href='/tasks/start?type=2' class='menu-button'>Gas venting/injection</a>";
+  html += "<a href='/tasks/start?type=3' class='menu-button'>Liquid addition</a>";
+  html += "<a href='/tasks/start?type=4' class='menu-button'>Dry hopping</a>";
+  html += "<a href='/tasks/start?type=5' class='menu-button'>Dynamic hopping</a>";
+  html += "</div>";
+  html += "<div class='back-link'><a href='/'>&#8592; Back to menu</a></div>";
+  html += "</div></body></html>";
+  request->send(200, "text/html", html);
+}
+
+void handleTaskStart(AsyncWebServerRequest *request) {
+  if (!request->hasParam("type")) {
+    request->redirect("/tasks");
+    return;
+  }
+  byte type = (byte)request->getParam("type")->value().toInt();
+  switch (type) {
+    case 1: startDumpTask();          break;
+    case 2: startGasTask();           break;
+    case 3: startLiquidTask();        break;
+    case 4: startDryHoppingTask();    break;
+    case 5: startDynamicHoppingTask();break;
+    default: request->redirect("/tasks"); return;
+  }
+
+  String html = "<!DOCTYPE html><html><head>";
+  html += "<meta charset='UTF-8'>";
+  html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
+  html += "<title>Task: "; html += taskName(type); html += "</title>";
+  html += "<style>";
+  html += "body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; }";
+  html += ".container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); text-align: center; }";
+  html += "h1 { color: #333; margin-bottom: 10px; }";
+  html += ".task-label { font-size: 22px; color: #555; margin-bottom: 30px; }";
+  html += ".finish-btn { display: inline-block; padding: 24px 48px; background: #e53935; color: white; text-decoration: none; border-radius: 12px; font-size: 24px; font-weight: bold; margin-top: 20px; transition: background 0.2s; }";
+  html += ".finish-btn:hover { background: #b71c1c; }";
+  html += ".cancel-link { display: block; margin-top: 24px; font-size: 14px; color: #888; }";
+  html += ".cancel-link a { color: #888; }";
+  html += "</style></head><body>";
+  html += "<div class='container'>";
+  html += "<h1>&#9881;&#65039; Active Task</h1>";
+  html += "<div class='task-label'>"; html += taskName(type); html += "</div>";
+  html += "<a href='/tasks/finish?type="; html += String(type); html += "' class='finish-btn'>&#9989; Finish Task</a>";
+  html += "<div class='cancel-link'><a href='/tasks/cancel'>Cancel task</a></div>";
+  html += "</div></body></html>";
+  request->send(200, "text/html", html);
+}
+
+void handleTaskActive(AsyncWebServerRequest *request) {
+  if (taskWindowType == 0) {
+    request->redirect("/tasks");
+    return;
+  }
+  byte type = taskWindowType;
+  String html = "<!DOCTYPE html><html><head>";
+  html += "<meta charset='UTF-8'>";
+  html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
+  html += "<title>Task: "; html += taskName(type); html += "</title>";
+  html += "<style>";
+  html += "body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; }";
+  html += ".container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); text-align: center; }";
+  html += "h1 { color: #333; margin-bottom: 10px; }";
+  html += ".task-label { font-size: 22px; color: #555; margin-bottom: 30px; }";
+  html += ".finish-btn { display: inline-block; padding: 24px 48px; background: #e53935; color: white; text-decoration: none; border-radius: 12px; font-size: 24px; font-weight: bold; margin-top: 20px; transition: background 0.2s; }";
+  html += ".finish-btn:hover { background: #b71c1c; }";
+  html += ".cancel-link { display: block; margin-top: 24px; font-size: 14px; color: #888; }";
+  html += ".cancel-link a { color: #888; }";
+  html += "</style></head><body>";
+  html += "<div class='container'>";
+  html += "<h1>&#9881;&#65039; Active Task</h1>";
+  html += "<div class='task-label'>"; html += taskName(type); html += "</div>";
+  html += "<a href='/tasks/finish?type="; html += String(type); html += "' class='finish-btn'>&#9989; Finish Task</a>";
+  html += "<div class='cancel-link'><a href='/tasks/cancel'>Cancel task</a></div>";
+  html += "</div></body></html>";
+  request->send(200, "text/html", html);
+}
+
+void handleTaskFinish(AsyncWebServerRequest *request) {
+  byte type = taskWindowType;
+  if (request->hasParam("type")) {
+    type = (byte)request->getParam("type")->value().toInt();
+  }
+  switch (type) {
+    case 1: endDumpTask();          break;
+    case 2: endGasTask();           break;
+    case 3: endLiquidTask();        break;
+    case 4: endDryHoppingTask();    break;
+    case 5: endDynamicHoppingTask();break;
+    default: taskWindowType = 0; taskWindowEndTime = 0; break;
+  }
+  request->redirect("/");
+}
+
+void handleTaskCancel(AsyncWebServerRequest *request) {
+  taskWindowType = 0;
+  taskWindowEndTime = 0;
+  request->redirect("/");
 }
 
 

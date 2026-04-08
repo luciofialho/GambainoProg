@@ -36,6 +36,9 @@ struct CalibrationData_t {
   float pressure1Current;
   float pressure2Bar;
   float pressure2Current;
+  float maximumPressure;
+  int   co2TransferTime;
+  int   nucleationWindow;
   uint32_t checksum;
 } __attribute__((packed));
 
@@ -50,7 +53,6 @@ struct BatchData_t {
   float addedPlato;
   float startPressure;
   float startTemperature;
-  int16_t addedReliefs;
   uint32_t checksum;
 } __attribute__((packed));
 
@@ -90,7 +92,9 @@ extern ControlData_t ControlData;
 struct CountersData_t {
   uint32_t totalReliefCount;
   float totalMolsEjected;
-  float totalCO2MolsProduced;
+  float CO2InSolution;
+  float headSpaceVolume;
+  float correctionPlato;
   float SGAttenuation;
   long int totalChillTime; // seconds
   long int totalHeatTime;  // seconds

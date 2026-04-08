@@ -23,6 +23,7 @@
 #include "PressureControl.h"
 #include "datalog.h"
 #include "IOTK_ESPAsyncServer.h"
+#include "PovotoTasks.h"
 #include <esp_system.h>
 
 //#include "esp_heap_caps.h"
@@ -71,6 +72,28 @@ char * getPovotoStatus(char *st) {
   strnncat(st,buf,MAXSTATUSLEN);
 
   getPeerStatus(st, MAXSTATUSLEN);
+
+  // Window type and end time
+  if (taskWindowType == 0) {
+    strnncat(st, "<br><b>Window:</b> none<br>", MAXSTATUSLEN);
+  } else {
+    static const char *taskLabels[] = { "", "Dump", "Gas venting/injection", "Liquid addition", "Dry hopping", "Dynamic hopping" };
+    const char *label = (taskWindowType <= 5) ? taskLabels[taskWindowType] : "Unknown";
+    snprintf(buf, 199, "<br><b>Window type:</b> %d (%s)<br>", taskWindowType, label);
+    strnncat(st, buf, MAXSTATUSLEN);
+  }
+  if (taskWindowEndTime == 0) {
+    strnncat(st, "<b>Window end time:</b> 0 (expired)<br>", MAXSTATUSLEN);
+  } else {
+    unsigned long now = millis();
+    if (taskWindowEndTime > now) {
+      long secsLeft = (long)((taskWindowEndTime - now) / 1000UL);
+      snprintf(buf, 199, "<b>Window end time:</b> %lu ms (daqui a %ld segundos)<br>", taskWindowEndTime, secsLeft);
+    } else {
+      snprintf(buf, 199, "<b>Window end time:</b> %lu ms (expirada)<br>", taskWindowEndTime);
+    }
+    strnncat(st, buf, MAXSTATUSLEN);
+  }
 
   return st;
 }
@@ -156,6 +179,13 @@ void setup() {
   server.on("/debugparams", HTTP_GET, handleDebugParamsPage);
   server.on("/debugparams/update", HTTP_POST, handleDebugParamsUpdate);
 
+  // Sub-routes must be registered BEFORE the parent /tasks route (ESPAsyncWebServer prefix matching)
+  server.on("/tasks/start", HTTP_GET, handleTaskStart);
+  server.on("/tasks/active", HTTP_GET, handleTaskActive);
+  server.on("/tasks/finish", HTTP_GET, handleTaskFinish);
+  server.on("/tasks/cancel", HTTP_GET, handleTaskCancel);
+  server.on("/tasks", HTTP_GET, handleTasksPage);
+
   server.on("/pressurehistory", HTTP_GET, handlePressureHistoryCSV);
   server.on("/pressuredump", HTTP_GET, handlePressureDumpCSV);
   
@@ -213,6 +243,7 @@ void setup() {
 void loop() {
   verifyWiFiConnection();
   checkDebugMode();
+  checkTaskExpiration();
   handle_IOTK();
   { // controla sinalização de conexão do wifi
     static bool first = true;

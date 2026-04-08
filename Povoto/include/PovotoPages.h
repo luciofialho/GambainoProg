@@ -24,4 +24,10 @@ void handleControlReliefOnce(AsyncWebServerRequest *request);
 void handleDebugParamsPage(AsyncWebServerRequest *request);
 void handleDebugParamsUpdate(AsyncWebServerRequest *request);
 
+void handleTasksPage(AsyncWebServerRequest *request);
+void handleTaskStart(AsyncWebServerRequest *request);
+void handleTaskActive(AsyncWebServerRequest *request);
+void handleTaskFinish(AsyncWebServerRequest *request);
+void handleTaskCancel(AsyncWebServerRequest *request);
+
 #endif

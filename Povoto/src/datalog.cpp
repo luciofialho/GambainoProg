@@ -6,6 +6,7 @@
 #include "TemperatureControl.h"
 #include "datalog.h"
 #include "PressureControl.h"
+#include "PovotoTasks.h"
 
 static const char *getModeLabel() {
   if (ChillHeatMode == FMTCHILL && interruptedCooling) {
@@ -55,6 +56,7 @@ void doDataLog() {
     GLogAddData("CO2MolsProduced");
     GLogAddData("ChillTime");
     GLogAddData("HeatTime");
+    GLogAddData("taskWindowType");
     GLogSend();
     headerWritten = true;
   }
@@ -72,9 +74,11 @@ void doDataLog() {
     GLogAddData(beerABV,2);
     GLogAddData(CountersData.totalReliefCount,0);
     GLogAddData(CountersData.totalMolsEjected,3);
-    GLogAddData(CountersData.totalCO2MolsProduced,3);
+    GLogAddData(CountersData.CO2InSolution,3);
+    GLogAddData(headSpaceCO2Mols,3);
     GLogAddData(CountersData.totalChillTime/3600.,2);
     GLogAddData(CountersData.totalHeatTime /3600.,2);
+    GLogAddData(taskWindowType);
     GLogSend();
   }
 }

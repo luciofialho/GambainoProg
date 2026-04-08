@@ -22,5 +22,6 @@ extern float beerPlato;
 extern float sgPointGenerationTime;
 extern bool pressureSensorUnstable;
 extern float currentReading;
+extern float headSpaceCO2Mols;
 
 #endif // PRESSURECONTROL_H
