@@ -6,6 +6,11 @@
 #include "Povoto_UI.h"
 #include "PovotoData.h"
 #include "PressureControl.h"
+#include "PovotoTasks.h"
+#include "Swiss_911_Extra_Compressed_Regular10pt7b.h"
+#include "Swiss_911_Extra_Compressed_Regular12pt7b.h"
+#include "Swiss_911_Extra_Compressed_Regular16pt7b.h"
+#include "Swiss_911_Extra_Compressed_Regular18pt7b.h"
 #include <WiFi.h>
 #include <qrcode.h> 
 
@@ -15,6 +20,12 @@ unsigned long int lastClick = 0;
 
 // Forward declaration — definição completa mais abaixo (após showConfigQRCode)
 static bool kbActive = false;
+
+// Task UI state
+static bool          taskUIActive         = false;
+static byte          taskUIScreen         = 0; // 0=seleção, 1=tarefa ativa
+static unsigned long taskUIScreenOpenTime = 0; // quando a tela de seleção foi aberta
+static unsigned long lastTaskUITimeUpdate = 0; // throttle de atualização do countdown
 
 void IRAM_ATTR touchIRQ() {
   touchFlag = true;   // só sinaliza
@@ -597,6 +608,136 @@ static bool handleKeyboardTouch(uint16_t kx, uint16_t ky) {
   return false;
 }
 
+// ─── Task UI ──────────────────────────────────────────────────────────────────
+
+bool isTaskUIActive() { return taskUIActive; }
+
+static void drawTaskButton(int x, int y, int w, int h, uint16_t color, const char* label) {
+  const int r = 10;
+  tft.fillRoundRect(x, y, w, h, r, color);
+  tft.drawRoundRect(x, y, w, h, r, tft.color565(255, 255, 255)); // white border
+  tft.setTextColor(TFT_WHITE, color);
+  tft.setTextDatum(MC_DATUM);
+  tft.setFreeFont(&Swiss_911_Extra_Compressed_Regular16pt7b);
+  tft.drawString(label, x + w / 2, y + h / 2);
+}
+
+void showTaskSelectionScreen() {
+  taskUIActive      = true;
+  taskUIScreen      = 0;
+  taskUIScreenOpenTime = millis();
+  tft.fillScreen(TFT_BLACK);
+
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextDatum(MC_DATUM);
+  tft.setFreeFont(&Swiss_911_Extra_Compressed_Regular18pt7b);
+  tft.drawString("SELECT TASK TO START", 240, 22);
+
+  // Row 1: Dump — full width
+  drawTaskButton(5,   45,  470, 58, tft.color565(180,  40,  40),  "Dump");
+  // Row 2: Gas | Liquid
+  drawTaskButton(5,   115, 230, 58, tft.color565( 40,  80, 180),  "Gas");
+  drawTaskButton(245, 115, 230, 58, tft.color565( 40, 160, 180),  "Liquid");
+  // Row 3: Dry Hopping | Dynamic Hopping
+  drawTaskButton(5,   185, 230, 58, tft.color565( 40, 150,  60),  "Dry Hopping");
+  drawTaskButton(245, 185, 230, 58, tft.color565(140,  60, 160),  "Dynamic Hopping");
+  // Cancel
+  drawTaskButton(130, 258, 220, 52, tft.color565( 80,  80,  80),  "Cancel");
+}
+
+void showActiveTaskScreen() {
+  taskUIActive = true;
+  taskUIScreen = 1;
+  tft.fillScreen(TFT_BLACK);
+
+  static const char* const taskNames[] = {"", "Dump", "Gas", "Liquid", "Dry Hopping", "Dynamic Hopping"};
+  const char* name = (taskWindowType >= 1 && taskWindowType <= 5) ? taskNames[taskWindowType] : "?";
+
+  tft.setTextColor(tft.color565(180, 180, 180), TFT_BLACK);
+  tft.setTextDatum(MC_DATUM);
+  tft.setFreeFont(&Swiss_911_Extra_Compressed_Regular18pt7b);
+  char title[48];
+  snprintf(title, sizeof(title), "on going task: %s", name);
+  tft.drawString(title, 240, 22);
+
+  unsigned long remaining = (taskWindowEndTime > millis()) ? (taskWindowEndTime - millis()) / 1000UL : 0;
+  char timeStr[40];
+  snprintf(timeStr, sizeof(timeStr), "%lu min %02lu s remaining", remaining / 60, remaining % 60);
+  tft.fillRect(0, 50, 480, 38, TFT_BLACK);
+  tft.setTextColor(tft.color565(130, 130, 130), TFT_BLACK);
+  tft.setFreeFont(&Swiss_911_Extra_Compressed_Regular10pt7b);
+  tft.drawString(timeStr, 240, 68);
+  lastTaskUITimeUpdate = millis();
+
+  drawTaskButton(30,  115, 420, 85, tft.color565( 40, 140,  60),  "Tarefa Concluida");
+  drawTaskButton(130, 225, 220, 55, tft.color565( 80,  80,  80),  "Cancel");
+}
+
+static void handleTaskTouch(uint16_t x, uint16_t y) {
+  if (taskUIScreen == 0) {
+    // Seleção de tarefa
+    if (y >= 45 && y <= 103 && x >= 5 && x <= 475) {
+      startDumpTask(); showActiveTaskScreen(); return;
+    }
+    if (y >= 115 && y <= 173 && x >= 5   && x <= 235) {
+      startGasTask(); showActiveTaskScreen(); return;
+    }
+    if (y >= 115 && y <= 173 && x >= 245 && x <= 475) {
+      startLiquidTask(); showActiveTaskScreen(); return;
+    }
+    if (y >= 185 && y <= 243 && x >= 5   && x <= 235) {
+      startDryHoppingTask(); showActiveTaskScreen(); return;
+    }
+    if (y >= 185 && y <= 243 && x >= 245 && x <= 475) {
+      startDynamicHoppingTask(); showActiveTaskScreen(); return;
+    }
+    if (y >= 258 && y <= 310 && x >= 130 && x <= 350) {
+      taskUIActive = false; mainScreen(); return;
+    }
+  } else {
+    // Tarefa ativa: concluir ou cancelar
+    if (y >= 115 && y <= 200 && x >= 30 && x <= 450) {
+      switch (taskWindowType) {
+        case 1: endDumpTask();          break;
+        case 2: endGasTask();           break;
+        case 3: endLiquidTask();        break;
+        case 4: endDryHoppingTask();    break;
+        case 5: endDynamicHoppingTask(); break;
+        default: break;
+      }
+      taskUIActive = false; mainScreen(); return;
+    }
+    if (y >= 225 && y <= 280 && x >= 130 && x <= 350) {
+      taskWindowType    = 0;
+      taskWindowEndTime = 0;
+      taskUIActive = false; mainScreen(); return;
+    }
+  }
+}
+
+void updateTaskUIIfActive() {
+  if (!taskUIActive || taskUIScreen != 1) return;
+  // Se a tarefa expirou (checkTaskExpiration já zerou o tipo), fecha a UI
+  if (taskWindowType == 0) {
+    taskUIActive = false;
+    mainScreen();
+    return;
+  }
+  if (millis() - lastTaskUITimeUpdate < 1000) return;
+  lastTaskUITimeUpdate = millis();
+
+  unsigned long remaining = (taskWindowEndTime > millis()) ? (taskWindowEndTime - millis()) / 1000UL : 0;
+  char timeStr[40];
+  snprintf(timeStr, sizeof(timeStr), "%lu min %02lu s remaining", remaining / 60, remaining % 60);
+  tft.fillRect(0, 50, 480, 38, TFT_BLACK);
+  tft.setTextColor(tft.color565(130, 130, 130), TFT_BLACK);
+  tft.setTextDatum(MC_DATUM);
+  tft.setFreeFont(&Swiss_911_Extra_Compressed_Regular10pt7b);
+  tft.drawString(timeStr, 240, 68);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 void processTouch() {
   uint16_t x, y;
   uint16_t raw_x, raw_y;
@@ -609,7 +750,13 @@ void processTouch() {
   }
   
   if (!touchFlag) {
-    if (!screenSaverActive && !isVolumeDeterminationActive() && (millis()-lastClick > (unsigned long)FMTData.FMTScreensaverTime * 1000UL)) {
+    unsigned long ssTimeout = (unsigned long)FMTData.FMTScreensaverTime * 1000UL;
+    if (!screenSaverActive && !isVolumeDeterminationActive() && !taskUIActive && (millis()-lastClick > ssTimeout)) {
+      forceScreenSaver(true);
+    }
+    // Sai da tela de seleção de tarefa se ficar idle por mais que o timeout do screensaver
+    if (taskUIActive && taskUIScreen == 0 && (millis() - taskUIScreenOpenTime > ssTimeout)) {
+      taskUIActive = false;
       forceScreenSaver(true);
     }
   }
@@ -664,6 +811,23 @@ Serial.printf("RAW: %02X %02X %02X %02X %02X %02X  |  ",
         if (kbActive) {
           if (i == 0) handleKeyboardTouch(x, y);
           continue;
+        }
+
+        // === TASK UI: consome o toque quando a UI de tarefas está ativa ===
+        if (taskUIActive) {
+          if (i == 0) handleTaskTouch(x, y);
+          continue;
+        }
+
+        // Zona de toque: lado esquerdo da tela → abre UI de tarefas
+        if (touches == 1 && x < 80) {
+          Serial.println(">>> TOUCH: abrindo UI de tarefas <<<");
+          if (taskWindowType != 0) {
+            showActiveTaskScreen();
+          } else {
+            showTaskSelectionScreen();
+          }
+          return;
         }
 
         // Verifica toque no canto superior esquerdo

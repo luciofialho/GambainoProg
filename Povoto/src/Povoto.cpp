@@ -244,6 +244,7 @@ void loop() {
   verifyWiFiConnection();
   checkDebugMode();
   checkTaskExpiration();
+  updateTaskUIIfActive();
   handle_IOTK();
   { // controla sinalização de conexão do wifi
     static bool first = true;

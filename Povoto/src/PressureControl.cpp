@@ -309,7 +309,7 @@ static void formatFloatCsv(char *out, size_t size, float value, uint8_t decimals
 
 
 void processPressure(bool relieving) {
-  if (debugging) {
+  if (relieving && debugging) {
     if (volumeDeterminationActive && pressureSamples) 
       ControlData.pressure = ControlData.pressure * 0.984f + random(-5,5) * 0.0005; 
     else
@@ -752,17 +752,19 @@ void pressureControl() {
 
   if (!pressureSensorUnstable) {
     if (volumeDeterminationActive) {
-      if (ControlData.pressure > volumeTargetPressure) 
+      if (ControlData.pressure > volumeTargetPressure) {
         pressureRelief(true);
+      }
     }
     else 
       if (SetPointData.setPointPressure > 0.0f && 
-        ControlData.pressure < 2.5f &&
-        ControlData.pressure > (SetPointData.setPointPressure / sqrt(pressureDropFactor)) &&
-        (taskWindowType == 0 || taskWindowEndTime < millis())) 
+         ControlData.pressure > (SetPointData.setPointPressure / sqrt(pressureDropFactor)) &&
+        (taskWindowType == 0 || taskWindowEndTime < millis())) {
           pressureRelief(false);
-      if (ControlData.pressure > CalibrationData.maximumPressure)
-          pressureRelief(false);
+        }
+      if (ControlData.pressure > CalibrationData.maximumPressure) {
+        pressureRelief(false);
+      }
   }
 
   if (!pressureDumpInProgress && volumeDeterminationActive && pressureSamples) {
@@ -862,3 +864,11 @@ char *getPressureControlStatus(char *st) {
 
   return st;
 }
+
+
+Implementar redução por purga
+Implementar transferência de massa
+Rever modelo de controle de resfriamento / aquecimento
+Implementar tasks de adição de volume o de intercenção em gás
+
+

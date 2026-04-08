@@ -20,6 +20,12 @@ bool isScreenSaverActive();
 void forceScreenSaver(bool enable);
 void resetDisplayHardware();
 
+// Task UI
+bool isTaskUIActive();
+void showTaskSelectionScreen();
+void showActiveTaskScreen();
+void updateTaskUIIfActive();
+
 // Teclado numérico
 bool isTempKeyboardActive();
 void openTempKeyboard();
