@@ -866,9 +866,13 @@ char *getPressureControlStatus(char *st) {
 }
 
 
-Implementar redução por purga
+/*Implementar redução por purga
 Implementar transferência de massa
 Rever modelo de controle de resfriamento / aquecimento
 Implementar tasks de adição de volume o de intercenção em gás
+implementar conditioning
+quando reiniciou perdeu contador de co2 ejetado
+ver se coutersdata dá persistência à densidade final e parar de atualizar em conditioning
+*/
 
 

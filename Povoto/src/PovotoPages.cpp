@@ -845,13 +845,15 @@ void handleSetPointDataPage(AsyncWebServerRequest *request) {
   strncat(html, "<div class='form-group'>"
                "<label for='mode'>Mode:</label>", remaining);
   sprintf(buffer, "<select id='mode' name='mode'>"
-                  "<option value='0'%s>Off</option>"
-                  "<option value='1'%s>Fermenting</option>"
-                  "<option value='2'%s>Brewing/Transfering</option>"
+                  "<option value='" TOSTR(MODE_OFF)                 "'%s>Off</option>"
+                  "<option value='" TOSTR(MODE_BREWING_TRANSFERING) "'%s>Brewing/Transfering</option>"
+                  "<option value='" TOSTR(MODE_FERMENTING)          "'%s>Fermenting</option>"
+                  "<option value='" TOSTR(MODE_CONDITIONING)        "'%s>Conditioning</option>"
                   "</select>",
-          SetPointData.mode == 0 ? " selected" : "",
-          SetPointData.mode == 1 ? " selected" : "",
-          SetPointData.mode == 2 ? " selected" : "");
+          SetPointData.mode == MODE_OFF                 ? " selected" : "",
+          SetPointData.mode == MODE_BREWING_TRANSFERING ? " selected" : "",
+          SetPointData.mode == MODE_FERMENTING          ? " selected" : "",
+          SetPointData.mode == MODE_CONDITIONING        ? " selected" : "");
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -941,7 +943,7 @@ void handleSetPointDataUpdate(AsyncWebServerRequest *request) {
   }
   if (SetPointData.mode != oldMode) {
     resetChillHeatCycle();
-    if (SetPointData.mode == 1) {
+    if (SetPointData.mode == MODE_FERMENTING) {
       resetCountersForNewBatch();
     }
   }

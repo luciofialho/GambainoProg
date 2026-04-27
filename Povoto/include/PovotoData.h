@@ -4,6 +4,16 @@
 #include <arduino.h>
 #include <ESPAsyncWebServer.h>
 
+// Fermenter operating modes
+#define MODE_OFF                 0
+#define MODE_BREWING_TRANSFERING 1
+#define MODE_FERMENTING          2
+#define MODE_CONDITIONING        3
+
+// Helper macros to stringify defines at compile time
+#define XSTR(x) #x
+#define TOSTR(x) XSTR(x)
+
 
 // FMT data struct
 struct FMTData_t {
@@ -60,7 +70,7 @@ extern BatchData_t BatchData;
 
 // Set points
 struct SetPointData_t {
-  byte mode;  // 0 = off, 1 = fermenting, 2 = brewing/transfering
+  byte mode;  // MODE_OFF=0, MODE_BREWING_TRANSFERING=1, MODE_FERMENTING=2, MODE_CONDITIONING=3
   float setPointTemp;
   float setPointSlowTemp;
   float setPointPressure;

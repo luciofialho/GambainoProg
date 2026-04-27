@@ -112,19 +112,19 @@ static void handlePovotoEspNow(char type, const char *payload) {
     BatchData.batchNumber = (uint16_t)batchNum;
     writeBatchDataToNIV();
     SetPointData.setPointTemp = inocTemp;
-    SetPointData.mode = 2;
+    SetPointData.mode = MODE_BREWING_TRANSFERING;
     writeSetPointDataToNIV();
     resetChillHeatCycle();
     Serial.printf("TransferStart: batch=%d temp=%.1f\n", batchNum, inocTemp);
   }
   else if (type == TRANSFERENDPACKET) {
-    SetPointData.mode = 1; // fermenting
+    SetPointData.mode = MODE_FERMENTING;
     BatchData.startPressure = ControlData.pressure;
     BatchData.startTemperature = ControlData.temperature;
     writeSetPointDataToNIV();
     resetChillHeatCycle();
     resetCountersForNewBatch();
-    Serial.println("TransferEnd: mode set to 1");
+    Serial.println("TransferEnd: mode set to fermenting");
   }
   else if (type == ENVTEMPPACKET) {
     environmentTemp = atof(payload);
@@ -273,10 +273,10 @@ void loop() {
   }
 
   temperatureControl();
-  // While in transfer mode (mode==2), report fermenter temp to BrewCore every 30s
+  // While in transfer mode (MODE_BREWING_TRANSFERING), report fermenter temp to BrewCore every 30s
   {
     static unsigned long lastFermReport = 0;
-    if (SetPointData.mode == 2 && MILLISDIFF(lastFermReport, 30000UL)) {
+    if (SetPointData.mode == MODE_BREWING_TRANSFERING && MILLISDIFF(lastFermReport, 30000UL)) {
       lastFermReport = millis();
       char payload[24];
       snprintf(payload, sizeof(payload), "%d,%.2f", (int)FMTData.PovotoNum, ControlData.temperature);

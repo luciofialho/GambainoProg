@@ -47,9 +47,9 @@ void resetChillHeatCycle() {
 long int fermenterOnOffCycle(float temperature,bool mode) {
   long timeUnit = debugging ? 1000L : 60000L; // mudar para debugar
 
-  if (SetPointData.mode==2) // brewing/transfering mode
+  if (SetPointData.mode==MODE_BREWING_TRANSFERING) // brewing/transfering mode
     return 5*timeUnit;
-  else if (SetPointData.mode==1) { // fermenting mode
+  else if (SetPointData.mode==MODE_FERMENTING || SetPointData.mode==MODE_CONDITIONING) { // fermenting mode
     long int onTime, offTime;
 
 

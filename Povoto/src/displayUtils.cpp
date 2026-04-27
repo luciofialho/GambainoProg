@@ -7,6 +7,7 @@
 #include "PovotoData.h"
 #include "PressureControl.h"
 #include "PovotoTasks.h"
+#include "TemperatureControl.h"
 #include "Swiss_911_Extra_Compressed_Regular10pt7b.h"
 #include "Swiss_911_Extra_Compressed_Regular12pt7b.h"
 #include "Swiss_911_Extra_Compressed_Regular16pt7b.h"
@@ -20,6 +21,9 @@ unsigned long int lastClick = 0;
 
 // Forward declaration — definição completa mais abaixo (após showConfigQRCode)
 static bool kbActive = false;
+
+// Batch info screen state
+static bool batchInfoActive = false;
 
 // Task UI state
 static bool          taskUIActive         = false;
@@ -736,6 +740,68 @@ void updateTaskUIIfActive() {
   tft.drawString(timeStr, 240, 68);
 }
 
+// ─── Batch Info Screen ───────────────────────────────────────────────────────
+
+bool isBatchInfoActive() { return batchInfoActive; }
+
+static const char* modeLabel(byte mode) {
+  switch (mode) {
+    case MODE_OFF:                 return "Off";
+    case MODE_BREWING_TRANSFERING: return "Brewing/Transfering";
+    case MODE_FERMENTING:          return "Fermenting";
+    case MODE_CONDITIONING:        return "Conditioning";
+    default:                       return "Unknown";
+  }
+}
+
+static void showBatchInfoScreen() {
+  batchInfoActive = true;
+  tft.fillScreen(TFT_BLACK);
+
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextDatum(MC_DATUM);
+  tft.setFreeFont(&Swiss_911_Extra_Compressed_Regular18pt7b);
+  tft.drawString("BATCH INFO", 240, 22);
+
+  char buf[64];
+  tft.setTextColor(tft.color565(200, 200, 255), TFT_BLACK);
+  tft.setFreeFont(&Swiss_911_Extra_Compressed_Regular16pt7b);
+  snprintf(buf, sizeof(buf), "Batch:  %04d", BatchData.batchNumber);
+  tft.drawString(buf, 240, 80);
+
+  tft.setTextColor(TFT_GREENYELLOW, TFT_BLACK);
+  tft.drawString(BatchData.batchName, 240, 120);
+
+  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+  snprintf(buf, sizeof(buf), "Mode: %s", modeLabel(SetPointData.mode));
+  tft.drawString(buf, 240, 160);
+
+  if (SetPointData.mode == MODE_FERMENTING) {
+    drawTaskButton(60, 190, 360, 55, tft.color565(40, 140, 80), "Begin Conditioning");
+  }
+  drawTaskButton(130, 260, 220, 50, tft.color565(80, 80, 80), "Close");
+}
+
+static void doBeginConditioning() {
+  batchInfoActive = false;
+  SetPointData.mode = MODE_CONDITIONING;
+  writeSetPointDataToNIV();
+  resetChillHeatCycle();
+  Serial.println(">>> Touch: mode changed to CONDITIONING <<<");
+  mainScreen();
+}
+
+static void handleBatchInfoTouch(uint16_t x, uint16_t y) {
+  if (SetPointData.mode == MODE_FERMENTING && y >= 190 && y <= 245 && x >= 60 && x <= 420) {
+    requestKeyboard(doBeginConditioning);
+    return;
+  }
+  if (y >= 260 && y <= 310 && x >= 130 && x <= 350) {
+    batchInfoActive = false;
+    mainScreen();
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 void processTouch() {
@@ -757,6 +823,10 @@ void processTouch() {
     // Sai da tela de seleção de tarefa se ficar idle por mais que o timeout do screensaver
     if (taskUIActive && taskUIScreen == 0 && (millis() - taskUIScreenOpenTime > ssTimeout)) {
       taskUIActive = false;
+      forceScreenSaver(true);
+    }
+    if (batchInfoActive && (millis() - lastClick > ssTimeout)) {
+      batchInfoActive = false;
       forceScreenSaver(true);
     }
   }
@@ -813,10 +883,23 @@ Serial.printf("RAW: %02X %02X %02X %02X %02X %02X  |  ",
           continue;
         }
 
+        // === BATCH INFO SCREEN: consome o toque quando está ativa ===
+        if (batchInfoActive) {
+          if (i == 0) handleBatchInfoTouch(x, y);
+          continue;
+        }
+
         // === TASK UI: consome o toque quando a UI de tarefas está ativa ===
         if (taskUIActive) {
           if (i == 0) handleTaskTouch(x, y);
           continue;
+        }
+
+        // Zona de toque: número do batch (x=50..130, y=5..45) → abre batch info screen
+        if (touches == 1 && x >= 45 && x <= 160 && y >= 0 && y <= 50) {
+          Serial.println(">>> TOUCH: abrindo batch info screen <<<");
+          showBatchInfoScreen();
+          return;
         }
 
         // Zona de toque: lado esquerdo da tela → abre UI de tarefas

@@ -26,6 +26,9 @@ void showTaskSelectionScreen();
 void showActiveTaskScreen();
 void updateTaskUIIfActive();
 
+// Batch info screen
+bool isBatchInfoActive();
+
 // Teclado numérico
 bool isTempKeyboardActive();
 void openTempKeyboard();

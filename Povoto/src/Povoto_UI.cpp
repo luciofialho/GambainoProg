@@ -131,6 +131,8 @@ void screenData() {
     return;
   if (isTaskUIActive())
     return;
+  if (isBatchInfoActive())
+    return;
 
   tft.setTextColor(TFT_WHITE); 
   textOut(CENTER,&Swiss_911_Extra_Compressed_Regular12pt7b,86,21, "%04d", BatchData.batchNumber);
@@ -209,6 +211,7 @@ void screenData() {
 void mainScreen() {
   if (isTempKeyboardActive()) return; // não sobrescreve o teclado
   if (isTaskUIActive()) return;       // não sobrescreve a UI de tarefas
+  if (isBatchInfoActive()) return;    // não sobrescreve o batch info
   screenBackground();
   screenData();
 }
