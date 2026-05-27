@@ -3,6 +3,7 @@
 #include <Preferences.h>
 #include "PovotoCommon.h"
 #include "PovotoData.h"
+#include "PressureControl.h"
 
 Preferences preferences;
 
@@ -237,6 +238,11 @@ void povotoDataInit() {
 
   if (!readSetPointDataFromEEPROM())
     Serial.println("Set point data load failed, using defaults");
+
+  if (!readCountersDataFromEEPROM())
+    Serial.println("Counters data load failed, using defaults");
+  else
+    requestDerivedStateRestoreFromCounters();
 
   updatePatmFromFMTAltitude();
 }

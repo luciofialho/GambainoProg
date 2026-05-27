@@ -792,6 +792,228 @@ void handleBatchDataUpdate(AsyncWebServerRequest *request) {
   request->send(200, "text/html", html);
 }
 
+// ========== COUNTERS DATA HANDLERS ==========
+
+void handleCountersDataPage(AsyncWebServerRequest *request) {
+  const size_t BUFFER_SIZE = 5500;
+  char* html = (char*)malloc(BUFFER_SIZE);
+  if (!html) {
+    request->send(500, "text/plain", "Out of memory");
+    return;
+  }
+
+  size_t remaining;
+  char buffer[220];
+
+  strcpy(html, "<!DOCTYPE html><html><head>");
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<meta charset='UTF-8'>", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<meta name='viewport' content='width=device-width, initial-scale=1'>", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<title>Counters Data</title>", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<style>", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "body { font-family: Arial, sans-serif; margin: 20px; background: #f0f0f0; }", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, ".container { max-width: 680px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "h1 { color: #333; text-align: center; }", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, ".summary { background: #f7f7ff; border: 1px solid #dde2ff; border-radius: 8px; padding: 12px; margin-bottom: 18px; color: #444; }", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, ".readonly-group { margin-bottom: 18px; padding: 14px; border: 1px solid #e3e3e3; border-radius: 8px; background: #fafafa; }", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, ".readonly-group h2 { margin: 0 0 12px 0; font-size: 18px; color: #333; }", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, ".form-group { margin-bottom: 15px; }", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "label { display: block; margin-bottom: 5px; color: #666; font-weight: bold; }", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "input { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "input[readonly] { background: #f3f3f3; color: #555; }", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "small { color: #777; display: block; margin-top: 4px; }", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "button { padding: 10px 20px; margin: 5px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "button[type='submit'] { background: #4CAF50; color: white; }", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, ".btn-secondary { background: #999; color: white; }", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "</style></head><body>", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<div class='container'>", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<h1>Counters Data</h1>", remaining);
+
+  snprintf(buffer, sizeof(buffer),
+           "<div class='summary'>Derived beer volume: %.2f L<br>Current dissolved CO2 estimate: %.3f mol</div>",
+           beerVolume,
+           CountersData.CO2InSolution);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, buffer, remaining);
+
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<div class='readonly-group'><h2>Derived Fields</h2>", remaining);
+
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<div class='form-group'><label for='derivedBeerVolume'>Beer Volume (L):</label>", remaining);
+  snprintf(buffer, sizeof(buffer), "<input type='number' id='derivedBeerVolume' value='%.2f' step='0.01' readonly>", beerVolume);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, buffer, remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "</div>", remaining);
+
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<div class='form-group'><label for='derivedHeadSpaceCO2'>Headspace CO2 (mol):</label>", remaining);
+  snprintf(buffer, sizeof(buffer), "<input type='number' id='derivedHeadSpaceCO2' value='%.3f' step='0.001' readonly>", headSpaceCO2Mols);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, buffer, remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "</div>", remaining);
+
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<div class='form-group'><label for='derivedBeerSG'>Beer SG:</label>", remaining);
+  snprintf(buffer, sizeof(buffer), "<input type='number' id='derivedBeerSG' value='%.4f' step='0.0001' readonly>", beerSG);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, buffer, remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "</div>", remaining);
+
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<div class='form-group'><label for='derivedBeerPlato'>Beer Plato:</label>", remaining);
+  snprintf(buffer, sizeof(buffer), "<input type='number' id='derivedBeerPlato' value='%.3f' step='0.001' readonly>", beerPlato);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, buffer, remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "</div>", remaining);
+
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<div class='form-group'><label for='derivedBeerABV'>Beer ABV (%):</label>", remaining);
+  snprintf(buffer, sizeof(buffer), "<input type='number' id='derivedBeerABV' value='%.2f' step='0.01' readonly>", beerABV);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, buffer, remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "</div></div>", remaining);
+
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<form action='/counters/update' method='POST'>", remaining);
+
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<div class='form-group'><label for='totalReliefCount'>Total Relief Count:</label>", remaining);
+  snprintf(buffer, sizeof(buffer), "<input type='number' id='totalReliefCount' name='totalReliefCount' value='%lu' min='0' step='1'>", (unsigned long)CountersData.totalReliefCount);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, buffer, remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "</div>", remaining);
+
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<div class='form-group'><label for='totalMolsEjected'>Total Mols Ejected:</label>", remaining);
+  snprintf(buffer, sizeof(buffer), "<input type='number' id='totalMolsEjected' name='totalMolsEjected' value='%.3f' step='0.001'>", CountersData.totalMolsEjected);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, buffer, remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "</div>", remaining);
+
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<div class='form-group'><label for='CO2InSolution'>CO2 In Solution (mol):</label>", remaining);
+  snprintf(buffer, sizeof(buffer), "<input type='number' id='CO2InSolution' name='CO2InSolution' value='%.3f' step='0.001'>", CountersData.CO2InSolution);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, buffer, remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "</div>", remaining);
+
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<div class='form-group'><label for='headSpaceVolume'>Headspace Volume (L):</label>", remaining);
+  snprintf(buffer, sizeof(buffer), "<input type='number' id='headSpaceVolume' name='headSpaceVolume' value='%.2f' step='0.01' min='0'>", CountersData.headSpaceVolume);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, buffer, remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<small>Changing this recomputes the derived beer volume in RAM after save.</small></div>", remaining);
+
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<div class='form-group'><label for='correctionPlato'>Correction Plato:</label>", remaining);
+  snprintf(buffer, sizeof(buffer), "<input type='number' id='correctionPlato' name='correctionPlato' value='%.2f' step='0.01'>", CountersData.correctionPlato);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, buffer, remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "</div>", remaining);
+
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<div class='form-group'><label for='SGAttenuation'>SG Attenuation:</label>", remaining);
+  snprintf(buffer, sizeof(buffer), "<input type='number' id='SGAttenuation' name='SGAttenuation' value='%.4f' step='0.0001'>", CountersData.SGAttenuation);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, buffer, remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "</div>", remaining);
+
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<div class='form-group'><label for='totalChillTime'>Total Chill Time (s):</label>", remaining);
+  snprintf(buffer, sizeof(buffer), "<input type='number' id='totalChillTime' name='totalChillTime' value='%ld' step='1'>", CountersData.totalChillTime);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, buffer, remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "</div>", remaining);
+
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<div class='form-group'><label for='totalHeatTime'>Total Heat Time (s):</label>", remaining);
+  snprintf(buffer, sizeof(buffer), "<input type='number' id='totalHeatTime' name='totalHeatTime' value='%ld' step='1'>", CountersData.totalHeatTime);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, buffer, remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "</div>", remaining);
+
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<button type='submit'>Save</button> <button type='button' class='btn-secondary' onclick='window.location=\"/\"'>Cancel</button></form></div></body></html>", remaining);
+
+  request->send(200, "text/html", html);
+  free(html);
+}
+
+void handleCountersDataUpdate(AsyncWebServerRequest *request) {
+  if (request->hasParam("totalReliefCount", true)) {
+    CountersData.totalReliefCount = (uint32_t)request->getParam("totalReliefCount", true)->value().toInt();
+  }
+  if (request->hasParam("totalMolsEjected", true)) {
+    CountersData.totalMolsEjected = request->getParam("totalMolsEjected", true)->value().toFloat();
+  }
+  if (request->hasParam("CO2InSolution", true)) {
+    CountersData.CO2InSolution = request->getParam("CO2InSolution", true)->value().toFloat();
+  }
+  if (request->hasParam("headSpaceVolume", true)) {
+    CountersData.headSpaceVolume = request->getParam("headSpaceVolume", true)->value().toFloat();
+  }
+  if (request->hasParam("correctionPlato", true)) {
+    CountersData.correctionPlato = request->getParam("correctionPlato", true)->value().toFloat();
+  }
+  if (request->hasParam("SGAttenuation", true)) {
+    CountersData.SGAttenuation = request->getParam("SGAttenuation", true)->value().toFloat();
+  }
+  if (request->hasParam("totalChillTime", true)) {
+    CountersData.totalChillTime = request->getParam("totalChillTime", true)->value().toInt();
+  }
+  if (request->hasParam("totalHeatTime", true)) {
+    CountersData.totalHeatTime = request->getParam("totalHeatTime", true)->value().toInt();
+  }
+
+  writeCountersDataToNIV();
+  requestDerivedStateRestoreFromCounters();
+
+  String html = "<!DOCTYPE html><html><head>";
+  html += "<meta charset='UTF-8'>";
+  html += "<meta http-equiv='refresh' content='2;url=/counters'>";
+  html += "<style>body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }</style>";
+  html += "</head><body>";
+  html += "<h1>Counters Data Saved!</h1>";
+  html += "<p>Redirecting back to counters page...</p>";
+  html += "</body></html>";
+
+  request->send(200, "text/html", html);
+}
+
 // ========== SETPOINT DATA HANDLERS ==========
 
 void handleSetPointDataPage(AsyncWebServerRequest *request) {
@@ -839,17 +1061,17 @@ void handleSetPointDataPage(AsyncWebServerRequest *request) {
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<form action='/setpoint/update' method='POST'>", remaining);
 
-  char buffer[200];
+  char buffer[512];
   
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='form-group'>"
                "<label for='mode'>Mode:</label>", remaining);
-  sprintf(buffer, "<select id='mode' name='mode'>"
-                  "<option value='" TOSTR(MODE_OFF)                 "'%s>Off</option>"
-                  "<option value='" TOSTR(MODE_BREWING_TRANSFERING) "'%s>Brewing/Transfering</option>"
-                  "<option value='" TOSTR(MODE_FERMENTING)          "'%s>Fermenting</option>"
-                  "<option value='" TOSTR(MODE_CONDITIONING)        "'%s>Conditioning</option>"
-                  "</select>",
+  snprintf(buffer, sizeof(buffer), "<select id='mode' name='mode'>"
+                                   "<option value='" TOSTR(MODE_OFF)                 "'%s>Off</option>"
+                                   "<option value='" TOSTR(MODE_BREWING_TRANSFERING) "'%s>Brewing/Transfering</option>"
+                                   "<option value='" TOSTR(MODE_FERMENTING)          "'%s>Fermenting</option>"
+                                   "<option value='" TOSTR(MODE_CONDITIONING)        "'%s>Conditioning</option>"
+                                   "</select>",
           SetPointData.mode == MODE_OFF                 ? " selected" : "",
           SetPointData.mode == MODE_BREWING_TRANSFERING ? " selected" : "",
           SetPointData.mode == MODE_FERMENTING          ? " selected" : "",
@@ -866,7 +1088,7 @@ void handleSetPointDataPage(AsyncWebServerRequest *request) {
     char tmp[16];
     if (SetPointData.setPointTemp == NOTaTEMP) snprintf(tmp, sizeof(tmp), "N/A");
     else snprintf(tmp, sizeof(tmp), "%.1f", SetPointData.setPointTemp);
-    sprintf(buffer, "<input type='text' id='setPointTemp' name='setPointTemp' value='%s'>", tmp);
+    snprintf(buffer, sizeof(buffer), "<input type='text' id='setPointTemp' name='setPointTemp' value='%s'>", tmp);
   }
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
@@ -880,7 +1102,7 @@ void handleSetPointDataPage(AsyncWebServerRequest *request) {
     char tmp[16];
     if (SetPointData.setPointSlowTemp == NOTaTEMP) snprintf(tmp, sizeof(tmp), "N/A");
     else snprintf(tmp, sizeof(tmp), "%.1f", SetPointData.setPointSlowTemp);
-    sprintf(buffer, "<input type='text' id='setPointSlowTemp' name='setPointSlowTemp' value='%s'>", tmp);
+    snprintf(buffer, sizeof(buffer), "<input type='text' id='setPointSlowTemp' name='setPointSlowTemp' value='%s'>", tmp);
   }
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
@@ -890,7 +1112,7 @@ void handleSetPointDataPage(AsyncWebServerRequest *request) {
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='form-group'>"
                "<label for='setPointPressure'>Set Point Pressure (bar):</label>", remaining);
-  sprintf(buffer, "<input type='number' id='setPointPressure' name='setPointPressure' value='%.2f' step='0.01'>", SetPointData.setPointPressure);
+  snprintf(buffer, sizeof(buffer), "<input type='number' id='setPointPressure' name='setPointPressure' value='%.2f' step='0.01'>", SetPointData.setPointPressure);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -990,6 +1212,9 @@ void handleControlDataPage(AsyncWebServerRequest *request) {
                 "input[readonly]{background:#f9f9f9;}"
                 "button{background:#4CAF50;color:white;padding:6px 12px;border:none;margin:5px;}"
                 ".action-btn{display:inline-block;background:#4CAF50;color:white;padding:6px 12px;margin:5px;text-decoration:none;border-radius:2px;}"
+                ".sub-link{margin-top:8px;text-align:right;font-size:12px;}"
+                ".sub-link a{color:#666;text-decoration:none;}"
+                ".sub-link a:hover{text-decoration:underline;}"
                 ".notice{margin-top:15px;padding:10px;border:1px dashed #999;background:#fafafa;font-size:12px;}"
                 "</style>"
                 "<script>"
@@ -1069,6 +1294,9 @@ void handleControlDataPage(AsyncWebServerRequest *request) {
                "<a class='action-btn' href='/resetdisplay'>Reset display</a>"
                "<a class='action-btn' href='/startvolume?from=control' onclick=\"return confirm('Start volume determination?');\">Start volume</a>"
                "</div>", remaining);
+
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<div class='sub-link'><a href='/counters'>Counters</a></div>", remaining);
 
   if (request->hasParam("volume", false)) {
     remaining = BUFFER_SIZE - strlen(html) - 1;

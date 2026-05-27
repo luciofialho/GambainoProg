@@ -13,6 +13,9 @@ void handleCalibrationDataUpdate(AsyncWebServerRequest *request);
 void handleBatchDataPage(AsyncWebServerRequest *request);
 void handleBatchDataUpdate(AsyncWebServerRequest *request);
 
+void handleCountersDataPage(AsyncWebServerRequest *request);
+void handleCountersDataUpdate(AsyncWebServerRequest *request);
+
 void handleSetPointDataPage(AsyncWebServerRequest *request);
 void handleSetPointDataUpdate(AsyncWebServerRequest *request);
 

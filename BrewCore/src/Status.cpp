@@ -288,6 +288,10 @@ void MainStateMachine() {
     if (Status.getProgValue() == MANUALCONTROL) {              // if in manualcontrol, seting a new status just run its setup 
       statusEntrySetup();
       Status.override();
+      if (debugging && Status==BREWWAIT && IPCStatus<=IPCWAITBREWSTART) {
+        IPCStatus = IPCWAITBREWSTART;
+        IPCStatusEntryTime = millis();
+      }
       return;
     }
     else {
@@ -322,9 +326,9 @@ void MainStateMachine() {
   }
 
   if (TimeInStatus.isOverrided()) {
-      IPCStatusEntryTime = IPCStatusEntryTime - (TimeInStatus - TimeInStatus.getProgValue())*1000L;
-      TimeInStatus.assumeOverrideAsProg();
-      StatusEntryTime = millis()/1000. - TimeInStatus;
+    IPCStatusEntryTime = IPCStatusEntryTime - (TimeInStatus - TimeInStatus.getProgValue())*1000L;
+    TimeInStatus.assumeOverrideAsProg();
+    StatusEntryTime = millis()/1000. - TimeInStatus;
   }
 
   TimeInStatus = millis()/1000. - StatusEntryTime;;
@@ -434,44 +438,12 @@ void MainStateMachine() {
       }
       break; 
 
-    case HLTLOADANDDEAERATE:
-      if (EnteringStatus) {
-        setSubStatus(0,"Loading HLT water");
-         if (debugging)
-           if (IPCStatus < IPCWAITBREWSTART)
-              IPCStatus = IPCWAITBREWSTART;
-      }
-      else {
-        if (SubStatus==0 && HLTVolume >= HLTTargetVolume) {
-          setSubStatus(1,"Heating HLT water");
-          calculateVolumesAndTemperatures(false);
-        }
-        if (SubStatus==1) {
-          //if (HLTTemp >= LODOWATERTEMPERATURE-4) 
-           // HLTPump = ON;
-          if (HLTTemp >= LODOWATERTEMPERATURE) {
-            setSubStatus(2,"Dearating HLT water");
-            stopTimer = TimeInStatus+TIMETODEAREATE;
-          }
-        }
-        if (SubStatus==2) {
-          if (TimeInStatus >= stopTimer) {
-            //HLTPump = OFF;
-            GoToNextStatus = true;
-          }
-          else
-            setCountDownMessage("Deareting HLT water. Remaining: %s:%s", stopTimer-TimeInStatus);
-        }
-      }
-      break;
-
     case PREPWATERFORINFUSION:
       if (EnteringStatus) {
-        setSubStatus(0,"Using BK water to chill HLT");
+        setSubStatus(0,"Loading HLT water");
         stopTimer = 0;
         if (HLTInfusionTemp==0) { // in the case status was manually set
           calculateVolumesAndTemperatures(false);
-          HLTTargetTemp = (RcpRampGrainWeight > 0 && RcpRampTime > 0) ? HLTRampTemp : HLTInfusionTemp;          
         }
         if (debugging)
           BKLevel = 3;
@@ -479,64 +451,29 @@ void MainStateMachine() {
       else {
         switch (int(SubStatus)) {
           case 0: 
-            BKValveB = OPEN;
-            if (TimeInStatus>WAITFORVALVE) {
-              if (!HLTPump.asBoolean())
-                HLTPump = ON;
-              if (BKLevel>0) {
-                if (!BKPump.asBoolean())
-                  BKPump = ON;
-              }
-              else {
-                if (BKPump.asBoolean())
-                  BKPump = OFF;
-              }
+            if (waterInIsDone() || HLTVolume >= HLTTargetVolume) {
+              waterInStop();
+              setSubStatus(1,"Heating HLT water");
             }
-            if (HLTTemp <= HLTTargetTemp + ALLOWEDTEMPOFFSET) 
-              setSubStatus(3,"Reached HLT target temperature");
-            else 
-              if (BKLevel<=0)  {
-                stopTimer = TimeInStatus + 1*MINUTES;
-                setSubStatus(1,"Waiting for BK to drain by gravity");
-              }
             break;
 
           case 1:
-            BKValveB = OPEN;
-            WhirlpoolValve = PORT_A;                  
-            BKPump = OFF;
-            if (TimeInStatus >= stopTimer) {
-              setSubStatus(2,"Using service cold water to chill HLT");
+            if (HLTTemp >= HLTTargetTemp - ALLOWEDTEMPOFFSET) {
+              stopTimer = TimeInStatus + 15*MINUTES;
+              setSubStatus(2,"Holding HLT water at target temperature");
             }
             break;
 
           case 2:
-              BKValveB = CLOSED;
-              ColdWaterIn = OPEN;
-              BKWaterIn   = OPEN;
-              WhirlpoolValve = PORT_B;
-              BKPump = OFF;
-              if (HLTTemp <= HLTTargetTemp + ALLOWEDTEMPOFFSET*2) {
-                setSubStatus(3,"Reached HLT target temperature");
-                BKPump = OFF;
-              }
-            break;
-
-          case 3:
-            if (HLTTemp <= HLTTargetTemp + ALLOWEDTEMPOFFSET) {
-              ColdWaterIn = CLOSED;
-              BKWaterIn   = CLOSED;
-              HLTPump = OFF;
-              BKValveB = CLOSED;
-              MLTValveA = CLOSED;
-              MLTDrain = CLOSED;
-              WhirlpoolValve = PORT_B;
-              BKPump = OFF;
-              setSubStatus(4,"HLT ready for infusion");
+            if (TimeInStatus >= stopTimer) {
+              setSubStatus(3,"HLT ready for infusion");
+            }
+            else {
+              setCountDownMessage("Holding HLT water. Remaining: %s:%s", stopTimer-TimeInStatus);
             }
             break;
 
-          case 4:
+          case 3:
             GoToNextStatus = setupLineIsReady() 
                              && Todo_StartBrew.neededTodoIsReady();
             if (GoToNextStatus)
@@ -581,7 +518,7 @@ void MainStateMachine() {
         MLTTargetTemp = RcpMashTemp;
       }
       else {
-        if (TimeInStatus >= - 10 * MINUTES) // in last 10 minutes, raise MLT temperature to save time in mashout
+        if (TimeInStatus >= - 15 * MINUTES) // in last 15 minutes, raise MLT temperature to save time in mashout
           if (MLTTargetTemp != FINALMASHTEMPERATURE)
             MLTTargetTemp = FINALMASHTEMPERATURE;
         
@@ -620,24 +557,15 @@ void MainStateMachine() {
       if (EnteringStatus) {
         restStart = 0;
         caramelizationBoilStart = 0;
+        MLTTargetTemp = MASHOUTTARGETTEMP;      
         if (RcpCaramelizationBoil == 0) {
           setSubStatus(0,"No caramelization boil");
-          BKTargetTemp = PREBOILTEMP;
-          MLTTargetTemp = MASHOUTTARGETTEMP;           
         }
         else {
           setSubStatus(1,"Heating for caramelization boil");
-          BKTargetTemp = CONSTANTHEAT;
-          if (RcpCaramelizationBoil > 10 * MINUTES) // if caramelization boil is longer than 10 minutes, will heat to a middle temperature and raise slowly to final temperature
-            MLTTargetTemp = midTemp;
-          else
-            MLTTargetTemp = MASHOUTTARGETTEMP;
         }
       }
       else {
-        if (SubStatus==2 && MLTTargetTemp<MASHOUTTARGETTEMP) 
-          MLTTargetTemp = midTemp + (MASHOUTTARGETTEMP - midTemp) * (TimeInStatus-caramelizationBoilStart) / (RcpCaramelizationBoil - 10*MINUTES);
-
         if (restStart == 0 && MLTTemp >= MASHOUTTARGETTEMP) {
           restStart = TimeInStatus;
           say("Reached mashout temp - will wait for 5 minutes");
@@ -646,14 +574,29 @@ void MainStateMachine() {
         BKSecondaryControl();
 
         if (restStart != 0) {
-          if (TimeInStatus >= restStart+5*MINUTES)  { /***** Constante ****/
+          float restEnd;
+          switch (int(SubStatus)) {
+            case 0:  // no caramelization boil, fixed 5 minutes rest
+              restEnd = restStart + 5*MINUTES;
+              break;
+            case 1: // waiting caremelization boil to start - it is unlikely 
+              restEnd = restStart + RcpCaramelizationBoil * MINUTES;
+              break;
+            case 2:
+              restEnd = restStart + TimeInStatus - caramelizationBoilStart + 3*MINUTES; // add 3 minutes to give time to sparge water preparation
+              if (restEnd < restStart + 5*MINUTES) { // if remaining caramelization boil is shorter than 5 minutes, assure 5 minuts of rest
+                restEnd = restStart + 5*MINUTES;
+              }
+              break;
+          }
+          if (TimeInStatus >= restEnd)  { /***** Constante ****/
             GoToNextStatus = true;
             if (caramelizationBoilStart!=0)
               caramelizationBoilStart = -(TimeInStatus-caramelizationBoilStart);
             keepSubStatus = true;
           }
           else
-            setCountDownMessage("Mashout ends in %s:%s", restStart+5*MINUTES - (int)TimeInStatus);
+            setCountDownMessage("Mashout ends in %s:%s", restEnd - (int)TimeInStatus);
         }
       }
     }

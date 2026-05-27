@@ -14,6 +14,9 @@
 #include "Swiss_911_Extra_Compressed_Regular18pt7b.h"
 #include <WiFi.h>
 #include <qrcode.h> 
+#include "IOTK.h"
+
+
 
 volatile bool touchFlag = false;
 static bool screenSaverActive = false;
@@ -411,7 +414,7 @@ static void (*pendingKeyboardOpen)() = nullptr;
 
 static bool isPinUnlocked() {
   if (!pinUnlocked) return false;
-  if (millis() - pinUnlockedAt > PIN_UNLOCK_DURATION_MS) {
+  if (MILLISDIFF(pinUnlockedAt, PIN_UNLOCK_DURATION_MS)) {
     pinUnlocked = false;
     Serial.println(">>> PIN: desbloqueio expirado <<<");
     return false;
@@ -547,7 +550,7 @@ static void openPinKeyboard(void (*afterUnlock)()) {
 // Processa um toque no modo teclado. Retorna true quando o teclado fecha (OK ou CANCEL).
 static bool handleKeyboardTouch(uint16_t kx, uint16_t ky) {
   // Debounce: ignora toques muito rápidos
-  if (millis() - kbLastTouchMs < KB_DEBOUNCE_MS) return false;
+  if (!MILLISDIFF(kbLastTouchMs,KB_DEBOUNCE_MS)) return false;
   kbLastTouchMs = millis();
 
   // --- Linha OK / CANCEL ---
@@ -664,7 +667,7 @@ void showActiveTaskScreen() {
   snprintf(title, sizeof(title), "on going task: %s", name);
   tft.drawString(title, 240, 22);
 
-  unsigned long remaining = (taskWindowEndTime > millis()) ? (taskWindowEndTime - millis()) / 1000UL : 0;
+  unsigned long remaining = (taskWindowEndTime>millis()) ? (taskWindowEndTime - millis()) / 1000UL : 0;
   char timeStr[40];
   snprintf(timeStr, sizeof(timeStr), "%lu min %02lu s remaining", remaining / 60, remaining % 60);
   tft.fillRect(0, 50, 480, 38, TFT_BLACK);
@@ -727,7 +730,7 @@ void updateTaskUIIfActive() {
     mainScreen();
     return;
   }
-  if (millis() - lastTaskUITimeUpdate < 1000) return;
+  if (!MILLISDIFF(lastTaskUITimeUpdate, 1000)) return;
   lastTaskUITimeUpdate = millis();
 
   unsigned long remaining = (taskWindowEndTime > millis()) ? (taskWindowEndTime - millis()) / 1000UL : 0;
@@ -817,15 +820,15 @@ void processTouch() {
   
   if (!touchFlag) {
     unsigned long ssTimeout = (unsigned long)FMTData.FMTScreensaverTime * 1000UL;
-    if (!screenSaverActive && !isVolumeDeterminationActive() && !taskUIActive && (millis()-lastClick > ssTimeout)) {
+    if (!screenSaverActive && !isVolumeDeterminationActive() && !taskUIActive && (MILLISDIFF(lastClick, ssTimeout))) {
       forceScreenSaver(true);
     }
     // Sai da tela de seleção de tarefa se ficar idle por mais que o timeout do screensaver
-    if (taskUIActive && taskUIScreen == 0 && (millis() - taskUIScreenOpenTime > ssTimeout)) {
+    if (taskUIActive && taskUIScreen == 0 && (MILLISDIFF(taskUIScreenOpenTime, ssTimeout))) {
       taskUIActive = false;
       forceScreenSaver(true);
     }
-    if (batchInfoActive && (millis() - lastClick > ssTimeout)) {
+    if (batchInfoActive && (MILLISDIFF(lastClick, ssTimeout))) {
       batchInfoActive = false;
       forceScreenSaver(true);
     }
@@ -840,7 +843,7 @@ void processTouch() {
       return;
     }
 
-    if (DisplayMode==1 && millis() - displayModeChangeTime > 2000) {
+    if (DisplayMode==1 && MILLISDIFF(displayModeChangeTime, 2000)) {
       // Se estiver mostrando QR code, volta para tela principal
       mainScreen();
       DisplayMode = 0;

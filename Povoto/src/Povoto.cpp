@@ -161,6 +161,9 @@ void setup() {
   
   server.on("/batch", HTTP_GET, handleBatchDataPage);
   server.on("/batch/update", HTTP_POST, handleBatchDataUpdate);
+
+  server.on("/counters", HTTP_GET, handleCountersDataPage);
+  server.on("/counters/update", HTTP_POST, handleCountersDataUpdate);
   
   server.on("/setpoint", HTTP_GET, handleSetPointDataPage);
   server.on("/setpoint/update", HTTP_POST, handleSetPointDataUpdate);
@@ -266,7 +269,7 @@ void loop() {
 
   // a cada 1 segundo: atualiza temperatura e tela (não durante o teclado)
   static unsigned long lastTempUpdate = 0;
-  if (!isTempKeyboardActive() && millis() - lastTempUpdate > 1000) {
+  if (!isTempKeyboardActive() && MILLISDIFF(lastTempUpdate, 1000)) {
     lastTempUpdate = millis();
     //temperature += 0.1;
     screenData();
@@ -287,7 +290,7 @@ void loop() {
   maybePersistCountersData();
 
   static unsigned long lastDataLog = 0;
-  if (millis() - lastDataLog >= 60000UL) {
+  if (MILLISDIFF(lastDataLog, 60000UL)) {
     lastDataLog = millis();
     doDataLog();
   }
@@ -306,7 +309,7 @@ void loop() {
     if (buttonPressStart == 0) {
       buttonPressStart = millis();
       resetTriggered = false;
-    } else if (!resetTriggered && (millis() - buttonPressStart) >= 3000) {
+    } else if (!resetTriggered && (MILLISDIFF(buttonPressStart, 3000))) {
       resetTriggered = true;
       resetDisplayHardware();
     }

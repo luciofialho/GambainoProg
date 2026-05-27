@@ -7,11 +7,11 @@ else
 
 
 // graph is sensitive to status - these are the boundaries
-    STMINMLT  =12;   STMAXMLT  =16;  // from infusion to PrepSparge
-    STMINBK1  =17;   STMAXBK1  =20;  // from sparge to KS_Whirlpool
-    STMINBK2  =25;   STMAXBK2  =30;  // from waitboil to Whirlpoolrest
+    STMINMLT  =10;   STMAXMLT  =15;  // from infusion to PrepSparge
+    STMINBK1  =16;   STMAXBK1  =19;  // from sparge to KS_Whirlpool
+    STMINBK2  =24;   STMAXBK2  =29;  // from waitboil to Whirlpoolrest
 
-    STTRAN    =31;                 // transfer
+    STTRAN    =30;                 // transfer
 
 try {STMINMLT = STMINMLT_;} catch {}
 try {STMAXMLT = STMAXMLT_;} catch {}

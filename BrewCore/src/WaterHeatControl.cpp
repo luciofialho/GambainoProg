@@ -273,6 +273,7 @@ float HLTTargetTempForMLTHeating(bool evaluateCoilEfficiency) {
     if (targHLTLimit > WATERBOILTEMP-1) 
       targHLTLimit = WATERBOILTEMP-1;
 
+    
     targHLT = tempBottom + (targMLT - tempBottom + HeatDampeningFactor * deltaMLT + HeatAdditiveCorrection) / HeatCoilEfficiency;
     if (targHLT > targHLTLimit) 
       targHLT = targHLTLimit;

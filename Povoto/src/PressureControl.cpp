@@ -12,7 +12,7 @@
 #include <math.h>
 
 
-#define DEBUGACCELERATION (debugging ? 20L : 1L)
+#define DEBUGACCELERATION (0*debugging ? 20L : 1L)
 #define TRANSFERTIME (10000 / DEBUGACCELERATION) 
 #define RELIEFTIME (10000 / DEBUGACCELERATION)
 #define SOLENOIDCLOSINGTIME (1000 / DEBUGACCELERATION)
@@ -109,6 +109,7 @@ static uint8_t pressureWindowIndex = 0;
 bool pressureSensorUnstable = false;
 static uint8_t pressureBadCount  = 0;
 static uint8_t pressureGoodCount = 0;
+static bool derivedStateRestorePending = true;
 
 float kelvin(float x) {
   return x + 273.15f;
@@ -151,6 +152,36 @@ float CO2DissolvedMols(float pressureBar, float sg, float temperatureC, float vo
 
   float molPerL = kH * pressureAtm * sgCorrection;
   return molPerL * volumeL;
+}
+
+static void restoreDerivedStateFromCounters() {
+  if (CountersData.headSpaceVolume > 0.0f) {
+    headSpaceVolume = CountersData.headSpaceVolume;
+    beerVolume = FMTData.FMTVolume - headSpaceVolume;
+    if (beerVolume < 0.0f) {
+      beerVolume = 0.0f;
+    }
+
+    if (CountersData.totalReliefCount > 1) {
+      headSpaceCO2Mols = ControlData.pressure    * headSpaceVolume / (CONST_R * kelvin(ControlData.temperature))
+                       - BatchData.startPressure * headSpaceVolume / (CONST_R * kelvin(BatchData.startTemperature));
+      if (headSpaceCO2Mols < 0.0f) {
+        headSpaceCO2Mols = 0.0f;
+      }
+    }
+    else {
+      headSpaceCO2Mols = 0.0f;
+    }
+  }
+  else {
+    headSpaceVolume = 0.0f;
+    beerVolume = 0.0f;
+    headSpaceCO2Mols = 0.0f;
+  }
+}
+
+void requestDerivedStateRestoreFromCounters() {
+  derivedStateRestorePending = true;
 }
 
 static void markSolenoidToggle() {
@@ -418,7 +449,8 @@ bool processPressureRelays() {
 
   if (timeToFinishRelief) {
     if (timeToOpenTransfer) {
-      if (millis() >= timeToOpenTransfer) {
+      if (MILLISDIFF(timeToOpenTransfer, 0)) {
+        //;Serial.printf("[PRESSURE] %lu / %lu: Abrindo transfer valve. Pressure=%.2f bar\n", millis(), timeToOpenTransfer, ControlData.pressure);
         readPressure();
         lastPressure = ControlData.pressure;
         blindHighPressure = ControlData.pressure;
@@ -431,7 +463,8 @@ bool processPressureRelays() {
       }
     }
     else if (timeToCloseTransfer) {
-      if (millis() >= timeToCloseTransfer) {
+      if (MILLISDIFF(timeToCloseTransfer, 0)) {
+        //;Serial.printf("[PRESSURE] %lu / %lu: Fechando transfer valve. Pressure=%.2f bar\n", millis(), timeToCloseTransfer, ControlData.pressure);
         digitalWrite(PINTRANSFERVALVE, LOW);
         markSolenoidToggle();
         ControlData.transferValve = false;
@@ -440,7 +473,8 @@ bool processPressureRelays() {
       }
     }
     else if (timeToOpenRelief) {
-      if(millis() >= timeToOpenRelief) {
+      if(MILLISDIFF(timeToOpenRelief, 0)) {
+        //;Serial.printf("[PRESSURE] %lu / %lu: Abrindo relief valve. Pressure=%.2f bar\n", millis(), timeToOpenRelief, ControlData.pressure);
         digitalWrite(PINRELIEFVALVE, HIGH);
         markSolenoidToggle();
         ControlData.reliefValve = true;
@@ -450,13 +484,15 @@ bool processPressureRelays() {
       }
     }
     else if (timeToRegisterPressure_) {
-      if (millis() >= timeToRegisterPressure_) {
+      if (MILLISDIFF(timeToRegisterPressure_, 0)) {
+        //;Serial.printf("[PRESSURE] %lu / %lu: Registrando pressão. Pressure=%.2f bar\n", millis(), timeToRegisterPressure_, ControlData.pressure);
         timeToRegisterPressure_ = 0;
         processPressure(true);
       }
     }
     else if (timeToCloseRelief) {
-      if (millis() >= timeToCloseRelief) {
+      if (MILLISDIFF(timeToCloseRelief, 0)) {
+        //;Serial.printf("[PRESSURE] %lu / %lu: Fechando relief valve. Pressure=%.2f bar\n", millis(), timeToCloseRelief, ControlData.pressure);
         digitalWrite(PINRELIEFVALVE, LOW);
         markSolenoidToggle();
         ControlData.reliefValve = false;
@@ -469,7 +505,7 @@ bool processPressureRelays() {
       digitalWrite(PINRELIEFVALVE, LOW);
       ControlData.transferValve = false;  
       ControlData.reliefValve = false;
-      if (timeToFinishRelief && millis() >= timeToFinishRelief) {
+      if (timeToFinishRelief && MILLISDIFF(timeToFinishRelief, 0)) {
         timeToFinishRelief = 0;
       }
     }
@@ -513,6 +549,9 @@ void pressureRelief(bool fromVolumeDetermination) {
   timeToCloseRelief      = RELIEFTIME + extraMs;
   timeToFinishRelief     = 1000;
   timeToRegisterPressure_ = 0; // garante que estado anterior não vaza para novo ciclo
+
+  ;Serial.printf("[PRESSURE] Relief requested: pressure=%.2f bar, extraMs=%lu, transferOpen=%lu, transferClose=%lu, reliefOpen=%lu, reliefClose=%lu\n", 
+                ControlData.pressure, extraMs, timeToOpenTransfer, timeToCloseTransfer, timeToOpenRelief, timeToCloseRelief);
 
   // NÃO chamar processPressureRelays() aqui:
   // pressureRelief() é chamado do async web task (core 0) e processPressureRelays()
@@ -742,6 +781,10 @@ void pressureControl() {
   }
 
   readPressure();
+  if (derivedStateRestorePending) {
+    restoreDerivedStateFromCounters();
+    derivedStateRestorePending = false;
+  }
   if (!processPressureRelays()) {
     static unsigned long lastPressureCheckMillis = 0;
     if (MILLISDIFF(lastPressureCheckMillis, 1000)) {
@@ -759,7 +802,7 @@ void pressureControl() {
     else 
       if (SetPointData.setPointPressure > 0.0f && 
          ControlData.pressure > (SetPointData.setPointPressure / sqrt(pressureDropFactor)) &&
-        (taskWindowType == 0 || taskWindowEndTime < millis())) {
+        (taskWindowType == 0 || !MILLISDIFF(taskWindowEndTime, 0))) {
           pressureRelief(false);
         }
       if (ControlData.pressure > CalibrationData.maximumPressure) {

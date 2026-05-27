@@ -136,8 +136,6 @@ const float CIPLinePotSoakTimes[3] =
 
 
 // Phisical constants
-#define LODOWATERTEMPERATURE           90.0   // temperature to remove dissolved oxygen from water
-#define TIMETODEAREATE                 (5*MINUTES) // time to deaerate water at LODOWATERTEMPERATURE
 #define WATERBOILTEMP                  97.5   // water temperature to be considered boil in standby flag - consider altitude
 #define WORTBOILTEMP                   97.6   // water temperature to be considered boil in standby flag - consider altitude
 #define WORTTEMPTOAVOIDBOILDOVER       97.4   // wort temperature to avoid boil over

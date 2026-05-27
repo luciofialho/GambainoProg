@@ -17,9 +17,11 @@ bool  debugTemperatureOverride = false;  // when true, ControlData.temperature i
 // FMT control variables
 byte  ChillHeatMode = FMTIDLE;
 float lastTarget = -999;
-unsigned long int lastTargetChange = 0;
-unsigned long int lastModeChange = 0;
-unsigned long int nextModeChange = 0;
+unsigned long int lastTargetChange = 1; // 1 is to avoid imediate target change at startup due to invalid initial value of lastTarget
+unsigned long int lastModeChange = 1;
+unsigned long int nextModeChange = 1;
+bool millisOverflowWindow = false;
+
 byte mode = FMTIDLE;
 bool interruptedCooling = false;
 bool interruptedHeating = false;
@@ -37,15 +39,33 @@ unsigned long int holdPressureDueToTemperatureRelays() {
 void resetChillHeatCycle() {
   mode = FMTIDLE;
   ChillHeatMode = FMTIDLE;
-  lastModeChange = 0;
-  nextModeChange = 0;
+  lastModeChange = 1; // 1 is to avoid immediate mode change at startup due to invalid initial value
+  nextModeChange = 1; // 1 is to avoid immediate mode change at startup due to invalid initial value
   interruptedCooling = false;
   interruptedHeating = false;
 }
 
+char *getTemperatureModeLabel() {
+  static char modeIdle[] = "IDLE";
+  static char modeChill[] = "CHILL";
+  static char modeChillPaused[] = "CHILL (paused)";
+  static char modeHeat[] = "HEAT";
+  static char modeHeatPaused[] = "HEAT (paused)";
 
-long int fermenterOnOffCycle(float temperature,bool mode) {
-  long timeUnit = debugging ? 1000L : 60000L; // mudar para debugar
+  if (mode == FMTCHILL)
+    return modeChill;
+  if (mode == FMTHEAT)
+    return modeHeat;
+  if (interruptedCooling)
+    return modeChillPaused;
+  if (interruptedHeating)
+    return modeHeatPaused;
+  return modeIdle;
+}
+
+
+long int fermenterOnOffCycle(float temperature, byte targetMode) {
+  long timeUnit = debugging ? 1000L : 60000L; 
 
   if (SetPointData.mode==MODE_BREWING_TRANSFERING) // brewing/transfering mode
     return 5*timeUnit;
@@ -58,6 +78,9 @@ long int fermenterOnOffCycle(float temperature,bool mode) {
     long int minOffTime = FMTData.FMTMinOffTime * timeUnit;
 
     onTime = long((12.5*log(temperature)-9.04) * timeUnit); // Todo3: simplificar modelo de tempo
+    if (targetMode == FMTCHILL) {
+      Serial.print("FMT: Calculated on time: "); Serial.print(onTime); Serial.print("ms for temperature: "); Serial.println(temperature);
+    }
 
     if (onTime>maxOnTime)
       onTime = maxOnTime;
@@ -69,19 +92,26 @@ long int fermenterOnOffCycle(float temperature,bool mode) {
     else
       offTime = minOffTime;
 
-    if (mode)
+    if (targetMode == FMTCHILL)
       return onTime;
-    else
-      return offTime;
+
+    if (targetMode == FMTHEAT)
+      return long(FMTData.FMTHeaterOnTime * timeUnit);
+
+    if (mode == FMTHEAT)
+      return long(FMTData.FMTHeaterOffTime * timeUnit);
+
+    return offTime;
   }
   else
-    return mode ? 0 : 24*60*60*1000L;
+    return targetMode == FMTCHILL ? 0 : 24*60*60*1000L;
 }
 
 void temperatureControl() {
   static unsigned long int lastRun = 0;
   if (!(MILLISDIFF(lastRun,100))) 
     return;
+  lastRun = millis();
 
   
   byte newMode = FMTIDLE;  
@@ -176,11 +206,12 @@ void temperatureControl() {
     switch (mode) {
       case FMTIDLE:
         if (ControlData.temperature > maxTarget  || (ControlData.temperature>minTarget && interruptedCooling)) {
-          if (millis() > nextModeChange)
+          if (!millisOverflowWindow && MILLISPAST(nextModeChange)) {
             newMode = FMTCHILL;
+          }
         }
-        else if (ControlData.temperature < minTarget) {
-          if (lastModeChange==0 || millis()>nextModeChange) // anti boucing Constante
+        else if (ControlData.temperature < minTarget - 2*FMTOFFSET) { // Lucio: melhorar isso
+          if (lastModeChange==0 || (!millisOverflowWindow && MILLISPAST(nextModeChange))) // anti boucing Constante
             newMode = FMTHEAT; 
         }
       break;
@@ -190,16 +221,18 @@ void temperatureControl() {
           newMode = FMTIDLE;
           interruptedCooling = false;
         }
-        else if (millis()>nextModeChange) {
+        else if ((!millisOverflowWindow) && (MILLISPAST(nextModeChange))) {
           newMode = FMTIDLE;
           interruptedCooling = true;
         }
         break;
 
       case FMTHEAT:
-        if (ControlData.temperature >= SetPointData.setPointTemp)
+        if (ControlData.temperature >= SetPointData.setPointTemp) {
           newMode = FMTIDLE;
-        else if (millis()>nextModeChange) {
+          interruptedHeating = false;
+        }
+        else if (!millisOverflowWindow && MILLISPAST(nextModeChange)) {
           newMode = FMTIDLE;
           interruptedHeating = true;
         }
@@ -208,9 +241,31 @@ void temperatureControl() {
   }
     
   if (newMode != mode) {
+    ;Serial.print(millis()); Serial.print(": Mode change from "); Serial.print(mode==FMTIDLE ? "IDLE" : (mode==FMTCHILL ? "CHILL" : "HEAT")); Serial.print(" to "); Serial.println(newMode==FMTIDLE ? "IDLE" : (newMode==FMTCHILL ? "CHILL" : "HEAT"));
+    if (newMode == FMTCHILL || newMode == FMTHEAT) {
+      interruptedCooling = false;
+      interruptedHeating = false;
+    }
+
     lastModeChange = millis();
     mode = newMode;
-    nextModeChange = millis() + fermenterOnOffCycle(ControlData.temperature,newMode==FMTCHILL);
+    nextModeChange = millis() + fermenterOnOffCycle(ControlData.temperature,newMode);
+    if (nextModeChange < lastModeChange)  // overflow in millis()
+      millisOverflowWindow = true;
+    else
+      millisOverflowWindow = false;
+  }
+
+  if (mode == FMTIDLE) {
+    if (interruptedCooling)
+      ChillHeatMode = FMTCHILL;
+    else if (interruptedHeating)
+      ChillHeatMode = FMTHEAT;
+    else
+      ChillHeatMode = FMTIDLE;
+  }
+  else {
+    ChillHeatMode = mode;
   }
 
   // interval control
@@ -220,7 +275,7 @@ void temperatureControl() {
 
   switch (actualMode) {    
     case FMTCHILL:
-      chillControl = millis()>30000;
+      chillControl = millis()>30000; // only if it's been more than 30s since povoto is on, to avoid stressing chiller during maintenance
       heatControl = false;
     break;
 
@@ -244,11 +299,14 @@ void temperatureControl() {
     chillControl = true;
   else if (ControlData.chillerOverride == 2)
     chillControl = false;
-
+  else if (SetPointData.mode == MODE_OFF)
+    chillControl = false; 
   if (ControlData.heaterOverride == 1)
     heatControl = true;
   else if (ControlData.heaterOverride == 2)
     heatControl = false;
+  else if (SetPointData.mode == MODE_OFF)
+    heatControl = false; 
 
   updateCountersTimes(chillControl, heatControl);
 
@@ -269,7 +327,7 @@ char *getTemperatureControlStatus(char *st) {
           ControlData.temperature,
           environmentTemp,
           SetPointData.setPointTemp,
-          mode==FMTIDLE ? "IDLE" : (mode==FMTCHILL ? "CHILL" : "HEAT"),
+          getTemperatureModeLabel(),
           chillControl ? "ON" : "OFF",
       heatControl ? "ON" : "OFF",
       CountersData.totalChillTime,

@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "GambainoCommon.h"
 #include "PovotoTasks.h"
 #include "PovotoData.h"
 

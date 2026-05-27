@@ -167,28 +167,6 @@ void statusEntrySetup() {
           TopUpHeater        = OFF;
           break;
 
-        case HLTLOADANDDEAERATE:
-          setupLine(LINEINFUSION);        
-          CirculationMode    = CIRCNONE;
-            HLTValve         = PORT_A;
-            MLTValveA        = CLOSED;
-            MLTValveB        = CLOSED;
-            MLTPump          = OFF;
-          HLTTargetTemp      = LODOWATERTEMPERATURE+5; 
-          HLTTargetVolume    = HLTMAXVOLUME; 
-          HLTPriority        = 'V';
-          BKTargetTemp       = NOHEAT;
-          BKValveA           = CLOSED;
-          BKValveB           = CLOSED;
-          WhirlpoolValve     = PORT_B;
-          BKPump             = OFF;
-          Chiller1           = CLOSED;
-          ColdBankValve      = PORT_A;
-          // waterIn managed by IPC
-          TopUpHeater        = OFF;
-          break;
-
-
         case PREPWATERFORINFUSION:
           setupLine(LINEINFUSION);        
           CirculationMode    = CIRCNONE;
@@ -208,9 +186,7 @@ void statusEntrySetup() {
           Chiller1           = CLOSED;
           ColdBankValve      = PORT_A;
           MLTDrain           = CLOSED;
-          waterInStop();
-          MLTDrain           = OPEN;
-          // waterIn managed by IPC
+          waterInStart(HLTMAXVOLUME, WATERTARGET_HLT, true);
           TopUpHeater        = OFF;
           break;
             
@@ -324,7 +300,7 @@ void statusEntrySetup() {
           HLTTargetTemp      = SPARGETEMP;        
           HLTTargetVolume    = NOWATERIN;
           HLTPriority        = 'T';
-          BKTargetTemp       = NOHEAT;
+          BKTargetTemp       = RcpCaramelizationBoil!=0 ? PREBOILTEMP : float(RcpBoilTemp); 
           BKValveA           = CLOSED;
           BKValveB           = OPEN;
           WhirlpoolValve     = PORT_A;
@@ -343,7 +319,7 @@ void statusEntrySetup() {
           //HLTTargetTemp      
           HLTTargetVolume    = HLTMAXVOLUME;
           HLTPriority        = 'T';
-          BKTargetTemp       = NOHEAT; // will change accordingly to caramelization boil in main status machine
+          BKTargetTemp       = RcpCaramelizationBoil!=0 ? PREBOILTEMP : float(RcpBoilTemp); 
           BKValveA           = CLOSED;
           BKValveB           = OPEN;
           WhirlpoolValve     = PORT_A;

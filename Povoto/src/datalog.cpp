@@ -8,21 +8,6 @@
 #include "PressureControl.h"
 #include "PovotoTasks.h"
 
-static const char *getModeLabel() {
-  if (ChillHeatMode == FMTCHILL && interruptedCooling) {
-    return "chill (paused)";
-  }
-  switch (ChillHeatMode) {
-    case FMTCHILL:
-      return "chill";
-    case FMTHEAT:
-      return "heat";
-    case FMTIDLE:
-    default:
-      return "idle";
-  }
-}
-
 void doDataLog() {
   if (!datalogFolderNameInUse[0]) {
     return;
@@ -30,6 +15,15 @@ void doDataLog() {
 
   static bool headerWritten = false;
   static int lastBatchNum = -1;
+
+  if (BatchData.batchNumber == 0) {
+    headerWritten = false;
+    return;
+  }
+
+  if (SetPointData.mode == MODE_OFF) {
+    return;
+  }
 
   int batchNum = (int)BatchData.batchNumber;
   if (batchNum != lastBatchNum) {
@@ -47,13 +41,18 @@ void doDataLog() {
     GLogAddData("TempTarget");
     GLogAddData("Pressure");
     GLogAddData("PressureTarget");
+    GLogAddData("TemperatureMode");
     GLogAddData("Volume");
     GLogAddData("SG");
     GLogAddData("Plato");
     GLogAddData("ABV");
     GLogAddData("ReliefCount");
     GLogAddData("CO2MolsEjected");
-    GLogAddData("CO2MolsProduced");
+    GLogAddData("CO2InSolution");
+    GLogAddData("HeadSpaceVolume");
+    GLogAddData("CorrectionPlato");
+    GLogAddData("SGAttenuation");
+    GLogAddData("HeadSpaceCO2Mols");
     GLogAddData("ChillTime");
     GLogAddData("HeatTime");
     GLogAddData("taskWindowType");
@@ -68,6 +67,7 @@ void doDataLog() {
     GLogAddData(SetPointData.setPointTemp, 2);
     GLogAddData(ControlData.pressure, 3);
     GLogAddData(SetPointData.setPointPressure, 3);
+    GLogAddData(getTemperatureModeLabel());
     GLogAddData(beerVolume, 0);
     GLogAddData(beerSG,5);
     GLogAddData(beerPlato,3);
@@ -75,6 +75,9 @@ void doDataLog() {
     GLogAddData(CountersData.totalReliefCount,0);
     GLogAddData(CountersData.totalMolsEjected,3);
     GLogAddData(CountersData.CO2InSolution,3);
+    GLogAddData(CountersData.headSpaceVolume,3);
+    GLogAddData(CountersData.correctionPlato,3);
+    GLogAddData(CountersData.SGAttenuation,5);
     GLogAddData(headSpaceCO2Mols,3);
     GLogAddData(CountersData.totalChillTime/3600.,2);
     GLogAddData(CountersData.totalHeatTime /3600.,2);
