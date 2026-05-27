@@ -56,6 +56,7 @@ void doDataLog() {
     GLogAddData("ChillTime");
     GLogAddData("HeatTime");
     GLogAddData("taskWindowType");
+    GLogAddData("Millis");
     GLogSend();
     headerWritten = true;
   }
@@ -82,6 +83,7 @@ void doDataLog() {
     GLogAddData(CountersData.totalChillTime/3600.,2);
     GLogAddData(CountersData.totalHeatTime /3600.,2);
     GLogAddData(taskWindowType);
+    GLogAddData(millis());
     GLogSend();
   }
 }
