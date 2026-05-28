@@ -14,8 +14,10 @@
 
 void handleMainMenu(AsyncWebServerRequest *request) {
   char dateTimeBuf[20];
+  char reliefsPerHourText[48];
   NTPFormatedDateTime(dateTimeBuf);
   String uptimeStr = formatedUptime();
+  getReliefsPerHourText(reliefsPerHourText, sizeof(reliefsPerHourText));
 
   String html = "<!DOCTYPE html><html><head>";
   html += "<meta charset='UTF-8'>";
@@ -44,7 +46,7 @@ void handleMainMenu(AsyncWebServerRequest *request) {
   html += "<div class='status-item'><strong>Temperature:</strong> " + String(ControlData.temperature, 1) + " °C</div>";
   html += "<div class='status-item'><strong>Pressure:</strong> " + String(ControlData.pressure, 1) + " bar</div>";
   html += "<div class='status-item'><strong>Volume:</strong> " + String(beerVolume, 1) + " L</div>";
-  html += "<div class='status-item'><strong>SG:</strong> " + String(beerSG, 3) + "</div>";
+  html += "<div class='status-item'><strong>SG:</strong> " + String(beerSG, 3) + String(reliefsPerHourText) + "</div>";
   html += "<div class='status-item'><strong>Uptime:</strong> " + uptimeStr + "</div>";
   html += "<div class='status-item'><strong>Date/Time:</strong> " + String(dateTimeBuf) + "</div>";
   html += "</div>";

@@ -15,6 +15,8 @@ void requestDerivedStateRestoreFromCounters();
 float CO2Mass(float mols=-1);
 float CO2DissolvedMols(float pressureBar, float sg, float temperatureC, float volumeL);
 boolean inPressureNoiseWindow();
+void getReliefsPerHourText(char *out, size_t outSize);
+void getReliefsPerHourCompactText(char *out, size_t outSize);
 
 extern float beerVolume;
 extern float beerSG;

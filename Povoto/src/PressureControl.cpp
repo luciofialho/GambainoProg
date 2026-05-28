@@ -12,7 +12,7 @@
 #include <math.h>
 
 
-#define DEBUGACCELERATION (0*debugging ? 20L : 1L)
+#define DEBUGACCELERATION (debugging ? 20L : 1L)
 #define TRANSFERTIME (10000 / DEBUGACCELERATION) 
 #define RELIEFTIME (10000 / DEBUGACCELERATION)
 #define SOLENOIDCLOSINGTIME (1000 / DEBUGACCELERATION)
@@ -29,6 +29,9 @@
 
 #define PRESSURE_SAMPLE_MIN_MS 250
 #define PRESSURE_SAMPLES_MAX 3000
+#define RELIEFS_WINDOW_SIZE 5
+#define RELIEF_OVERDUE_FACTOR 1.20f
+#define RELIEF_PER_HOUR_MIN_DISPLAY 0.20f
 
 #define CONST_R 0.0831446 // constante dos gases em bar*L/(mol*K) 
 #define CO2MOLAR_MASS 44.01
@@ -110,6 +113,109 @@ bool pressureSensorUnstable = false;
 static uint8_t pressureBadCount  = 0;
 static uint8_t pressureGoodCount = 0;
 static bool derivedStateRestorePending = true;
+
+static unsigned long reliefMillisWindow[RELIEFS_WINDOW_SIZE];
+static uint8_t reliefMillisCount = 0;
+static uint8_t reliefMillisIndex = 0;
+static bool reliefsPerHourAvailable = false;
+static float reliefsPerHourValue = 0.0f;
+
+static void resetReliefsPerHourState() {
+  reliefMillisCount = 0;
+  reliefMillisIndex = 0;
+  reliefsPerHourAvailable = false;
+  reliefsPerHourValue = 0.0f;
+}
+
+static void updateReliefsPerHour(bool registerReliefEvent) {
+  if (SetPointData.mode != MODE_FERMENTING) {
+    resetReliefsPerHourState();
+    return;
+  }
+
+  const unsigned long now = millis();
+  if (registerReliefEvent) {
+    reliefMillisWindow[reliefMillisIndex] = now;
+    reliefMillisIndex = (reliefMillisIndex + 1) % RELIEFS_WINDOW_SIZE;
+    if (reliefMillisCount < RELIEFS_WINDOW_SIZE) {
+      reliefMillisCount++;
+    }
+  }
+
+  if (reliefMillisCount < RELIEFS_WINDOW_SIZE) {
+    reliefsPerHourAvailable = false;
+    return;
+  }
+
+  const uint8_t oldestIndex = reliefMillisIndex;
+  const uint8_t newestIndex = (oldestIndex + RELIEFS_WINDOW_SIZE - 1) % RELIEFS_WINDOW_SIZE;
+  const unsigned long firstMillis = reliefMillisWindow[oldestIndex];
+  const unsigned long lastMillis = reliefMillisWindow[newestIndex];
+
+  unsigned long consideredLastMillis = lastMillis;
+  const unsigned long historicalSpan = lastMillis - firstMillis;
+  if (historicalSpan == 0) {
+    reliefsPerHourAvailable = false;
+    return;
+  }
+
+  const float historicalAverage = historicalSpan / float(RELIEFS_WINDOW_SIZE - 1);
+  const unsigned long sinceLastRelief = now - lastMillis;
+  if (sinceLastRelief > (unsigned long)(historicalAverage * RELIEF_OVERDUE_FACTOR)) {
+    consideredLastMillis = now;
+  }
+
+  const unsigned long consideredSpan = consideredLastMillis - firstMillis;
+  if (consideredSpan == 0) {
+    reliefsPerHourAvailable = false;
+    return;
+  }
+
+  const float avgMillisPerRelief = consideredSpan / float(RELIEFS_WINDOW_SIZE - 1);
+  if (avgMillisPerRelief <= 0.0f) {
+    reliefsPerHourAvailable = false;
+    return;
+  }
+
+  reliefsPerHourValue = 3600000.0f / avgMillisPerRelief;
+  reliefsPerHourAvailable = true;
+}
+
+void getReliefsPerHourText(char *out, size_t outSize) {
+  if (!out || outSize == 0) {
+    return;
+  }
+
+  out[0] = '\0';
+  if (SetPointData.mode != MODE_FERMENTING) {
+    return;
+  }
+
+  if (!reliefsPerHourAvailable || reliefsPerHourValue < RELIEF_PER_HOUR_MIN_DISPLAY) {
+    snprintf(out, outSize, " (Reliefs/hour: N/A)");
+    return;
+  }
+
+  snprintf(out, outSize, " (Reliefs/hour: %.1f)", reliefsPerHourValue);
+}
+
+void getReliefsPerHourCompactText(char *out, size_t outSize) {
+  if (!out || outSize == 0) {
+    return;
+  }
+
+  out[0] = '\0';
+  if (SetPointData.mode != MODE_FERMENTING) {
+    return;
+  }
+
+  if (!reliefsPerHourAvailable || reliefsPerHourValue < RELIEF_PER_HOUR_MIN_DISPLAY) {
+    snprintf(out, outSize, " RPH:N/A");
+    return;
+  }
+
+  snprintf(out, outSize, " RPH:%.1f", reliefsPerHourValue);
+}
 
 float kelvin(float x) {
   return x + 273.15f;
@@ -348,6 +454,7 @@ void processPressure(bool relieving) {
   }      
 
   readPressure();
+  updateReliefsPerHour(relieving);
   
   if  (relieving) {
     static float lastPressureDrop = 0;
@@ -364,14 +471,16 @@ void processPressure(bool relieving) {
     blindLowPressure = ControlData.pressure;
     blindLowPressureMillis = millis();
 
-    float pressureDropFactor;
-    if (ControlData.pressure>0.01)
-      pressureDropFactor = (ControlData.pressure-blindWindowCorrection) / lastPressure;
-    else
-      pressureDropFactor = 1.0f;
+    float instantPressureDropFactor = 1.0f;
+    if (lastPressure > 0.01f) {
+      instantPressureDropFactor = (ControlData.pressure - blindWindowCorrection) / lastPressure;
+    }
 
-    lnPressureDropAvg.add(log(pressureDropFactor));
-    pressureDropFactor = exp(lnPressureDropAvg.value());
+    // Keep factor in a valid range for log() and downstream equations.
+    instantPressureDropFactor = fmaxf(0.001f, fminf(instantPressureDropFactor, 0.999f));
+    lnPressureDropAvg.add(logf(instantPressureDropFactor));
+    pressureDropFactor = expf(lnPressureDropAvg.value());
+    pressureDropFactor = fmaxf(0.001f, fminf(pressureDropFactor, 0.999f));
     
     headSpaceVolume = (FMTData.FMTReliefVolume * pressureDropFactor) / (1-pressureDropFactor);
     beerVolume = FMTData.FMTVolume - headSpaceVolume;
@@ -859,6 +968,16 @@ char *getPressureControlStatus(char *st) {
     strncat(st, tmp, 2000);
     snprintf(tmp, sizeof(tmp), "Relief count: %lu<br>Ejected CO2 mols: %.3f<br>Dissolved CO2 mols: %.3f<br>",
              (unsigned long)CountersData.totalReliefCount, CountersData.totalMolsEjected, dissolvedCO2Mols);
+    strncat(st, tmp, 2000);
+    if (!reliefsPerHourAvailable || reliefsPerHourValue < RELIEF_PER_HOUR_MIN_DISPLAY) {
+      if (!reliefsPerHourAvailable) {
+        snprintf(tmp, sizeof(tmp), "Reliefs/hour: N/A (need 5 reliefs, have %u)<br>", reliefMillisCount);
+      } else {
+        snprintf(tmp, sizeof(tmp), "Reliefs/hour: N/A (< %.2f/h)<br>", RELIEF_PER_HOUR_MIN_DISPLAY);
+      }
+    } else {
+      snprintf(tmp, sizeof(tmp), "Reliefs/hour: %.2f<br>", reliefsPerHourValue);
+    }
     strncat(st, tmp, 2000);
     snprintf(tmp, sizeof(tmp), "Headspace CO2 mols: %.3f<br>Total CO2 mols: %.3f<br>Total CO2 mass: %.2f g<br>",
              headSpaceCO2Mols, CountersData.totalMolsEjected + CountersData.CO2InSolution + headSpaceCO2Mols, CO2Mass());

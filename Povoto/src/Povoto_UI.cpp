@@ -51,6 +51,35 @@ static void formatEpochDateShort(uint32_t epoch, char *buf, size_t bufSize) {
   snprintf(buf, bufSize, "%02d/%02d", dayOfMonth, month);
 }
 
+static void formatBatchDateShort(const char *batchDate, char *buf, size_t bufSize) {
+  if (!buf || bufSize == 0) return;
+  if (!batchDate || batchDate[0] == '\0') {
+    snprintf(buf, bufSize, "n/a");
+    return;
+  }
+
+  int d = 0;
+  int m = 0;
+  int y = 0;
+
+  if (sscanf(batchDate, "%2d/%2d", &d, &m) == 2) {
+    snprintf(buf, bufSize, "%02d/%02d", d, m);
+    return;
+  }
+
+  if (sscanf(batchDate, "%4d-%2d-%2d", &y, &m, &d) == 3) {
+    snprintf(buf, bufSize, "%02d/%02d", d, m);
+    return;
+  }
+
+  if (sscanf(batchDate, "%2d-%2d", &d, &m) == 2) {
+    snprintf(buf, bufSize, "%02d/%02d", d, m);
+    return;
+  }
+
+  snprintf(buf, bufSize, "n/a");
+}
+
 int16_t textRealHeight(const GFXfont *gfxFont,const char *text, int16_t *yMinOut) {
   int16_t yMin = 32767;
   int16_t yMax = -32768;
@@ -136,9 +165,19 @@ void screenData() {
 
   tft.setTextColor(TFT_WHITE); 
   textOut(CENTER,&Swiss_911_Extra_Compressed_Regular12pt7b,86,21, "%04d", BatchData.batchNumber);
+
+  char batchDateShortBuf[8];
+  formatBatchDateShort(BatchData.batchDate, batchDateShortBuf, sizeof(batchDateShortBuf));
+
+  tft.setTextColor(TFT_LIGHTGREY,tft.color565(204,102,153));
+  textOut(CENTER,&Swiss_911_Extra_Compressed_Regular10pt7b,168,16, "  %s  ", batchDateShortBuf);
+
+
+  tft.setTextColor(TFT_LIGHTGREY);
   textOut(CENTER, &Swiss_911_Extra_Compressed_Regular72pt7b, 63,150, "%d",FMTData.PovotoNum);
-  tft.setTextColor(TFT_GREENYELLOW);
-  textOut(CENTER,&Swiss_911_Extra_Compressed_Regular16pt7b,343,27, BatchData.batchName);
+
+  tft.setTextColor(tft.color565(238,214,157),0);
+  textOut(CENTER,&Swiss_911_Extra_Compressed_Regular16pt7b,343,27, "   %s   ",BatchData.batchName);
   tft.setTextColor(TFT_WHITE); 
 
   // TEMPERATURE  
@@ -154,21 +193,21 @@ void screenData() {
 
   // TEMPERATURE TARGET
   tft.setTextColor(0);   
-  textOut(LEFT,&Swiss_911_Extra_Compressed_Regular12pt7b,320,105, "Target");
+  textOut(LEFT,&Swiss_911_Extra_Compressed_Regular12pt7b,320,104, "Target");
   tft.setTextColor(TFT_YELLOW,0); 
   if (SetPointData.setPointTemp != NOTaTEMP)
-    textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,105, "%.1f",SetPointData.setPointTemp);
+    textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,104, "%.1f",SetPointData.setPointTemp);
   else
-    textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,105, "n/a");
+    textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,104, "n/a");
 
   // SLOW TEMPERATURE TARGET 
   tft.setTextColor(0,tft.color565(153,153,204)); 
-  textOut(LEFT,&Swiss_911_Extra_Compressed_Regular12pt7b,320,130, "Slow target");
+  textOut(LEFT,&Swiss_911_Extra_Compressed_Regular12pt7b,320,132, "Slow target");
   tft.setTextColor(TFT_YELLOW,0); 
   if (SetPointData.setPointSlowTemp != NOTaTEMP) 
-    textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,131, "   %.1f",SetPointData.setPointSlowTemp);
+    textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,132, "   %.1f",SetPointData.setPointSlowTemp);
   else
-    textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,131, "   n/a");
+    textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,132, "   n/a");
 
   // PRESSURE 
   tft.setTextColor(TFT_WHITE,tft.color565(153,153,255)); 
@@ -177,16 +216,18 @@ void screenData() {
 
   // PRESSURE TARGET 
   tft.setTextColor(0);
-  textOut(LEFT,&Swiss_911_Extra_Compressed_Regular12pt7b,320,246, "Target");
+  textOut(LEFT,&Swiss_911_Extra_Compressed_Regular12pt7b,320,245, "Target");
   tft.setTextColor(TFT_YELLOW,0);
   if (SetPointData.setPointPressure != 0)
-    textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,246, "   %.2f", SetPointData.setPointPressure);
+    textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,245, "   %.2f", SetPointData.setPointPressure);
   else
-    textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,246, "   n/a");
+    textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,245, "   n/a");
 
   // CO2 MASS COUNT
-  tft.setTextColor(0);
-  textOut(LEFT,&Swiss_911_Extra_Compressed_Regular12pt7b,320,273, "g CO2");
+  char reliefsPerHourCompact[24];
+  getReliefsPerHourCompactText(reliefsPerHourCompact, sizeof(reliefsPerHourCompact));
+  tft.setTextColor(0, tft.color565(185,208,170));
+  textOut(LEFT,&Swiss_911_Extra_Compressed_Regular12pt7b,320,273, "g CO2%s ", reliefsPerHourCompact);
   tft.setTextColor(TFT_YELLOW,0);
   textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,273, " %.0f", CO2Mass()); 
 
