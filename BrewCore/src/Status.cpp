@@ -459,8 +459,8 @@ void MainStateMachine() {
 
           case 1:
             if (HLTTemp >= HLTTargetTemp - ALLOWEDTEMPOFFSET) {
-              stopTimer = TimeInStatus + 15*MINUTES;
-              setSubStatus(2,"Holding HLT water at target temperature");
+              stopTimer = TimeInStatus + 5*MINUTES;
+              setSubStatus(2,"Holding HLT water at target temperature"); 
             }
             break;
 
@@ -656,10 +656,16 @@ void MainStateMachine() {
         SubStatus = 0;
       }
       else {
-        if (BKLevel==3 && SubStatus==0) {  // make sure pump runs at least once before whirlpool intake is under wort to avoid bubbles
+        if (BKLevel==2 && SubStatus==0) {  // make sure pump runs at least once before whirlpool intake is under wort to avoid bubbles
           BKPump = ON;
           BKPump.setWithDelay(OFF, 7 * SECONDS); 
+          MLTValveB.setWithDelay(CLOSED, 14 * SECONDS); 
           SubStatus = 1;
+        }
+        if (BKLevel==3 && SubStatus==1) {
+          BKPump = ON;
+          BKPump.setWithDelay(OFF, 7 * SECONDS); 
+          SubStatus = 2;
         }
         if (BKLevel==4) { // sound alert only
           sound_Attention();
@@ -866,10 +872,18 @@ void MainStateMachine() {
     case WHIRLPOOLREST:
       if (EnteringStatus) {
         TimeInStatus = -(float)RcpWhirlpoolRestTime*MINUTES;
-        sendTransferStartPacket();
+        SubStatus = 0;
       }
       else {
-        checkFermTempTimeout();
+        if (SubStatus==0) {
+          if (TimeInStatus > -5*MINUTES) { /**** Constante ****/
+            sendTransferStartPacket();
+            SubStatus = 1;
+          }
+        }
+          else
+            checkFermTempTimeout();
+
         if (TimeInStatus > 0)
           GoToNextStatus = Todo_AllowTransferStart.neededTodoIsReady();
       }

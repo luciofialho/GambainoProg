@@ -65,7 +65,7 @@ DEFSTATUS (48, CIPWRINSE3                   ,"Rinse phase 3 / 4")
 DEFSTATUS (49, CIPWRINSE4                   ,"Rinse phase 4 / 4")
 
 // incluir status CIPWAFTERRINSE
-DEFSTATUS (50, CIPWAFTERRINSE               ,"Rinse after rinse")
+DEFSTATUS (50, CIPWAFTERRINSE               ,"Drain after rinse")
 
 DEFSTATUS (51, MANUALCIPLINE                ,"Manual CIP - Line")
 DEFSTATUS (52, MANUALCIPFMT                 ,"Manual CIP - FMT")

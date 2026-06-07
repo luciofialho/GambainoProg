@@ -11,12 +11,14 @@ void handlePressureHistoryCSV(AsyncWebServerRequest *request);
 void handlePressureDumpCSV(AsyncWebServerRequest *request);
 bool startVolumeDetermination(char *reason, size_t reasonSize);
 bool isVolumeDeterminationActive();
+void applyDumpWindowHeadspaceRecalc(float headspaceBeforeL, float pressureBeforeBar, float pressureAfterBar);
 void requestDerivedStateRestoreFromCounters();
 float CO2Mass(float mols=-1);
 float CO2DissolvedMols(float pressureBar, float sg, float temperatureC, float volumeL);
 boolean inPressureNoiseWindow();
 void getReliefsPerHourText(char *out, size_t outSize);
 void getReliefsPerHourCompactText(char *out, size_t outSize);
+float getReliefsPerHourValue();
 
 extern float beerVolume;
 extern float beerSG;

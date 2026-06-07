@@ -287,6 +287,7 @@ void loop() {
     }
   }
   pressureControl();
+  maybeSendBrewfatherLog();
   maybePersistCountersData();
 
   static unsigned long lastDataLog = 0;
@@ -328,3 +329,8 @@ void loop() {
 }
 
 
+/*
+Calculo de vbolume do headspace está sensível a pressão ou a temperatura. volume caiu só de subir pressão/temperatura 
+o task de dump está jogando o volume lá para cima
+
+*/

@@ -22,6 +22,7 @@
 #define TRANSFERENDPACKET    'E'   // BrewCore→Povoto: transfer complete
 #define FERMERTEMPPACKET     'F'   // Povoto→BrewCore: "povotoIndex,temperature"
 #define ENVTEMPPACKET        'V'   // BrewCore→broadcast: "environmentTemp"
+#define BREWFATHERLOGPACKET  'W'   // Povoto→SideKick: full Brewfather JSON payload
 
 #define SERIAL2_SPEED 1000000
 #define SERIAL2TIMEOUT 100

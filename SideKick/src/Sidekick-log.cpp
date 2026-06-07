@@ -1,4 +1,6 @@
 #include <Arduino.h>
+#include <HTTPClient.h>
+#include <WiFiClient.h>
 #include <WiFiClientSecure.h>
 #include <GambainoCommon.h>
 
@@ -8,16 +10,64 @@ long int logLastEntry=-1;   // index of last entry added
 long int logRxQueueStart=0; // index of first entry to lock for sending
 long int logRxLockedStart=0; // index of first entry being sent
 bool hasNewLog = false; // flag to indicate new log entry added
+bool brewfatherHasPendingLog = false;
+bool brewfatherSending = false;
+char brewfatherLatestPayload[MAXPACKETSIZE+1];
 unsigned long numCacheOverflow=0; // number of times cache overflowed
+unsigned long numBrewfatherReplacedBeforeSend=0;
 unsigned long lastCashLogMs      = 0; // millis of last log received from BrewCore
+unsigned long lastCashBrewfatherLogMs = 0;
 unsigned long lastSendAttemptMs  = 0; // millis of last send attempt to Google Sheets
 unsigned long lastSendConnectedMs= 0; // millis of last successful TCP connect
 unsigned long numSendAttempts    = 0; // total send attempts
 unsigned long numSendConnected   = 0; // total successful connects
+unsigned long lastBrewfatherSendAttemptMs  = 0;
+unsigned long lastBrewfatherSendConnectedMs= 0;
+unsigned long numBrewfatherSendAttempts    = 0;
+unsigned long numBrewfatherSendConnected   = 0;
 // mutext for log cache
 SemaphoreHandle_t mutexLogCache;
 
 const char* dataLogScriptURL = "https://script.google.com/macros/s/AKfycbyBmwFQoiJUpesd4LlS1Bf908ZcU5m0HmAG3s7Ushouiz10uHpkXKjV8ZOOkGI2nQuyyQ/exec";
+
+#ifndef BREWFATHER_STREAM_URL
+#define BREWFATHER_STREAM_URL "http://log.brewfather.net/stream?id=JQ3NcxkNWbcDdD"
+#endif
+
+const char* brewfatherStreamURL = BREWFATHER_STREAM_URL;
+
+static void logBrewfatherPayloadPreview(const char *tag, const char *payload) {
+  if (!payload) {
+    Serial.printf("[BREWFATHER] %s payload=NULL\n", tag);
+    return;
+  }
+  const int len = (int)strlen(payload);
+  const int previewLen = len < 180 ? len : 180;
+  char preview[181];
+  memcpy(preview, payload, previewLen);
+  preview[previewLen] = '\0';
+  Serial.printf("[BREWFATHER] %s len=%d preview=%s%s\n",
+                tag,
+                len,
+                preview,
+                (len > previewLen ? "..." : ""));
+}
+
+static bool startsWithIgnoreCase(const char *value, const char *prefix) {
+  if (!value || !prefix) return false;
+  size_t i = 0;
+  for (; prefix[i] != '\0'; i++) {
+    char a = value[i];
+    char b = prefix[i];
+    if (a == '\0') return false;
+    if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+    if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+    if (a != b) return false;
+  }
+  return true;
+}
+
+void sendLogToBrewfather();
 
 // GTS Root R1 - Root CA usada pelos serviços Google (incluindo script.google.com)
 const char rootCACertificate[] PROGMEM = R"EOF(
@@ -92,6 +142,33 @@ void cashLogRequest(char *logEntry) {
     //xSemaphoreGive(mutexLogCache);
   }
 } 
+
+void cashBrewfatherLogRequest(char *logEntry) {
+  if (!logEntry) return;
+
+  lastCashBrewfatherLogMs = millis();
+
+  if (mutexLogCache == NULL)
+    mutexLogCache = xSemaphoreCreateMutex();
+
+  if (1/*xSemaphoreTake(mutexLogCache,pdMS_TO_TICKS(10))*/) {
+    if (brewfatherHasPendingLog && !brewfatherSending) {
+      numBrewfatherReplacedBeforeSend++;
+    }
+    strncpy(brewfatherLatestPayload, logEntry, MAXPACKETSIZE);
+    brewfatherLatestPayload[MAXPACKETSIZE] = '\0';
+    brewfatherHasPendingLog = true;
+    Serial.printf("[BREWFATHER] W received pending=%d sending=%d replacedBeforeSend=%lu\n",
+                  (int)brewfatherHasPendingLog,
+                  (int)brewfatherSending,
+                  numBrewfatherReplacedBeforeSend);
+    logBrewfatherPayloadPreview("RX", brewfatherLatestPayload);
+    //xSemaphoreGive(mutexLogCache);
+  }
+
+  // Send immediately; periodic task remains as fallback retry path.
+  sendLogToBrewfather();
+}
 
 void sendLogToGoogleSheets() {
   if (mutexLogCache == NULL)
@@ -184,6 +261,91 @@ void sendLogToGoogleSheets() {
   }
 }
 
+void sendLogToBrewfather() {
+  if (!brewfatherStreamURL[0]) {
+    Serial.println("[BREWFATHER] Skip send: BREWFATHER_STREAM_URL is empty");
+    return;
+  }
+  if (mutexLogCache == NULL)
+    return;
+
+  if (brewfatherSending) {
+    Serial.println("[BREWFATHER] Skip send: already sending");
+    return;
+  }
+
+  if (1/*xSemaphoreTake(mutexLogCache,pdMS_TO_TICKS(10))*/) {
+    if (!brewfatherHasPendingLog) {
+      return;
+    }
+
+    brewfatherSending = true;
+
+    while (brewfatherHasPendingLog) {
+      char payload[MAXPACKETSIZE+1];
+      strncpy(payload, brewfatherLatestPayload, MAXPACKETSIZE);
+      payload[MAXPACKETSIZE] = '\0';
+      brewfatherHasPendingLog = false;
+
+      Serial.printf("[BREWFATHER] HTTP begin url=%s\n", brewfatherStreamURL);
+      logBrewfatherPayloadPreview("TX", payload);
+
+      HTTPClient http;
+
+      lastBrewfatherSendAttemptMs = millis();
+      numBrewfatherSendAttempts++;
+
+      bool beginOk = false;
+      if (startsWithIgnoreCase(brewfatherStreamURL, "https://")) {
+        WiFiClientSecure secureClient;
+        secureClient.setInsecure();
+        beginOk = http.begin(secureClient, brewfatherStreamURL);
+        Serial.println("[BREWFATHER] Transport: HTTPS (WiFiClientSecure)");
+      } else {
+        WiFiClient plainClient;
+        beginOk = http.begin(plainClient, brewfatherStreamURL);
+        Serial.println("[BREWFATHER] Transport: HTTP (WiFiClient)");
+      }
+
+      if (!beginOk) {
+        Serial.println("[BREWFATHER] http.begin failed");
+        brewfatherHasPendingLog = true;
+        break;
+      }
+
+      http.addHeader("Content-Type", "application/json");
+      int httpCode = http.POST((uint8_t*)payload, strlen(payload));
+      String responseBody = http.getString();
+      http.end();
+
+      const int respLen = responseBody.length();
+      String respPreview = responseBody.substring(0, respLen > 220 ? 220 : respLen);
+      Serial.printf("[BREWFATHER] HTTP POST code=%d bodyLen=%d bodyPreview=%s%s\n",
+                    httpCode,
+                    respLen,
+                    respPreview.c_str(),
+                    (respLen > 220 ? "..." : ""));
+
+      if (httpCode > 0 && httpCode < 400) {
+        lastBrewfatherSendConnectedMs = millis();
+        numBrewfatherSendConnected++;
+        Serial.printf("[BREWFATHER] Send OK attempts=%lu connected=%lu\n",
+                      numBrewfatherSendAttempts,
+                      numBrewfatherSendConnected);
+      } else {
+        Serial.printf("[BREWFATHER] HTTP POST failed: %d\n", httpCode);
+        // Keep latest payload to retry later.
+        strncpy(brewfatherLatestPayload, payload, MAXPACKETSIZE);
+        brewfatherLatestPayload[MAXPACKETSIZE] = '\0';
+        brewfatherHasPendingLog = true;
+        break;
+      }
+    }
+
+    brewfatherSending = false;
+  }
+}
+
 static void appendAgoStr(char *buf, size_t sz, const char *label, unsigned long ts) {
   if (ts == 0) {
     snprintf(buf, sz, "%s never <br>", label);
@@ -209,14 +371,26 @@ char * getLogStatus(char * st) {
   strncat(st, buf, 200);
   snprintf(buf,sizeof(buf),"Log cache overflows: %lu <br>", numCacheOverflow);
   strncat(st, buf, 200);
+  snprintf(buf,sizeof(buf),"Brewfather replaced-before-send: %lu <br>", numBrewfatherReplacedBeforeSend);
+  strncat(st, buf, 200);
+  snprintf(buf,sizeof(buf),"Brewfather pending payload: %s <br>", brewfatherHasPendingLog ? "YES" : "NO");
+  strncat(st, buf, 200);
 
   appendAgoStr(buf, sizeof(buf), "Last log received from BrewCore:", lastCashLogMs);
+  strncat(st, buf, 200);
+  appendAgoStr(buf, sizeof(buf), "Last Brewfather payload received:", lastCashBrewfatherLogMs);
   strncat(st, buf, 200);
   appendAgoStr(buf, sizeof(buf), "Last send attempt:", lastSendAttemptMs);
   strncat(st, buf, 200);
   appendAgoStr(buf, sizeof(buf), "Last successful connect:", lastSendConnectedMs);
   strncat(st, buf, 200);
   snprintf(buf, sizeof(buf), "Send attempts: %lu / connected: %lu <br>", numSendAttempts, numSendConnected);
+  strncat(st, buf, 200);
+  appendAgoStr(buf, sizeof(buf), "Last Brewfather send attempt:", lastBrewfatherSendAttemptMs);
+  strncat(st, buf, 200);
+  appendAgoStr(buf, sizeof(buf), "Last Brewfather successful connect:", lastBrewfatherSendConnectedMs);
+  strncat(st, buf, 200);
+  snprintf(buf, sizeof(buf), "Brewfather attempts: %lu / connected: %lu <br>", numBrewfatherSendAttempts, numBrewfatherSendConnected);
   strncat(st, buf, 200);
 
   return st;  

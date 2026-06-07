@@ -101,6 +101,15 @@ static void handlePacket(char type, const char *payload) {
       }
     } break;
 
+    case BREWFATHERLOGPACKET: {
+      char last = payload[strlen(payload) - 1];
+      if (last == '}') {
+        cashBrewfatherLogRequest((char*)payload);
+      } else {
+        Serial.println("Invalid Brewfather packet received - missing closing brace");
+      }
+    } break;
+
     case SENTINELPACKET:
       Serial.print("Sentinel from Brewcore: ");
       Serial.println(payload);
@@ -147,6 +156,7 @@ void logSendTask(void *pvParameters) {
   
   for(;;) {
     sendLogToGoogleSheets();
+    sendLogToBrewfather();
     
     vTaskDelay(xDelay); // Suspende a task por 15 segundos
   }

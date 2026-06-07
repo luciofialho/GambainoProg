@@ -8,6 +8,8 @@
 #include "stdarg.h"
 #include "PovotoData.h"
 #include "PovotoCommon.h"
+#include "GambainoCommon.h"
+#include "Povoto_UI.h"
 #include "PressureControl.h"
 #include "Swiss_911_Extra_Compressed_Regular7pt7b.h"
 #include "Swiss_911_Extra_Compressed_Regular8pt7b.h"
@@ -27,6 +29,8 @@
 #include "Swiss_911_Extra_Compressed_Regular72pt7b.h"
 
 extern TFT_eSPI tft;
+
+#define UI_PERF_LOG 1
 
 #define LEFT   0
 #define CENTER 1
@@ -253,6 +257,15 @@ void mainScreen() {
   if (isTempKeyboardActive()) return; // não sobrescreve o teclado
   if (isTaskUIActive()) return;       // não sobrescreve a UI de tarefas
   if (isBatchInfoActive()) return;    // não sobrescreve o batch info
+  const unsigned long t0 = millis();
   screenBackground();
+  const unsigned long t1 = millis();
   screenData();
+  const unsigned long t2 = millis();
+  if (UI_PERF_LOG) {
+    Serial.printf("[UI PERF] mainScreen total=%lums bg=%lums data=%lums\n",
+                  (unsigned long)(t2 - t0),
+                  (unsigned long)(t1 - t0),
+                  (unsigned long)(t2 - t1));
+  }
 }

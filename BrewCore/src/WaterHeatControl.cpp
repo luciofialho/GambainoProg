@@ -251,18 +251,20 @@ float HLTTargetTempForMLTHeating(bool evaluateCoilEfficiency) {
     float deltaMLT = targMLT - tempMLT;
 
     if (evaluateCoilEfficiency) {
-      float efficiency;
-      if (abs(HLTTemp - tempBottom) < 0.5)
-        efficiency = 1;
-
-      else {
-        efficiency = (HLTOutTemp - tempBottom) / (HLTTemp - tempBottom);
-        if (efficiency<0.5) 
-          efficiency = 0.5; //****** Constante
-        else if (efficiency>1) 
+      if (MLTPump.asBoolean()) { // if MLT pump is turned off, use last calculated efficiency
+        float efficiency;
+        if (abs(HLTTemp - tempBottom) < 0.5)
           efficiency = 1;
+
+        else {
+          efficiency = (HLTOutTemp - tempBottom) / (HLTTemp - tempBottom);
+          if (efficiency<0.5) 
+            efficiency = 0.5; //****** Constante
+          else if (efficiency>1) 
+            efficiency = 1;
+        }
+        HeatCoilEfficiency = efficiency;
       }
-      HeatCoilEfficiency = efficiency;
     }
     else
       HeatCoilEfficiency = HeatCoilEfficiency.defaultValue();

@@ -180,7 +180,7 @@ void statusEntrySetup() {
           HLTPriority        = 'V';
           BKTargetTemp       = NOHEAT;
           BKValveA           = CLOSED;
-          BKValveB           = OPEN;
+          BKValveB           = CLOSED;
           WhirlpoolValve     = PORT_A;
           BKPump             = OFF;
           Chiller1           = CLOSED;
@@ -264,7 +264,7 @@ void statusEntrySetup() {
                                if (HLTTargetVolume>HLTMAXVOLUME) HLTTargetVolume = HLTMAXVOLUME;
           HLTPriority        = 'T';
           BKTargetTemp       = NOHEAT;
-          BKValveA           = OPEN;
+          BKValveA           = CLOSED;
           BKValveB           = CLOSED;
           //WhirlpoolValve     = PORT_A;
           BKPump             = OFF;
@@ -381,7 +381,7 @@ void statusEntrySetup() {
             HLTValve         = PORT_A;
             MLTValveA        = CLOSED;
             MLTValveB        = CLOSED;
-            MLTPump          = OFF;          
+            MLTPump          .setWithDelay(OFF, WAITFORVALVE);          
           HLTTargetTemp      = NOHEAT;     
           HLTTargetVolume    = NOWATERIN;
           HLTPriority        = 'V';

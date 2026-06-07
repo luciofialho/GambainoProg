@@ -16,9 +16,13 @@
 #include <qrcode.h> 
 #include "IOTK.h"
 
+#define UI_PERF_LOG 1
+#define UI_TOUCH_RAW_LOG 0
+
 
 
 volatile bool touchFlag = false;
+volatile unsigned long touchIrqMillis = 0;
 static bool screenSaverActive = false;
 unsigned long int lastClick = 0;
 
@@ -35,6 +39,7 @@ static unsigned long taskUIScreenOpenTime = 0; // quando a tela de seleção foi
 static unsigned long lastTaskUITimeUpdate = 0; // throttle de atualização do countdown
 
 void IRAM_ATTR touchIRQ() {
+  touchIrqMillis = millis();
   touchFlag = true;   // só sinaliza
 }
 
@@ -58,6 +63,7 @@ uint32_t read32(fs::File &f) {
 }
 
 void drawBmp(const char *filename, int16_t x, int16_t y) {
+  const unsigned long perfStart = millis();
 
   if ((x >= tft.width()) || (y >= tft.height())) return;
 
@@ -65,6 +71,7 @@ void drawBmp(const char *filename, int16_t x, int16_t y) {
 
   // Open requested file on SD card
   bmpFS = LittleFS.open(filename, "r");
+  const unsigned long openDone = millis();
 
   if (!bmpFS)
   {
@@ -73,10 +80,13 @@ void drawBmp(const char *filename, int16_t x, int16_t y) {
   }
 
   uint32_t seekOffset;
-  uint16_t w, h, row, col;
-  uint8_t  r, g, b;
+  uint16_t w, h;
 
-  uint32_t startTime = millis();
+  unsigned long readMsTotal = 0;
+  unsigned long convertMsTotal = 0;
+  unsigned long pushMsTotal = 0;
+  uint16_t chunksRendered = 0;
+  uint8_t chunkRowsUsed = 0;
 
   if (read16(bmpFS) == 0x4D42)
   {
@@ -89,36 +99,100 @@ void drawBmp(const char *filename, int16_t x, int16_t y) {
 
     if ((read16(bmpFS) == 1) && (read16(bmpFS) == 24) && (read32(bmpFS) == 0))
     {
-      y += h - 1;
-
       bool oldSwapBytes = tft.getSwapBytes();
       tft.setSwapBytes(true);
       bmpFS.seek(seekOffset);
 
-      uint16_t padding = (4 - ((w * 3) & 3)) & 3;
-      uint8_t lineBuffer[w * 3 + padding];
+      const uint16_t padding = (4 - ((w * 3) & 3)) & 3;
+      const size_t rowBytes = (size_t)w * 3U + padding;
 
-      for (row = 0; row < h; row++) {
-        
-        bmpFS.read(lineBuffer, sizeof(lineBuffer));
-        uint8_t*  bptr = lineBuffer;
-        uint16_t* tptr = (uint16_t*)lineBuffer;
-        // Convert 24 to 16-bit colours
-        for (uint16_t col = 0; col < w; col++)
-        {
-          b = *bptr++;
-          g = *bptr++;
-          r = *bptr++;
-          *tptr++ = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+      // Processa em blocos para reduzir chamadas de FS e TFT sem tentar carregar a imagem inteira.
+      uint8_t chunkRows = 8;
+      uint8_t *rawChunk = nullptr;
+      uint16_t *rgbChunk = nullptr;
+      while (chunkRows >= 1) {
+        const size_t rawChunkBytes = rowBytes * chunkRows;
+        const size_t rgbChunkBytes = (size_t)w * chunkRows * sizeof(uint16_t);
+        rawChunk = (uint8_t *)malloc(rawChunkBytes);
+        rgbChunk = (uint16_t *)malloc(rgbChunkBytes);
+        if (rawChunk && rgbChunk) {
+          break;
         }
-
-        // Push the pixel row to screen, pushImage will crop the line if needed
-        // y is decremented as the BMP image is drawn bottom up
-        tft.pushImage(x, y--, w, 1, (uint16_t*)lineBuffer);
+        if (rawChunk) {
+          free(rawChunk);
+          rawChunk = nullptr;
+        }
+        if (rgbChunk) {
+          free(rgbChunk);
+          rgbChunk = nullptr;
+        }
+        chunkRows--;
       }
+
+      if (!rawChunk || !rgbChunk) {
+        if (rawChunk) free(rawChunk);
+        if (rgbChunk) free(rgbChunk);
+        tft.setSwapBytes(oldSwapBytes);
+        Serial.println("BMP load failed: no heap for chunk buffers");
+        bmpFS.close();
+        return;
+      }
+      chunkRowsUsed = chunkRows;
+
+      uint16_t rowsRemaining = h;
+      int16_t drawBottomY = y + h - 1;
+      while (rowsRemaining > 0) {
+        const uint8_t rowsThisChunk = (rowsRemaining > chunkRows) ? chunkRows : (uint8_t)rowsRemaining;
+        const size_t bytesToRead = rowBytes * rowsThisChunk;
+        const unsigned long tRead0 = millis();
+        if (bmpFS.read(rawChunk, bytesToRead) != (int)bytesToRead) {
+          Serial.println("BMP load failed: short read");
+          break;
+        }
+        readMsTotal += millis() - tRead0;
+
+        // BMP positivo vem bottom-up; reordena para top-down antes do pushImage em bloco.
+        const unsigned long tConv0 = millis();
+        for (uint8_t srcRow = 0; srcRow < rowsThisChunk; srcRow++) {
+          const uint8_t dstRow = rowsThisChunk - 1 - srcRow;
+          const uint8_t *bptr = rawChunk + ((size_t)srcRow * rowBytes);
+          uint16_t *tptr = rgbChunk + ((size_t)dstRow * w);
+          for (uint16_t col = 0; col < w; col++) {
+            const uint8_t b = *bptr++;
+            const uint8_t g = *bptr++;
+            const uint8_t r = *bptr++;
+            *tptr++ = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+          }
+        }
+        convertMsTotal += millis() - tConv0;
+
+        const int16_t drawTopY = drawBottomY - rowsThisChunk + 1;
+        const unsigned long tPush0 = millis();
+        tft.pushImage(x, drawTopY, w, rowsThisChunk, rgbChunk);
+        pushMsTotal += millis() - tPush0;
+        chunksRendered++;
+        drawBottomY -= rowsThisChunk;
+        rowsRemaining -= rowsThisChunk;
+      }
+
+      free(rawChunk);
+      free(rgbChunk);
       tft.setSwapBytes(oldSwapBytes);
-      Serial.print("Loaded in "); Serial.print(millis() - startTime);
+      const unsigned long totalMs = millis() - perfStart;
+      Serial.print("Loaded in "); Serial.print(totalMs);
       Serial.println(" ms");
+      if (UI_PERF_LOG) {
+        Serial.printf("[BMP PERF] open=%lums total=%lums read=%lums conv=%lums push=%lums chunks=%u rows/chunk=%u w=%u h=%u\n",
+                      (unsigned long)(openDone - perfStart),
+                      totalMs,
+                      readMsTotal,
+                      convertMsTotal,
+                      pushMsTotal,
+                      (unsigned)chunksRendered,
+                      (unsigned)chunkRowsUsed,
+                      (unsigned)w,
+                      (unsigned)h);
+      }
     }
     else Serial.println("BMP format not recognized.");
   }
@@ -179,7 +253,7 @@ bool ftRead(uint8_t reg, uint8_t* buf, size_t len) {
   Wire.beginTransmission(FT_ADDR);
   Wire.write(reg);
   if (Wire.endTransmission(false) != 0) return false;
-  if (Wire.requestFrom(FT_ADDR, (uint8_t)len) != (int)len) return false;
+  if (Wire.requestFrom((uint8_t)FT_ADDR, (uint8_t)len) != (uint8_t)len) return false;
   for (size_t i=0;i<len;i++) buf[i] = Wire.read();
   return true;
 }
@@ -834,6 +908,10 @@ void processTouch() {
     }
   }
   else {
+    const unsigned long touchProcessStart = millis();
+    if (UI_PERF_LOG && touchIrqMillis != 0) {
+      Serial.printf("[TOUCH PERF] irq->process=%lums\n", (unsigned long)(touchProcessStart - touchIrqMillis));
+    }
     lastClick = millis();
     touchFlag = false;
     Serial.println(">>> TOUCH IRQ DETECTED <<<");
@@ -875,10 +953,12 @@ void processTouch() {
         if (x >= TFT_HEIGHT) x = TFT_HEIGHT - 1;
         x = TFT_HEIGHT - x; // Inverte eixo X para coordenadas da tela
         y = TFT_WIDTH - y; // Inverte eixo Y para coordenadas da tela
-Serial.printf("RAW: %02X %02X %02X %02X %02X %02X  |  ",
-                p[0],p[1],p[2],p[3],p[4],p[5]);
-                y=TFT_WIDTH - y; // Inverte eixo Y para coordenadas da tela
-        Serial.printf("Touch #%u: ID=%u X=%u Y=%u Area=%u\n", i, id, x, y, area);
+        y = TFT_WIDTH - y; // Inverte eixo Y para coordenadas da tela
+        if (UI_TOUCH_RAW_LOG) {
+          Serial.printf("RAW: %02X %02X %02X %02X %02X %02X  |  ",
+                        p[0], p[1], p[2], p[3], p[4], p[5]);
+          Serial.printf("Touch #%u: ID=%u X=%u Y=%u Area=%u\n", i, id, x, y, area);
+        }
 
         // === TECLADO NUMÉRICO: consome o toque e ignora lógica de cantos ===
         if (kbActive) {
@@ -901,6 +981,7 @@ Serial.printf("RAW: %02X %02X %02X %02X %02X %02X  |  ",
         // Zona de toque: número do batch (x=50..130, y=5..45) → abre batch info screen
         if (touches == 1 && x >= 45 && x <= 160 && y >= 0 && y <= 50) {
           Serial.println(">>> TOUCH: abrindo batch info screen <<<");
+          if (UI_PERF_LOG) Serial.printf("[TOUCH PERF] batchInfo trigger=%lums\n", (unsigned long)(millis() - touchProcessStart));
           showBatchInfoScreen();
           return;
         }
@@ -908,6 +989,7 @@ Serial.printf("RAW: %02X %02X %02X %02X %02X %02X  |  ",
         // Zona de toque: lado esquerdo da tela → abre UI de tarefas
         if (touches == 1 && x < 80) {
           Serial.println(">>> TOUCH: abrindo UI de tarefas <<<");
+          if (UI_PERF_LOG) Serial.printf("[TOUCH PERF] taskUI trigger=%lums\n", (unsigned long)(millis() - touchProcessStart));
           if (taskWindowType != 0) {
             showActiveTaskScreen();
           } else {
@@ -938,6 +1020,7 @@ Serial.printf("RAW: %02X %02X %02X %02X %02X %02X  |  ",
         // Zona de toque: label "Target" da temperatura (~screen x=270..430, y=88..122)
         if (touches == 1 && x >= 260 && x <= 430 && y >= 85 && y <= 125) {
           Serial.println(">>> TOUCH: abrindo teclado de temperatura target <<<");
+          if (UI_PERF_LOG) Serial.printf("[TOUCH PERF] tempKeyboard trigger=%lums\n", (unsigned long)(millis() - touchProcessStart));
           openTempKeyboard();
           return;
         }
@@ -945,6 +1028,7 @@ Serial.printf("RAW: %02X %02X %02X %02X %02X %02X  |  ",
         // Zona de toque: label "Slow target" da temperatura (~screen x=270..430, y=126..165)
         if (touches == 1 && x >= 260 && x <= 430 && y >= 126 && y <= 165) {
           Serial.println(">>> TOUCH: abrindo teclado de slow temperature target <<<");
+          if (UI_PERF_LOG) Serial.printf("[TOUCH PERF] slowTempKeyboard trigger=%lums\n", (unsigned long)(millis() - touchProcessStart));
           openSlowTempKeyboard();
           return;
         }
@@ -952,6 +1036,7 @@ Serial.printf("RAW: %02X %02X %02X %02X %02X %02X  |  ",
         // Zona de toque: label "Target" da pressão (~screen x=270..430, y=230..262)
         if (touches == 1 && x >= 260 && x <= 430 && y >= 230 && y <= 262) {
           Serial.println(">>> TOUCH: abrindo teclado de pressao target <<<");
+          if (UI_PERF_LOG) Serial.printf("[TOUCH PERF] pressureKeyboard trigger=%lums\n", (unsigned long)(millis() - touchProcessStart));
           openPressureKeyboard();
           return;
         }
