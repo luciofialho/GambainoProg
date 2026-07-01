@@ -11,6 +11,8 @@ void handlePressureHistoryCSV(AsyncWebServerRequest *request);
 void handlePressureDumpCSV(AsyncWebServerRequest *request);
 bool startVolumeDetermination(char *reason, size_t reasonSize);
 bool isVolumeDeterminationActive();
+uint16_t getVolumeDeterminationIteration();
+float getVolumeDeterminationCalculatedSoFar();
 void applyDumpWindowHeadspaceRecalc(float headspaceBeforeL, float pressureBeforeBar, float pressureAfterBar);
 void requestDerivedStateRestoreFromCounters();
 float CO2Mass(float mols=-1);

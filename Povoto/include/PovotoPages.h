@@ -8,6 +8,7 @@ void handleFMTDataPage(AsyncWebServerRequest *request);
 void handleFMTDataUpdate(AsyncWebServerRequest *request);
 
 void handleCalibrationDataPage(AsyncWebServerRequest *request);
+void handleCalibrationCurrentRefresh(AsyncWebServerRequest *request);
 void handleCalibrationDataUpdate(AsyncWebServerRequest *request);
 
 void handleBatchDataPage(AsyncWebServerRequest *request);

@@ -1468,6 +1468,7 @@ void MainStateMachine() {
 
             case 2: {                        // transfer water from cleaner to detergent tank
                 float ellapsed = TimeInStatus - stopTimer;
+                kegSensorStabilityTime = 3000;
                 if (KegLiquidSensor != KEGLIQUIDINTANK || ellapsed > KEGCLEANERTRANSFEROUTMAXTIMECLEAN) { 
                   setSubStatus(3,"Return to cleaner");
                   if (ellapsed > KEGCLEANERTRANSFEROUTMAXTIMECLEAN) {
@@ -1500,7 +1501,7 @@ void MainStateMachine() {
 
             case 4: {                     // drain cleaner
                 float ellapsed = TimeInStatus - stopTimer;
-                 if (KegLiquidSensor != KEGLIQUIDINTANK || ellapsed > KEGCLEANERTRANSFEROUTMAXTIMECLEAN) {
+                if (KegLiquidSensor != KEGLIQUIDINTANK || ellapsed > KEGCLEANERTRANSFEROUTMAXTIMECLEAN) {
                   if (ellapsed > KEGCLEANERTRANSFEROUTMAXTIMECLEAN) {
                     say("Keg cleaner drain timed out after %.1f seconds",ellapsed);
                     sound_Attention();
@@ -1559,7 +1560,7 @@ void MainStateMachine() {
               }
               break;
             case 2:
-              kegSensorStabilityTime = 4000;
+              kegSensorStabilityTime = 3000;
               if (KegLiquidSensor != KEGLIQUIDINTANK || (TimeInStatus - stopTimer) > KEGCLEANERTRANSFEROUTMAXTIMECLEAN) {
                 if ((TimeInStatus - stopTimer) > KEGCLEANERTRANSFEROUTMAXTIMECLEAN) {
                   say("Keg detergent transfer to tank timed out after %.1f seconds",TimeInStatus - stopTimer);
@@ -1568,7 +1569,7 @@ void MainStateMachine() {
                 KegDetergentValve = CLOSED;
                 KegPump = OFF;
                 GoToNextStatus = true;
-                kegSensorStabilityTime = 1000;
+                kegSensorStabilityTime = 2000;
               }
               break;
           }
@@ -1658,7 +1659,7 @@ void MainStateMachine() {
         case KEGRETURNDETERGENT:
           if (EnteringStatus) {
             KegDetergentPump = ON;
-            kegSensorStabilityTime = 3000;
+            kegSensorStabilityTime = 4000;
           }
           else {
             if (TimeInStatus > KEGTRANSFERTOCLEANERMINTIME && (KegLiquidSensor != KEGLIQUIDINRETURN || TimeInStatus>KEGTRANSFERTOCLEANERMAXTIME)) { 
@@ -1668,7 +1669,7 @@ void MainStateMachine() {
               }
               KegDetergentPump = OFF;
               GoToNextStatus = true;
-              kegSensorStabilityTime = 1000;
+              kegSensorStabilityTime = 2000;
             } 
           }
           break;

@@ -11,7 +11,7 @@ float HLTRampTemp=0;
 float HLTDeltaTemp;
 float rampInfusionVolume;
 
-int kegSensorStabilityTime = 1000;
+int kegSensorStabilityTime = 2000;
 
 
 void calculateVolumesAndTemperatures(bool first) {

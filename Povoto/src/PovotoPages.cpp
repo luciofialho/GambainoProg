@@ -15,6 +15,7 @@
 void handleMainMenu(AsyncWebServerRequest *request) {
   char dateTimeBuf[20];
   char reliefsPerHourText[48];
+  char volumeProgressBuf[48];
   NTPFormatedDateTime(dateTimeBuf);
   String uptimeStr = formatedUptime();
   getReliefsPerHourText(reliefsPerHourText, sizeof(reliefsPerHourText));
@@ -33,6 +34,8 @@ void handleMainMenu(AsyncWebServerRequest *request) {
   html += ".footer-link a { color: #666; text-decoration: none; }";
   html += ".footer-link a:hover { text-decoration: underline; }";
   html += ".status-item { color: #333; }";
+  html += ".volume-progress { background: #fff8e1; border: 1px solid #ffd54f; color: #6d4c00; padding: 12px; border-radius: 10px; margin-bottom: 16px; font-size: 15px; line-height: 1.5; }";
+  html += ".volume-progress strong { display: block; margin-bottom: 4px; font-size: 16px; }";
   html += ".menu-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-top: 20px; }";
   html += ".menu-button { display: block; padding: 30px 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; text-align: center; border-radius: 10px; font-size: 18px; font-weight: bold; transition: transform 0.2s, box-shadow 0.2s; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }";
   html += ".menu-button:hover { transform: translateY(-2px); box-shadow: 0 6px 12px rgba(0,0,0,0.2); }";
@@ -42,6 +45,21 @@ void handleMainMenu(AsyncWebServerRequest *request) {
   html += "</style></head><body>";
   html += "<div class='container'>";
   html += "<h1>&#127867; Povoto Configuration</h1>";
+  if (isVolumeDeterminationActive()) {
+    const uint16_t iter = getVolumeDeterminationIteration();
+    const float partialVolume = getVolumeDeterminationCalculatedSoFar();
+    html += "<div class='volume-progress'>";
+    html += "<strong>Fermenter volume determination in progress</strong>";
+    html += "Iteraction: " + String((unsigned int)iter) + "<br>";
+    if (isnan(partialVolume)) {
+      html += "Volume calculated so far: N/A";
+    } else {
+      snprintf(volumeProgressBuf, sizeof(volumeProgressBuf), "%.3f L", partialVolume);
+      html += "Volume calculated so far: ";
+      html += volumeProgressBuf;
+    }
+    html += "</div>";
+  }
   html += "<div class='status-box'>";
   html += "<div class='status-item'><strong>Temperature:</strong> " + String(ControlData.temperature, 1) + " °C</div>";
   html += "<div class='status-item'><strong>Pressure:</strong> " + String(ControlData.pressure, 1) + " bar</div>";
@@ -402,7 +420,42 @@ void handleFMTDataUpdate(AsyncWebServerRequest *request) {
 
 // ========== CALIBRATION DATA HANDLERS ==========
 
+static float measureCurrentAverage(uint32_t durationMs, uint32_t sampleIntervalMs) {
+  if (sampleIntervalMs == 0) {
+    sampleIntervalMs = 100;
+  }
+
+  const unsigned long start = millis();
+  double sum = 0.0;
+  uint32_t count = 0;
+
+  while ((millis() - start) < durationMs) {
+    sum += currentReading;
+    count++;
+    delay(sampleIntervalMs);
+  }
+
+  if (count == 0) {
+    return currentReading;
+  }
+
+  return (float)(sum / (double)count);
+}
+
+void handleCalibrationCurrentRefresh(AsyncWebServerRequest *request) {
+  const float avgCurrent = measureCurrentAverage(30000UL, 100UL);
+  String target = "/calibration?avgCurrent=" + String(avgCurrent, 2);
+  request->redirect(target);
+}
+
 void handleCalibrationDataPage(AsyncWebServerRequest *request) {
+  float pageCurrentReading = currentReading;
+  bool usingAverageCurrent = false;
+  if (request->hasParam("avgCurrent")) {
+    pageCurrentReading = request->getParam("avgCurrent")->value().toFloat();
+    usingAverageCurrent = true;
+  }
+
   const size_t BUFFER_SIZE = 7000;
   char* html = (char*)malloc(BUFFER_SIZE);
   if (!html) {
@@ -445,7 +498,13 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, ".btn-use { background: #2196F3; color: white; white-space: nowrap; }", remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, ".btn-refresh { background: #ff9800; color: white; white-space: nowrap; text-decoration: none; display: inline-block; padding: 8px 14px; border-radius: 4px; font-size: 14px; }", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, ".current-badge { background: #e8f5e9; border: 1px solid #a5d6a7; border-radius: 6px; padding: 8px 14px; margin-bottom: 18px; font-size: 1.1em; color: #2e7d32; }", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, ".current-row { display: flex; gap: 10px; align-items: center; margin-bottom: 18px; }", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, ".current-row .current-badge { flex: 1; margin-bottom: 0; }", remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "</style></head><body>", remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -453,11 +512,12 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<h1>Calibration Data</h1>", remaining);
 
-  // Corrente medida atual
+  // Corrente medida atual / media 30s
   char buffer[300];
   snprintf(buffer, sizeof(buffer),
-    "<div class='current-badge'>&#128268; Actual current reading: <b>%.2f mA</b></div>",
-    currentReading);
+    "<div class='current-row'><div class='current-badge'>&#128268; Actual current reading%s: <b>%.2f mA</b></div><a class='btn-refresh' href='/calibration/refresh-current'>Atualizar (media 30s)</a></div>",
+    usingAverageCurrent ? " (30s avg)" : "",
+    pageCurrentReading);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
 
@@ -472,7 +532,7 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   snprintf(buffer, sizeof(buffer),
     "<input type='number' id='pressure0Current' name='pressure0Current' value='%.2f' step='0.01'>"
     "<button type='button' class='btn-use' onclick=\"document.getElementById('pressure0Current').value='%.2f'\">Use actual</button>",
-    CalibrationData.pressure0Current, currentReading);
+    CalibrationData.pressure0Current, pageCurrentReading);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -498,7 +558,7 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   snprintf(buffer, sizeof(buffer),
     "<input type='number' id='pressure1Current' name='pressure1Current' value='%.2f' step='0.01'>"
     "<button type='button' class='btn-use' onclick=\"document.getElementById('pressure1Current').value='%.2f'\">Use actual</button>",
-    CalibrationData.pressure1Current, currentReading);
+    CalibrationData.pressure1Current, pageCurrentReading);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -524,7 +584,7 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   snprintf(buffer, sizeof(buffer),
     "<input type='number' id='pressure2Current' name='pressure2Current' value='%.2f' step='0.01'>"
     "<button type='button' class='btn-use' onclick=\"document.getElementById('pressure2Current').value='%.2f'\">Use actual</button>",
-    CalibrationData.pressure2Current, currentReading);
+    CalibrationData.pressure2Current, pageCurrentReading);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -1377,141 +1437,7 @@ void handleControlReliefOnce(AsyncWebServerRequest *request) {
   request->redirect("/control");
 }
 
-// ========== TASKS HANDLERS ==========
 
-static const char* taskName(byte type) {
-  switch (type) {
-    case 1: return "Dump";
-    case 2: return "Gas venting/injection";
-    case 3: return "Liquid addition";
-    case 4: return "Dry hopping";
-    case 5: return "Dynamic hopping";
-    default: return "Unknown";
-  }
-}
 
-void handleTasksPage(AsyncWebServerRequest *request) {
-  String html = "<!DOCTYPE html><html><head>";
-  html += "<meta charset='UTF-8'>";
-  html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
-  html += "<title>Tasks</title>";
-  html += "<style>";
-  html += "body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; }";
-  html += ".container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); }";
-  html += "h1 { color: #333; text-align: center; margin-bottom: 30px; }";
-  html += ".menu-grid { display: grid; grid-template-columns: 1fr; gap: 15px; margin-top: 20px; }";
-  html += ".menu-button { display: block; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; text-align: center; border-radius: 10px; font-size: 18px; font-weight: bold; transition: transform 0.2s; }";
-  html += ".menu-button:hover { transform: translateY(-2px); }";
-  html += ".back-link { text-align: center; margin-top: 20px; }";
-  html += ".back-link a { color: #666; font-size: 14px; }";
-  html += "</style></head><body>";
-  html += "<div class='container'>";
-  html += "<h1>&#9881;&#65039; Tasks</h1>";
-  if (taskWindowType != 0) {
-    html += "<div style='background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:12px;margin-bottom:20px;text-align:center;font-weight:bold;color:#856404;'>";
-    html += "Active task: ";
-    html += taskName(taskWindowType);
-    html += " &mdash; <a href='/tasks/active'>Go to task</a></div>";
-  }
-  html += "<div class='menu-grid'>";
-  html += "<a href='/tasks/start?type=1' class='menu-button'>Dump</a>";
-  html += "<a href='/tasks/start?type=2' class='menu-button'>Gas venting/injection</a>";
-  html += "<a href='/tasks/start?type=3' class='menu-button'>Liquid addition</a>";
-  html += "<a href='/tasks/start?type=4' class='menu-button'>Dry hopping</a>";
-  html += "<a href='/tasks/start?type=5' class='menu-button'>Dynamic hopping</a>";
-  html += "</div>";
-  html += "<div class='back-link'><a href='/'>&#8592; Back to menu</a></div>";
-  html += "</div></body></html>";
-  request->send(200, "text/html", html);
-}
-
-void handleTaskStart(AsyncWebServerRequest *request) {
-  if (!request->hasParam("type")) {
-    request->redirect("/tasks");
-    return;
-  }
-  byte type = (byte)request->getParam("type")->value().toInt();
-  switch (type) {
-    case 1: startDumpTask();          break;
-    case 2: startGasTask();           break;
-    case 3: startLiquidTask();        break;
-    case 4: startDryHoppingTask();    break;
-    case 5: startDynamicHoppingTask();break;
-    default: request->redirect("/tasks"); return;
-  }
-
-  String html = "<!DOCTYPE html><html><head>";
-  html += "<meta charset='UTF-8'>";
-  html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
-  html += "<title>Task: "; html += taskName(type); html += "</title>";
-  html += "<style>";
-  html += "body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; }";
-  html += ".container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); text-align: center; }";
-  html += "h1 { color: #333; margin-bottom: 10px; }";
-  html += ".task-label { font-size: 22px; color: #555; margin-bottom: 30px; }";
-  html += ".finish-btn { display: inline-block; padding: 24px 48px; background: #e53935; color: white; text-decoration: none; border-radius: 12px; font-size: 24px; font-weight: bold; margin-top: 20px; transition: background 0.2s; }";
-  html += ".finish-btn:hover { background: #b71c1c; }";
-  html += ".cancel-link { display: block; margin-top: 24px; font-size: 14px; color: #888; }";
-  html += ".cancel-link a { color: #888; }";
-  html += "</style></head><body>";
-  html += "<div class='container'>";
-  html += "<h1>&#9881;&#65039; Active Task</h1>";
-  html += "<div class='task-label'>"; html += taskName(type); html += "</div>";
-  html += "<a href='/tasks/finish?type="; html += String(type); html += "' class='finish-btn'>&#9989; Finish Task</a>";
-  html += "<div class='cancel-link'><a href='/tasks/cancel'>Cancel task</a></div>";
-  html += "</div></body></html>";
-  request->send(200, "text/html", html);
-}
-
-void handleTaskActive(AsyncWebServerRequest *request) {
-  if (taskWindowType == 0) {
-    request->redirect("/tasks");
-    return;
-  }
-  byte type = taskWindowType;
-  String html = "<!DOCTYPE html><html><head>";
-  html += "<meta charset='UTF-8'>";
-  html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
-  html += "<title>Task: "; html += taskName(type); html += "</title>";
-  html += "<style>";
-  html += "body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; }";
-  html += ".container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); text-align: center; }";
-  html += "h1 { color: #333; margin-bottom: 10px; }";
-  html += ".task-label { font-size: 22px; color: #555; margin-bottom: 30px; }";
-  html += ".finish-btn { display: inline-block; padding: 24px 48px; background: #e53935; color: white; text-decoration: none; border-radius: 12px; font-size: 24px; font-weight: bold; margin-top: 20px; transition: background 0.2s; }";
-  html += ".finish-btn:hover { background: #b71c1c; }";
-  html += ".cancel-link { display: block; margin-top: 24px; font-size: 14px; color: #888; }";
-  html += ".cancel-link a { color: #888; }";
-  html += "</style></head><body>";
-  html += "<div class='container'>";
-  html += "<h1>&#9881;&#65039; Active Task</h1>";
-  html += "<div class='task-label'>"; html += taskName(type); html += "</div>";
-  html += "<a href='/tasks/finish?type="; html += String(type); html += "' class='finish-btn'>&#9989; Finish Task</a>";
-  html += "<div class='cancel-link'><a href='/tasks/cancel'>Cancel task</a></div>";
-  html += "</div></body></html>";
-  request->send(200, "text/html", html);
-}
-
-void handleTaskFinish(AsyncWebServerRequest *request) {
-  byte type = taskWindowType;
-  if (request->hasParam("type")) {
-    type = (byte)request->getParam("type")->value().toInt();
-  }
-  switch (type) {
-    case 1: endDumpTask();          break;
-    case 2: endGasTask();           break;
-    case 3: endLiquidTask();        break;
-    case 4: endDryHoppingTask();    break;
-    case 5: endDynamicHoppingTask();break;
-    default: taskWindowType = 0; taskWindowEndTime = 0; break;
-  }
-  request->redirect("/");
-}
-
-void handleTaskCancel(AsyncWebServerRequest *request) {
-  taskWindowType = 0;
-  taskWindowEndTime = 0;
-  request->redirect("/");
-}
 
 
