@@ -13,20 +13,16 @@
 
 
 #define DEBUGACCELERATION (debugging ? 20L : 1L)
-#define TRANSFERTIME (15000 / DEBUGACCELERATION) 
-#define RELIEFTIME (10000 / DEBUGACCELERATION)
+#define EQUALIZATIONTIME (1000 / DEBUGACCELERATION)
+#define TRANSFERTIME (10000 / DEBUGACCELERATION) 
+#define RELIEFTIME (8000 / DEBUGACCELERATION)
 #define SOLENOIDCLOSINGTIME (1000 / DEBUGACCELERATION)
 
-#define PRESSURE_MEDIAN_WINDOW 36
-#define CURRENT_MEDIAN_MIN_SAMPLE_MS 25
+#define PRESSURE_MEDIAN_WINDOW 60
+#define CURRENT_MEDIAN_MIN_SAMPLE_MS 15
+#define INSTABILITYTHRESHOLDMA 4.0f
 
 #define INA219_SHUNT_OHMS 10.0f
-
-// Detecção de instabilidade: range máximo tolerado dentro da janela do filtro
-#define PRESSURE_INSTABILITY_RANGE_THRESHOLD 0.5f  // bar
-// Ciclos consecutivos ruins para declarar instabilidade / bons para recuperar
-#define PRESSURE_INSTABILITY_BAD_COUNT  3
-#define PRESSURE_INSTABILITY_GOOD_COUNT 8
 
 #define SOLENOID_NOISE_MS 400
 
@@ -58,6 +54,7 @@ float dissolvedCO2Mols = 0.0f;
 float headSpaceCO2Mols = 0.0f;
 float sgPointGenerationTime = 0.0f;
 
+static unsigned long int timeToEquilizeExpansionTank = 0;
 static unsigned long int timeToStartExpansion     = 0;
 static unsigned long int timeToFinishExpansion    = 0;
 static unsigned long int timeToStartVenting       = 0;
@@ -140,17 +137,10 @@ static bool pressureHistoryHeaderSent = false;
 static bool pressureHistoryExportDone = false;
 
 static float currentWindow[PRESSURE_MEDIAN_WINDOW];
+static uint8_t currentWindowSortedIdx[PRESSURE_MEDIAN_WINDOW];
 static uint8_t currentWindowCount = 0;
 static uint8_t currentWindowIndex = 0;
 static unsigned long lastCurrentMedianSampleMillis = 0;
-
-static float pressureWindow[PRESSURE_MEDIAN_WINDOW];
-static uint8_t pressureWindowCount = 0;
-static uint8_t pressureWindowIndex = 0;
-
-bool pressureSensorUnstable = false;
-static uint8_t pressureBadCount  = 0;
-static uint8_t pressureGoodCount = 0;
 static bool derivedStateRestorePending = true;
 
 static unsigned long reliefMillisWindow[RELIEFS_WINDOW_SIZE];
@@ -432,25 +422,49 @@ boolean inPressureNoiseWindow() {
 }
 
 static float medianFilter(float sample) {
-  currentWindow[currentWindowIndex] = sample;
-  currentWindowIndex = (currentWindowIndex + 1) % PRESSURE_MEDIAN_WINDOW;
   if (currentWindowCount < PRESSURE_MEDIAN_WINDOW) {
+    const uint8_t sampleIdx = currentWindowIndex;
+    currentWindow[sampleIdx] = sample;
+    currentWindowIndex = (currentWindowIndex + 1) % PRESSURE_MEDIAN_WINDOW;
+
+    // Insert index in sorted order by the value in currentWindow.
+    int insertPos = currentWindowCount;
+    while (insertPos > 0 && currentWindow[currentWindowSortedIdx[insertPos - 1]] > sample) {
+      currentWindowSortedIdx[insertPos] = currentWindowSortedIdx[insertPos - 1];
+      --insertPos;
+    }
+    currentWindowSortedIdx[insertPos] = sampleIdx;
     currentWindowCount++;
   }
+  else {
+    // Sliding window is full: remove overwritten index, then reinsert it by new value.
+    const uint8_t sampleIdx = currentWindowIndex;
+    currentWindow[sampleIdx] = sample;
+    currentWindowIndex = (currentWindowIndex + 1) % PRESSURE_MEDIAN_WINDOW;
 
-  float temp[PRESSURE_MEDIAN_WINDOW];
-  for (uint8_t i = 0; i < currentWindowCount; ++i) {
-    temp[i] = currentWindow[i];
-  }
-
-  for (uint8_t i = 1; i < currentWindowCount; ++i) {
-    float key = temp[i];
-    int8_t j = i - 1;
-    while (j >= 0 && temp[j] > key) {
-      temp[j + 1] = temp[j];
-      --j;
+    int removePos = -1;
+    for (uint8_t i = 0; i < currentWindowCount; ++i) {
+      if (currentWindowSortedIdx[i] == sampleIdx) {
+        removePos = i;
+        break;
+      }
     }
-    temp[j + 1] = key;
+
+    if (removePos < 0) {
+      removePos = 0;
+    }
+
+    for (uint8_t i = (uint8_t)removePos; i < currentWindowCount - 1; ++i) {
+      currentWindowSortedIdx[i] = currentWindowSortedIdx[i + 1];
+    }
+
+    // Insert updated index (currentWindowCount-1 valid elements after removal).
+    int insertPos = currentWindowCount - 1;
+    while (insertPos > 0 && currentWindow[currentWindowSortedIdx[insertPos - 1]] > sample) {
+      currentWindowSortedIdx[insertPos] = currentWindowSortedIdx[insertPos - 1];
+      --insertPos;
+    }
+    currentWindowSortedIdx[insertPos] = sampleIdx;
   }
 
   uint8_t centralCount = currentWindowCount / 3;
@@ -459,9 +473,15 @@ static float medianFilter(float sample) {
   }
 
   const uint8_t start = (currentWindowCount - centralCount) / 2;
+  const float centralMin = currentWindow[currentWindowSortedIdx[start]];
+  const float centralMax = currentWindow[currentWindowSortedIdx[start + centralCount - 1]];
+  if ((centralMax - centralMin) > INSTABILITYTHRESHOLDMA) {
+    return 0.0f;
+  }
+
   float sum = 0.0f;
   for (uint8_t i = 0; i < centralCount; ++i) {
-    sum += temp[start + i];
+    sum += currentWindow[currentWindowSortedIdx[start + i]];
   }
 
   return sum / centralCount;
@@ -519,63 +539,6 @@ float convertCurrentToPressure(float current) {
   return pressure;
 }
 
-static float pressureStabilityFilter(float sample) {
-  pressureWindow[pressureWindowIndex] = sample;
-  pressureWindowIndex = (pressureWindowIndex + 1) % PRESSURE_MEDIAN_WINDOW;
-  if (pressureWindowCount < PRESSURE_MEDIAN_WINDOW) {
-    pressureWindowCount++;
-  }
-
-  float temp[PRESSURE_MEDIAN_WINDOW];
-  for (uint8_t i = 0; i < pressureWindowCount; ++i) {
-    temp[i] = pressureWindow[i];
-  }
-
-  for (uint8_t i = 1; i < pressureWindowCount; ++i) {
-    float key = temp[i];
-    int8_t j = i - 1;
-    while (j >= 0 && temp[j] > key) {
-      temp[j + 1] = temp[j];
-      --j;
-    }
-    temp[j + 1] = key;
-  }
-
-  // Detecção de instabilidade: array já está ordenado → range = max - min (custo zero)
-  if (pressureWindowCount >= PRESSURE_MEDIAN_WINDOW) {
-    float range = temp[pressureWindowCount - 1] - temp[0];
-    if (range > PRESSURE_INSTABILITY_RANGE_THRESHOLD) {
-      pressureGoodCount = 0;
-      if (++pressureBadCount >= PRESSURE_INSTABILITY_BAD_COUNT) {
-        pressureBadCount = PRESSURE_INSTABILITY_BAD_COUNT; // evita overflow
-        if (!pressureSensorUnstable) {
-          pressureSensorUnstable = true;
-          Serial.printf("[PRESSURE] Instabilidade detectada! Range=%.3f bar\n", range);
-        }
-      }
-    } else {
-      pressureBadCount = 0;
-      if (++pressureGoodCount >= PRESSURE_INSTABILITY_GOOD_COUNT) {
-        pressureGoodCount = PRESSURE_INSTABILITY_GOOD_COUNT; // evita overflow
-        if (pressureSensorUnstable) {
-          pressureSensorUnstable = false;
-          Serial.println("[PRESSURE] Sensor estabilizado.");
-        }
-      }
-    }
-  }
-
-  if (pressureBadCount == 0 && !pressureSensorUnstable) {
-    uint8_t mid = pressureWindowCount / 2;
-    if ((pressureWindowCount % 2) == 1) {
-      return temp[mid];
-    }
-    return (temp[mid - 1] + temp[mid]) * 0.5f;
-  }
-  return 0.0f;
-}
-
-
 void readPressure() {
   // Try to initialize the INA219 if it hasn't been done yet
   static bool initialized = false;
@@ -599,8 +562,6 @@ void readPressure() {
       }
 
       float pressure = convertCurrentToPressure(currentReading);
-
-      pressure = pressureStabilityFilter(pressure);
       ControlData.pressure = pressure;
     }
     else { //is debugging
@@ -813,12 +774,27 @@ void processPressure(bool afterRelief) {
 
 bool processReliefCycle() {
   if (timeToFinishRelief || timeToRegisterPressure) {
-    if (timeToStartExpansion) {
+    if (timeToEquilizeExpansionTank) {
+      if (MILLISDIFF(timeToEquilizeExpansionTank, 0)) {
+        digitalWrite(PINTRANSFERVALVE, LOW);
+        digitalWrite(PINRELIEFVALVE, HIGH);
+        ControlData.transferValve = false;
+        ControlData.reliefValve = true;
+        timeToEquilizeExpansionTank = 0;
+        timeToStartExpansion += millis();
+      }
+    }
+    else if (timeToStartExpansion) {
       if (MILLISDIFF(timeToStartExpansion, 0)) {
         //;Serial.printf("[PRESSURE] %lu / %lu: Abrindo transfer valve. Pressure=%.2f bar\n", millis(), timeToStartExpansion, ControlData.pressure);
         lastPressure = ControlData.pressure;
         blindHighPressure = ControlData.pressure;
         blindHighPressureMillis = millis();
+        if (ControlData.reliefValve) {
+          digitalWrite(PINRELIEFVALVE, LOW);
+          ControlData.reliefValve = false;
+          delay(200);
+        }
         digitalWrite(PINTRANSFERVALVE, HIGH);
         markSolenoidToggle();
         ControlData.transferValve = true;
@@ -885,6 +861,7 @@ bool processReliefCycle() {
 }
 
 void pressureRelief(bool fromVolumeDetermination) {
+  static unsigned long lastReliefEvent = 0;
   if (timeToFinishRelief) { // if we're still in the middle of a relief, ignore new relief requests to avoid overlapping and potential hardware issues
     return;
   }
@@ -927,13 +904,22 @@ void pressureRelief(bool fromVolumeDetermination) {
   const bool isBrewingTransfer = (SetPointData.mode == MODE_BREWING_TRANSFERING);
   const unsigned long reliefDurationDivisor = isBrewingTransfer ? 2UL : 1UL;
 
+  const unsigned long scaledEqualizationTime = (unsigned long)EQUALIZATIONTIME;
   const unsigned long scaledTransferTime = (unsigned long)TRANSFERTIME / reliefDurationDivisor;
   const unsigned long scaledSolenoidClosingTime = isBrewingTransfer ? 0: (unsigned long)SOLENOIDCLOSINGTIME;
   const unsigned long scaledReliefTime = (unsigned long)RELIEFTIME / reliefDurationDivisor;
   const unsigned long scaledExtraMs = isBrewingTransfer ? 0: extraMs;
   const unsigned long scaledFinishMs = isBrewingTransfer ? 0 : 1000UL;
-
-  timeToStartExpansion     = millis() + holdPressureDueToTemperatureRelays();
+  
+  
+  if (MILLISDIFF(lastReliefEvent,5*60L*1000L)) {
+    timeToEquilizeExpansionTank = millis() + holdPressureDueToTemperatureRelays();;
+    timeToStartExpansion     = scaledEqualizationTime;
+  }
+  else {
+    timeToEquilizeExpansionTank = 0;
+    timeToStartExpansion     = millis() + holdPressureDueToTemperatureRelays();
+  }
   timeToFinishExpansion    = scaledTransferTime + scaledExtraMs;
   timeToStartVenting       = scaledSolenoidClosingTime;
   timeToFinishVenting      = scaledReliefTime + scaledExtraMs;
@@ -941,6 +927,10 @@ void pressureRelief(bool fromVolumeDetermination) {
   // In MODE_OFF (volume determination), scaledFinishMs is 0, so keep a non-zero flag.
   timeToFinishRelief     = (scaledFinishMs > 0) ? scaledFinishMs : 1UL;
   timeToRegisterPressure = 0; // garante que estado anterior não vaza para novo ciclo
+
+
+  lastReliefEvent = millis()
+
 
   ;Serial.printf("[PRESSURE] Relief requested: pressure=%.2f bar, extraMs=%lu, transferOpen=%lu, transferClose=%lu, reliefOpen=%lu, reliefClose=%lu\n", 
                 ControlData.pressure, extraMs, timeToStartExpansion, timeToFinishExpansion, timeToStartVenting, timeToFinishVenting);
@@ -1328,23 +1318,19 @@ void pressureControl() {
     }
   }
 
-  if (!pressureSensorUnstable) {
-    if (volumeDeterminationActive) {
-      if (ControlData.pressure > volumeTargetPressure) {
-        pressureRelief(true);
-      } else {
-        finalizeVolumeDeterminationSummary();
-      }
+  if (volumeDeterminationActive) {
+    if (ControlData.pressure > volumeTargetPressure) {
+      pressureRelief(true);
+    } else {
+      finalizeVolumeDeterminationSummary();
     }
-    else 
-      if (SetPointData.setPointPressure > 0.0f && 
-         ControlData.pressure > (SetPointData.setPointPressure / sqrt(pressureDropFactor)) &&
-        (taskWindowType == 0 || !MILLISDIFF(taskWindowEndTime, 0))) {
-          pressureRelief(false);
-        }
-      if (ControlData.pressure > CalibrationData.maximumPressure) {
-        pressureRelief(false);
-      }
+  } else if (SetPointData.setPointPressure > 0.0f && 
+             ControlData.pressure > (SetPointData.setPointPressure / sqrt(pressureDropFactor)) &&
+             (taskWindowType == 0 || !MILLISDIFF(taskWindowEndTime, 0))) {
+    pressureRelief(false);
+  }
+  if (ControlData.pressure > CalibrationData.maximumPressure) {
+    pressureRelief(false);
   }
 
   if (!pressureDumpInProgress && volumeDeterminationActive && pressureSamples) {
@@ -1380,33 +1366,30 @@ char *getPressureControlStatus(char *st) {
   st[0] = '\0';
 
   if (pressureSensorConnected) {
-    snprintf(tmp, sizeof(tmp), "INA219 Pressure Sensor: OK%s<br>",
-             pressureSensorUnstable ? " [INSTÁVEL]" : "");
-    strncat(st, tmp, 2000);
-    snprintf(tmp, sizeof(tmp), "Instability: bad=%u good=%u<br>", pressureBadCount, pressureGoodCount);
-    strncat(st, tmp, 2000);
+    snprintf(tmp, sizeof(tmp), "INA219 Pressure Sensor: OK<br>");
+    strnncat(st, tmp, 2048);
     snprintf(tmp, sizeof(tmp), "Atmospheric pressure: %.3f bar<br>Filtered current reading: %.2f mA<br>Calculated pressure: %.3f bar<br>",
              Patm, currentReading, ControlData.pressure);
-    strncat(st, tmp, 2000);
+    strnncat(st, tmp, 2048);
 
 
     snprintf(tmp, sizeof(tmp), "Momentary current: %.2f mA<br>Library current: %.2f mA<br>",
           readCurrentFromINA219mA(), ina219.getCurrent_mA());
 
-    strncat(st, tmp, 2000);
+        strnncat(st, tmp, 2048);
     snprintf(tmp, sizeof(tmp), "Pressure drop factor (%%): %.3f<br>Headspace volume: %.2f L<br>Beer volume: %.2f L<br>",
              pressureDropFactor * 100, headSpaceVolume, beerVolume);
-    strncat(st, tmp, 2000);
+        strnncat(st, tmp, 2048);
     snprintf(tmp, sizeof(tmp), "Beer SG: %.4f<br>Beer ABV: %.2f%%<br>", beerSG, beerABV);
-    strncat(st, tmp, 2000);
+        strnncat(st, tmp, 2048);
     snprintf(tmp, sizeof(tmp), "Bus voltage: %.2f V<br>Shunt voltage: %.2f mV<br>Power: %.2f mW<br>Calibration: 16V/400mA (shunt range up to 40mV)<br>",
           ina219.getBusVoltage_V(), ina219.getShuntVoltage_mV(), ina219.getPower_mW());
-    strncat(st, tmp, 2000);
+        strnncat(st, tmp, 2048);
 
     
     snprintf(tmp, sizeof(tmp), "Relief count: %lu<br>Ejected CO2 mols: %.3f<br>Dissolved CO2 mols: %.3f<br>",
              (unsigned long)CountersData.totalReliefCount, CountersData.totalMolsEjected, dissolvedCO2Mols);
-    strncat(st, tmp, 2000);
+    strnncat(st, tmp, 2048);
     if (!reliefsPerHourAvailable || reliefsPerHourValue < RELIEF_PER_HOUR_MIN_DISPLAY) {
       if (!reliefsPerHourAvailable) {
         snprintf(tmp, sizeof(tmp), "Reliefs/hour: N/A (need %u reliefs, have %u)<br>", (unsigned)RELIEFS_WINDOW_SIZE, reliefMillisCount);
@@ -1416,22 +1399,22 @@ char *getPressureControlStatus(char *st) {
     } else {
       snprintf(tmp, sizeof(tmp), "Reliefs/hour: %.2f<br>", reliefsPerHourValue);
     }
-    strncat(st, tmp, 2000);
+    strnncat(st, tmp, 2048);
     snprintf(tmp, sizeof(tmp), "Headspace CO2 mols: %.3f<br>Total CO2 mols: %.3f<br>Total CO2 mass: %.2f g<br>",
              headSpaceCO2Mols, CountersData.totalMolsEjected + CountersData.CO2InSolution + headSpaceCO2Mols, CO2Mass());
-    strncat(st, tmp, 2000);
+    strnncat(st, tmp, 2048);
   } else {
     snprintf(tmp, sizeof(tmp), "INA219 Pressure Sensor: DISCONNECTED<br>Atmospheric pressure: %.3f bar<br>", Patm);
-    strncat(st, tmp, 2000);
+    strnncat(st, tmp, 2048);
   }
 
   // --- Diagnóstico de relés ---
   unsigned long now = millis();
-  strncat(st, "<br>--- Relay cycle ---<br>", 2000);
+  strnncat(st, "<br>--- Relay cycle ---<br>", 2048);
   if (!timeToFinishRelief) {
-    strncat(st, "Cycle: IDLE<br>", 2000);
+    strnncat(st, "Cycle: IDLE<br>", 2048);
   } else {
-    strncat(st, "Cycle: ACTIVE<br>", 2000);
+    strnncat(st, "Cycle: ACTIVE<br>", 2048);
     if (timeToStartExpansion) {
       snprintf(tmp, sizeof(tmp), "Stage: waiting to open transfer (in %ld ms)<br>",
                (long)(timeToStartExpansion - now));
@@ -1451,7 +1434,7 @@ char *getPressureControlStatus(char *st) {
       snprintf(tmp, sizeof(tmp), "Stage: finishing (cooldown %ld ms)<br>",
                (long)(timeToFinishRelief - now));
     }
-    strncat(st, tmp, 2000);
+    strnncat(st, tmp, 2048);
     snprintf(tmp, sizeof(tmp),
              "timeToStartExpansion=%lu timeToFinishExpansion=%lu<br>"
              "timeToStartVenting=%lu timeToFinishVenting=%lu<br>"
@@ -1459,7 +1442,7 @@ char *getPressureControlStatus(char *st) {
              timeToStartExpansion, timeToFinishExpansion,
              timeToStartVenting, timeToFinishVenting,
              timeToFinishRelief, timeToRegisterPressure);
-    strncat(st, tmp, 2000);
+    strnncat(st, tmp, 2048);
   }
 
   return st;
