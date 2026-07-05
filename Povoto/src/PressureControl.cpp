@@ -31,6 +31,9 @@
 #define PRESSURE_SAMPLE_MIN_MS 250
 #define PRESSURE_SAMPLES_MAX 3000
 #define PRESSURE_RELIEF_HISTORY_MAX 500
+#define VOLUME_DETERMINATION_RECORD_START_CYCLE 6
+#define VOLUME_DETERMINATION_RECORD_END_CYCLE 35
+#define VOLUME_DETERMINATION_CYCLE_INTERVAL_MS (5L*60000UL / DEBUGACCELERATION)
 #define RELIEFS_WINDOW_SIZE 2
 #define RELIEF_OVERDUE_FACTOR 1.20f
 #define RELIEF_PER_HOUR_MIN_DISPLAY 0.20f
@@ -96,6 +99,7 @@ static float pressureDropFactor = 0.99f;
 static bool volumeDeterminationActive = false;
 static float volumeStartPressure = 0.0f;
 static float volumeStartTemperatureK = 0.0f;
+static uint16_t volumeStartReliefIteration = 0;
 static float volumeTargetPressure = 0.0f;
 static unsigned long volumeLastReliefMillis = 0;
 static uint16_t volumeIteration = 0;
@@ -190,6 +194,9 @@ static void releasePressureReliefHistory() {
   pendingReliefIndex = -1;
   volumeRecordIndex = -1;
   volumeAwaitingRecord = false;
+  volumeStartPressure = 0.0f;
+  volumeStartTemperatureK = 0.0f;
+  volumeStartReliefIteration = 0;
 }
 
 static void resetReliefsPerHourState() {
@@ -609,7 +616,9 @@ static void finalizeVolumeDeterminationSummary() {
   volumeSummaryTiK = volumeStartTemperatureK;
   volumeSummaryTfK = kelvin(ControlData.temperature);
   volumeSummaryPi = volumeStartPressure;
-  volumeSummaryNReliefs = volumeIteration;
+  volumeSummaryNReliefs = (volumeIteration >= volumeStartReliefIteration)
+                        ? (volumeIteration - volumeStartReliefIteration)
+                        : 0;
 
   if (volumeSummaryTiK <= 0.0f || volumeSummaryTfK <= 0.0f ||
       volumeSummaryPi <= 0.0f || volumeSummaryNReliefs == 0) {
@@ -618,7 +627,7 @@ static void finalizeVolumeDeterminationSummary() {
     return;
   }
 
-  volumeSummaryPfAdjusted = ControlData.pressure * (volumeSummaryTiK / volumeSummaryTfK);
+  volumeSummaryPfAdjusted = (ControlData.pressure + Patm) * (volumeSummaryTiK / volumeSummaryTfK) - Patm;
   if (volumeSummaryPfAdjusted <= 0.0f) {
     volumeDeterminationActive = false;
     showVolumeStatus("Volume: END", "Pf ajustada invalida", "Sem resumo");
@@ -735,14 +744,18 @@ void processPressure(bool afterRelief) {
   //beerSG = BatchData.batchOG - CountersData.SGAttenuation;
   
   if (afterRelief && volumeDeterminationActive) {
+    volumeIteration++;
+    volumeLastReliefMillis = millis();
+
     if (volumeAwaitingRecord && volumeRecordIndex >= 0) {
       PressureReliefRecord &record = pressureReliefHistory[volumeRecordIndex];
-      volumeIteration++;
 
       record.tiK = volumeStartTemperatureK;
       record.tfK = kelvin(ControlData.temperature);
       record.pi = volumeStartPressure;
-      record.nReliefs = volumeIteration;
+      record.nReliefs = (volumeIteration >= volumeStartReliefIteration)
+              ? (volumeIteration - volumeStartReliefIteration)
+              : 0;
       record.volumeMetricsValid = false;
 
       if (record.tiK > 0.0f && record.tfK > 0.0f && record.pi > 0.0f && record.nReliefs > 0) {
@@ -867,35 +880,51 @@ void pressureRelief(bool fromVolumeDetermination) {
   }
 
   if (fromVolumeDetermination) {
-    if (!pressureReliefHistory) {
-      return;
-    }
-    const uint16_t recordIndex = pressureReliefIndex;
-    PressureReliefRecord &record = pressureReliefHistory[recordIndex];
-    record.timestamp[0] = '\0';
-    NTPFormatedDateTime(record.timestamp);
-    record.temperature = ControlData.temperature;
-    record.pressureBefore = ControlData.pressure;
-    record.pressureAfter = 0.0f;
-    record.currentBefore = currentReading;
-    record.currentAfter = 0.0f;
-    record.tiK = 0.0f;
-    record.tfK = 0.0f;
-    record.pi = 0.0f;
-    record.pfAdjusted = 0.0f;
-    record.nReliefs = 0;
-    record.factorMedio = 0.0f;
-    record.fermenterVolume = 0.0f;
-    record.volumeMetricsValid = false;
+    const uint16_t nextCycle = volumeIteration + 1;
+    const bool shouldRecordCycle = (nextCycle >= VOLUME_DETERMINATION_RECORD_START_CYCLE &&
+                                    nextCycle <= VOLUME_DETERMINATION_RECORD_END_CYCLE);
 
-    pendingReliefIndex = recordIndex;
+    volumeAwaitingRecord = false;
+    volumeRecordIndex = -1;
+    pendingReliefIndex = -1;
 
-    volumeAwaitingRecord = true;
-    volumeRecordIndex = recordIndex;
+    if (shouldRecordCycle) {
+      if (!pressureReliefHistory) {
+        return;
+      }
 
-    pressureReliefIndex = (pressureReliefIndex + 1) % PRESSURE_RELIEF_HISTORY_MAX;
-    if (pressureReliefCount < PRESSURE_RELIEF_HISTORY_MAX) {
-      pressureReliefCount++;
+      if (volumeStartTemperatureK <= 0.0f || volumeStartPressure <= 0.0f) {
+        volumeStartTemperatureK = kelvin(ControlData.temperature);
+        volumeStartPressure = ControlData.pressure;
+        volumeStartReliefIteration = volumeIteration;
+      }
+
+      const uint16_t recordIndex = pressureReliefIndex;
+      PressureReliefRecord &record = pressureReliefHistory[recordIndex];
+      record.timestamp[0] = '\0';
+      NTPFormatedDateTime(record.timestamp);
+      record.temperature = ControlData.temperature;
+      record.pressureBefore = ControlData.pressure;
+      record.pressureAfter = 0.0f;
+      record.currentBefore = currentReading;
+      record.currentAfter = 0.0f;
+      record.tiK = 0.0f;
+      record.tfK = 0.0f;
+      record.pi = 0.0f;
+      record.pfAdjusted = 0.0f;
+      record.nReliefs = 0;
+      record.factorMedio = 0.0f;
+      record.fermenterVolume = 0.0f;
+      record.volumeMetricsValid = false;
+
+      pendingReliefIndex = recordIndex;
+      volumeAwaitingRecord = true;
+      volumeRecordIndex = recordIndex;
+
+      pressureReliefIndex = (pressureReliefIndex + 1) % PRESSURE_RELIEF_HISTORY_MAX;
+      if (pressureReliefCount < PRESSURE_RELIEF_HISTORY_MAX) {
+        pressureReliefCount++;
+      }
     }
   }
 
@@ -1215,9 +1244,9 @@ bool startVolumeDetermination(char *reason, size_t reasonSize) {
     return false;
   }
 
-  if (ControlData.pressure < 1.5f) {
+  if (ControlData.pressure < 1.9f) {
     if (reason && reasonSize > 0) {
-      snprintf(reason, reasonSize, "Insufficient pressure (min 1.5 bar)");
+      snprintf(reason, reasonSize, "Insufficient pressure (min 1.9 bar)");
     }
     return false;
   }
@@ -1237,8 +1266,9 @@ bool startVolumeDetermination(char *reason, size_t reasonSize) {
   pressureReliefCount = 0;
 
   volumeDeterminationActive = true;
-  volumeStartPressure = ControlData.pressure;
-  volumeStartTemperatureK = kelvin(ControlData.temperature);
+  volumeStartPressure = 0.0f;
+  volumeStartTemperatureK = 0.0f;
+  volumeStartReliefIteration = 0;
   volumeTargetPressure = 0.5f;
   volumeLastReliefMillis = 0;
   volumeIteration = 0;
@@ -1319,10 +1349,10 @@ void pressureControl() {
   }
 
   if (volumeDeterminationActive) {
-    if (ControlData.pressure > volumeTargetPressure) {
-      pressureRelief(true);
-    } else {
+    if (volumeIteration >= VOLUME_DETERMINATION_RECORD_END_CYCLE) {
       finalizeVolumeDeterminationSummary();
+    } else if (MILLISDIFF(volumeLastReliefMillis, VOLUME_DETERMINATION_CYCLE_INTERVAL_MS)) {
+      pressureRelief(true);
     }
   } else if (SetPointData.setPointPressure > 0.0f && 
              ControlData.pressure > (SetPointData.setPointPressure / sqrt(pressureDropFactor)) &&
