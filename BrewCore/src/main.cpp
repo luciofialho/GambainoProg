@@ -29,9 +29,11 @@
 #include "esp_task_wdt.h"
 #include "PotCleaner.h"
 #include "coreDumpDownload.h"
+#include "RaptIntegration.h"
 
 
 #define SAVETOEEPROMINTERVAL 5 * MINUTES
+
 
 void controlPower() {
   bool powerOn = false;
@@ -200,6 +202,7 @@ void setup() {
   Serial.println("Datalog task created. Setting up coredump download...");
   
   coredumpDownloadSetup(); 
+  initBLEReader();
 
   Serial.println("Coredump download setup done. exiting setup().");
 }
@@ -267,6 +270,8 @@ void loop() {
   verifyWiFiConnection();
   checkDebugMode();
   checkPerfSentinel("VerifyWifi");
+
+  readBLE();
 
   handle_IOTK();
   checkPerfSentinel("Handle");
