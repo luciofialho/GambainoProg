@@ -323,7 +323,7 @@ void temperatureControl() {
 
 char *getTemperatureControlStatus(char *st) {
   char buf[2048];  
-    sprintf(buf, "<br>-------<br>Temperature: %.2f C<br>Environment Temp: %.2f C<br>Target: %.2f C<br>Mode: %s<br>Chill: %s<br>Heat: %s<br>Total chill time: %ld s<br>Total heat time: %ld s<br>", 
+    sprintf(buf, "<br>-------TEMPERATURE CONTROL<br>Temperature: %.2f C<br>Environment Temp: %.2f C<br>Target: %.2f C<br>Mode: %s<br>Chill: %s<br>Heat: %s<br>Total chill time: %ld s<br>Total heat time: %ld s<br>", 
           ControlData.temperature,
           environmentTemp,
           SetPointData.setPointTemp,

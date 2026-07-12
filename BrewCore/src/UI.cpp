@@ -17,7 +17,6 @@
 #include "EasyBuzzer.h"
 #include "monitor.h"
 #include "IOTK_SimpleMail.h"
-#include "CloudLog.h"
 #include "level.h"
 #include "esp_task_wdt.h"
 

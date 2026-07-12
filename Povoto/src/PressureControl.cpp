@@ -161,7 +161,7 @@ float volumeEstimationFromPressureDrop(float dropFactor) {
   if (dropFactor <= 0.0f || dropFactor >= 1.0f) {
     return NAN;
   }
-  return (FMTData.FMTReliefVolume * dropFactor) / (1 - dropFactor);
+  return (FMTData.FMTReliefVolume * dropFactor) / (1.0f -dropFactor);
 }
 
 static void updateBeerVolumeFromHeadspace() {
@@ -384,13 +384,13 @@ void applyDumpWindowHeadspaceRecalc(float headspaceBeforeL, float pressureBefore
     headAfter = FMTData.FMTVolume;
   }
 
-  if (headAfter<headspaceBeforeL) {
+  if (headAfter > headspaceBeforeL) {
     headSpaceVolume = headAfter; 
     updateBeerVolumeFromHeadspace();
     lnPressureDropAvg.clear();
     // Keep the internal factor coherent with the recalculated headspace.
     if ((headSpaceVolume + FMTData.FMTReliefVolume) > 0.0f) {
-      pressureDropFactor = headSpaceVolume / (headSpaceVolume + FMTData.FMTReliefVolume);
+      pressureDropFactor = headSpaceVolume / (headSpaceVolume + FMTData.FMTReliefVolume); // Lucio: rever
       pressureDropFactor = fmaxf(0.001f, fminf(pressureDropFactor, 0.999f));
       lnPressureDropAvg.add(logf(pressureDropFactor));
     }
@@ -401,13 +401,13 @@ void applyDumpWindowHeadspaceRecalc(float headspaceBeforeL, float pressureBefore
 
   CountersData.headSpaceVolume = headSpaceVolume;
 
-  const float impliedRemovedL = headSpaceVolume - headspaceBeforeL;
+  const float impliedHeadspaceDeltaL = headSpaceVolume - headspaceBeforeL;
   Serial.printf("[DUMP] Headspace recalculated: H_before=%.3f L, P1=%.3f bar, P2=%.3f bar, H_after=%.3f L, dH=%.3f L, Beer=%.3f L\n",
                 headspaceBeforeL,
                 pressureBeforeBar,
                 pressureAfterBar,
                 headSpaceVolume,
-                impliedRemovedL,
+                impliedHeadspaceDeltaL,
                 beerVolume);
 }
 
@@ -687,7 +687,7 @@ void processPressure(bool afterRelief) {
 
     float instantPressureDropFactor = 1.0f;
     if (lastPressure > 0.01f) {
-      instantPressureDropFactor = (ControlData.pressure - blindWindowCorrection) / lastPressure;
+      instantPressureDropFactor = (ControlData.pressure - blindWindowCorrection*0) / lastPressure; // Lucio: retornar blindWindowCorrection
     }
 
     // Keep factor in a valid range for log() and downstream equations.
@@ -1395,29 +1395,19 @@ char *getPressureControlStatus(char *st) {
   int16_t rawShuntRegister = 0;
   st[0] = '\0';
 
-  if (pressureSensorConnected) {
-    snprintf(tmp, sizeof(tmp), "INA219 Pressure Sensor: OK<br>");
+  snprintf(tmp, sizeof(tmp), "---------PRESSURE CONTROL:<br>");
     strnncat(st, tmp, 2048);
+  if (pressureSensorConnected) {
     snprintf(tmp, sizeof(tmp), "Atmospheric pressure: %.3f bar<br>Filtered current reading: %.2f mA<br>Calculated pressure: %.3f bar<br>",
              Patm, currentReading, ControlData.pressure);
     strnncat(st, tmp, 2048);
-
-
-    snprintf(tmp, sizeof(tmp), "Momentary current: %.2f mA<br>Library current: %.2f mA<br>",
-          readCurrentFromINA219mA(), ina219.getCurrent_mA());
-
+    snprintf(tmp, sizeof(tmp), "Shunt voltage: %.2f mV<br>",  ina219.getShuntVoltage_mV());
         strnncat(st, tmp, 2048);
-    snprintf(tmp, sizeof(tmp), "Pressure drop factor (%%): %.3f<br>Headspace volume: %.2f L<br>Beer volume: %.2f L<br>",
-             pressureDropFactor * 100, headSpaceVolume, beerVolume);
-        strnncat(st, tmp, 2048);
-    snprintf(tmp, sizeof(tmp), "Beer SG: %.4f<br>Beer ABV: %.2f%%<br>", beerSG, beerABV);
-        strnncat(st, tmp, 2048);
-    snprintf(tmp, sizeof(tmp), "Bus voltage: %.2f V<br>Shunt voltage: %.2f mV<br>Power: %.2f mW<br>Calibration: 16V/400mA (shunt range up to 40mV)<br>",
-          ina219.getBusVoltage_V(), ina219.getShuntVoltage_mV(), ina219.getPower_mW());
+    snprintf(tmp, sizeof(tmp), "Momentary current: %.2f mA<br>",
+          readCurrentFromINA219mA());
         strnncat(st, tmp, 2048);
 
-    
-    snprintf(tmp, sizeof(tmp), "Relief count: %lu<br>Ejected CO2 mols: %.3f<br>Dissolved CO2 mols: %.3f<br>",
+    snprintf(tmp, sizeof(tmp), "----<br>Relief count: %lu<br>Ejected CO2 mols: %.3f<br>Dissolved CO2 mols: %.3f<br>",
              (unsigned long)CountersData.totalReliefCount, CountersData.totalMolsEjected, dissolvedCO2Mols);
     strnncat(st, tmp, 2048);
     if (!reliefsPerHourAvailable || reliefsPerHourValue < RELIEF_PER_HOUR_MIN_DISPLAY) {
@@ -1430,6 +1420,15 @@ char *getPressureControlStatus(char *st) {
       snprintf(tmp, sizeof(tmp), "Reliefs/hour: %.2f<br>", reliefsPerHourValue);
     }
     strnncat(st, tmp, 2048);
+    snprintf(tmp, sizeof(tmp), "Pressure drop factor (%%): %.3f<br>Headspace volume: %.2f L<br>Beer volume: %.2f L<br>",
+             pressureDropFactor * 100, headSpaceVolume, beerVolume);
+        strnncat(st, tmp, 2048);
+
+    snprintf(tmp, sizeof(tmp), "----<br>Beer SG: %.4f<br>Beer ABV: %.2f%%<br>", beerSG, beerABV);
+        strnncat(st, tmp, 2048);
+
+
+    
     snprintf(tmp, sizeof(tmp), "Headspace CO2 mols: %.3f<br>Total CO2 mols: %.3f<br>Total CO2 mass: %.2f g<br>",
              headSpaceCO2Mols, CountersData.totalMolsEjected + CountersData.CO2InSolution + headSpaceCO2Mols, CO2Mass());
     strnncat(st, tmp, 2048);

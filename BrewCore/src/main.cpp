@@ -21,7 +21,7 @@
 #include "IOTK.h"
 #include "IOTK_NTP.h"
 #include "IOTK_ESPAsyncServer.h"
-#include "CloudLog.h"
+//#include "CloudLog.h"
 #include "EspNowPackets.h"
 #include <EEPROM.h>
 #include <SPIFFS.h>
