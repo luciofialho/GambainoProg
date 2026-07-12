@@ -56,12 +56,14 @@ static bool buildBrewfatherPayload(char *out, size_t outSize) {
   escapeJsonString(BatchData.batchName, batchNameEsc, sizeof(batchNameEsc));
 
   const float temp = isValidTemp(ControlData.temperature) ? ControlData.temperature : NAN;
+  const float targetTemp = isValidTemp(SetPointData.setPointTemp) ? SetPointData.setPointTemp : NAN;
   const float extTemp = isValidTemp(environmentTemp) ? environmentTemp : NAN;
   const float gravity = (beerSG >= 0.0f && beerSG <= 1.1f) ? beerSG : NAN;
   const float pressure = (ControlData.pressure >= 0.0f && ControlData.pressure <= 3.0f) ? ControlData.pressure : NAN;
   const float bpm = getReliefsPerHourValue();
 
   char tempField[24];
+  char targetTempField[24];
   char extTempField[24];
   char gravityField[24];
   char pressureField[24];
@@ -69,6 +71,9 @@ static bool buildBrewfatherPayload(char *out, size_t outSize) {
 
   if (isnan(temp)) snprintf(tempField, sizeof(tempField), "null");
   else snprintf(tempField, sizeof(tempField), "%.2f", temp);
+
+  if (isnan(targetTemp)) snprintf(targetTempField, sizeof(targetTempField), "null");
+  else snprintf(targetTempField, sizeof(targetTempField), "%.2f", targetTemp);
 
   if (isnan(extTemp)) snprintf(extTempField, sizeof(extTempField), "null");
   else snprintf(extTempField, sizeof(extTempField), "%.2f", extTemp);
@@ -85,10 +90,11 @@ static bool buildBrewfatherPayload(char *out, size_t outSize) {
   int written = snprintf(
     out,
     outSize,
-    "{\"name\":\"%s%d\",\"temp_unit\":\"C\",\"pressure_unit\":\"BAR\",\"temp\":%s,\"temperatura\":%s,\"ext_temp\":%s,\"gravity\":%s,\"gravity_unit\":\"SG\",\"pressure\":%s,\"bpm\":%s,\"beer\":\"%s\"}",
+    "{\"name\":\"%s%d\",\"temp_unit\":\"C\",\"pressure_unit\":\"BAR\",\"temp\":%s,\"target_temp\":%s,\"temperatura\":%s,\"ext_temp\":%s,\"gravity\":%s,\"gravity_unit\":\"SG\",\"pressure\":%s,\"bpm\":%s,\"beer\":\"%s\"}",
     debugging ? "Debfmt" : "Fmt",
     (int)FMTData.PovotoNum,
     tempField,
+    targetTempField,
     tempField,
     extTempField,
     gravityField,
