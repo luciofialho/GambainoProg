@@ -49,7 +49,7 @@ char * getPovotoStatus(char *st) {
   char smallBuf[100] = "Implementar";
   NTPFormatedDateTime(smallBuf);
   
-  snprintf(buf,199,"<BR>WiFi SSID: %s<BR>System time: %s<BR>",WiFi.SSID().c_str(),smallBuf);
+  snprintf(buf,199,"<BR>System time: %s<BR>",smallBuf);
   strnncat(st,buf,MAXSTATUSLEN);
 
   snprintf(buf,199,"<BR>Debugging mode: %s<br>",debugging ? "ON" : "OFF");

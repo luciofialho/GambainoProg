@@ -104,16 +104,23 @@ void IRAM_ATTR ISR_TransferMeter() {
 */
 
 void setup() {
+      pinMode(LED_BUILTIN, OUTPUT);
   strcpy(ESP_AppName, "Gambaino - BrewCore");
   dateFormat=DDMMYYYY;
   Serial.begin(115200);
+  Serial0.begin(115200);
+  delay(3000);
+  Serial.print("Free heap at beggining: "); Serial.print(ESP.getFreeHeap()); Serial.print(" / "); Serial.println(ESP.getMaxAllocHeap());
+  Serial0.println("imprimindo pela Serial0");
+  Serial.print("passo 2");
+  
   // Serial2 – comminication with sidekick ESP32
   Serial2.begin(SERIAL2_SPEED, SERIAL_8N1, SERIAL2_RX, SERIAL2_TX);
 
   pinMode(PINBUZZER,OUTPUT);
   digitalWrite(PINBUZZER,LOW);
 
-  Serial.print("Free heap at beggining: "); Serial.print(ESP.getFreeHeap()); Serial.print(" / "); Serial.println(ESP.getMaxAllocHeap());
+
   Wire.begin(PINI2CSDA,PINI2CSCL); 
   quickI2CSetZeros();
   //Wire.setClock(50000);
@@ -209,6 +216,19 @@ void setup() {
 
 
 void loop() {
+
+{
+    static unsigned long anterior = 0;
+
+    if (millis() - anterior >= 1000) {
+        anterior = millis();
+        Serial.println("Programa executando");
+                digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); 
+    }
+
+    // restante do loop...
+}
+
   char cmd[MAXLINE];
   unsigned long CycleStart = millis();
   if (char c=readSerial2(cmd,sizeof(cmd))) {

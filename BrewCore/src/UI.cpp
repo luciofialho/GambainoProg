@@ -1011,7 +1011,7 @@ char * getGambainoStatus(char *st) {
   char buf[2048];
   char smallBuf[600];
   NTPFormatedDateTime(smallBuf);
-  snprintf(buf,199,"<BR>WiFi SSID: %s<BR>System time: %s<BR>",WiFi.SSID().c_str(),smallBuf);
+  snprintf(buf,199,"<BR>System time: %s<BR>",smallBuf);
   strnncat(st,buf,MAXSTATUSLEN);
 
   if (debugging)
