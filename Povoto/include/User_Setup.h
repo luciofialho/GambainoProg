@@ -7,17 +7,17 @@
 #define USE_TOUCH
 
 #define FT_ADDR 0x38
-#define TOUCH_IRQ 27
+#define TOUCH_IRQ 18//27
 
-#define TFT_CS   5
-#define TFT_DC   2   // Data/Command do display
-#define TFT_RST  4   // Reset do display
+#define TFT_CS   16//5
+#define TFT_DC   7//2   // Data/Command do display
+#define TFT_RST  15//4   // Reset do display
 
-#define TFT_SCLK 18
-#define TFT_MOSI 23
+#define TFT_SCLK 5//18
+#define TFT_MOSI 6//23
 //#define TFT_MISO -1   // Adicionando MISO para SPI
 
-#define TFT_BL   32   // Pin to control backlight
+#define TFT_BL   4//32   // Pin to control backlight
 
 #define LOAD_GLCD
 #define LOAD_FONT2
@@ -35,9 +35,9 @@
 
 
 // Touch (XPT2046) - Configuração padrão
-#define TOUCH_CS 21
-#define TOUCH_CLK 18
-#define TOUCH_DIN 23
+#define TOUCH_CS 17//21
+#define TOUCH_CLK 5//18
+#define TOUCH_DIN 6//23
 #define TOUCH_DO 19
 
 #define TOUCH_X_OFFSET 0

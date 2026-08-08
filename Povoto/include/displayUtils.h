@@ -19,6 +19,7 @@ void showConfigQRCode();
 bool isScreenSaverActive();
 void forceScreenSaver(bool enable);
 void resetDisplayHardware();
+void setTouchControllerReady(bool ready);
 
 // Task UI
 bool isTaskUIActive();

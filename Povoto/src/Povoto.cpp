@@ -203,10 +203,16 @@ void setup() {
   
   Wire.begin(PINSDA, PINSCL); 
 
-  uint8_t vend = rd(0xA8); // deve dar 0x11 (FocalTech)
-  uint8_t chip = rd(0xA3); // 0x06 ou 0x36
-
-  Serial.printf("VendorID=0x%02X, ChipID=0x%02X\n", vend, chip);
+  Wire.beginTransmission(FT_ADDR);
+  bool touchPresent = (Wire.endTransmission() == 0);
+  setTouchControllerReady(touchPresent);
+  if (touchPresent) {
+    uint8_t vend = rd(0xA8); // deve dar 0x11 (FocalTech)
+    uint8_t chip = rd(0xA3); // 0x06 ou 0x36
+    Serial.printf("VendorID=0x%02X, ChipID=0x%02X\n", vend, chip);
+  } else {
+    Serial.printf("Touch FocalTech nao detectado no I2C (addr 0x%02X, SDA=%d SCL=%d)\n", FT_ADDR, PINSDA, PINSCL);
+  }
 
   NTPBegin(-3);
   
@@ -215,7 +221,7 @@ void setup() {
   //uint16_t calData[5];
   //uint8_t calDataOK = 0;
   
-  if (!LittleFS.begin()) {
+  if (!LittleFS.begin(true)) {
     Serial.println("Erro ao montar o LittleFS");
     return;
   }
@@ -223,20 +229,26 @@ void setup() {
 
   pinMode(TFT_RST,OUTPUT);
   pinMode(PINCHILLER, OUTPUT);
+  pinMode(PINLEDCHILLER, OUTPUT);
   pinMode(PINHEATER, OUTPUT);
+  pinMode(PINLEDHEATER, OUTPUT);
   pinMode(PINTRANSFERVALVE, OUTPUT);
   pinMode(PINRELIEFVALVE, OUTPUT);
   pinMode(PINBUZZER, OUTPUT);
   pinMode(PINLED,OUTPUT);
   pinMode(PINBTN, INPUT);
   digitalWrite(PINCHILLER, LOW);
+  digitalWrite(PINLEDCHILLER, LOW);
   digitalWrite(PINHEATER, LOW); 
+  digitalWrite(PINLEDHEATER, LOW);  
   digitalWrite(PINTRANSFERVALVE, LOW);
   digitalWrite(PINRELIEFVALVE, LOW);
   digitalWrite(PINBUZZER, LOW);
   digitalWrite(PINLED, LOW);
 
+  Serial.println("[BOOT CKPT] before mainScreen");
   mainScreen();
+  Serial.println("[BOOT CKPT] after mainScreen");
 
   DallasSetup(PINDALLAS);
   uniqueDallasThermometer(dallasTemperature);

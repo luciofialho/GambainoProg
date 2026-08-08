@@ -143,11 +143,11 @@ void textOut(byte alignment, const GFXfont *font, int x, int y, const char *text
 void screenBackground() {
   tft.setRotation(3);
   
-  // Corrige cores invertidas
+  // Mantem swap de bytes desativado no caminho normal de desenho.
   tft.setSwapBytes(false);
   
-  // Tenta inversão de cores manual
-  tft.invertDisplay(true); 
+  // No painel novo a inversao forcada deixa as cores trocadas.
+  tft.invertDisplay(false);
 
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.drawString("Display ST7796 SPI OK!", 20, 50, 2);

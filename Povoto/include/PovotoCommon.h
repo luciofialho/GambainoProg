@@ -3,19 +3,21 @@
 
 extern TFT_eSPI tft;
 
-#define PINSDA 22
-#define PINSCL 17
-#define PINDALLAS 33
+#define PINSDA 8
+#define PINSCL 9
+#define PINDALLAS 21
 
-#define PINCHILLER 13
-#define PINHEATER 16
-#define PINTRANSFERVALVE 25
-#define PINRELIEFVALVE 26
+#define PINCHILLER 39
+#define PINLEDCHILLER 1
+#define PINHEATER 40
+#define PINLEDHEATER 2
+#define PINTRANSFERVALVE 41
+#define PINRELIEFVALVE 42
 
-#define PINBUZZER 14
-#define PINLED    19
+#define PINBUZZER 47
+#define PINLED    13
 
-#define PINBTN    34
+#define PINBTN    14
 
 
 #define FMTCHILL 0

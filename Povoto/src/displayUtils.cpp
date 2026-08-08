@@ -15,15 +15,48 @@
 #include <WiFi.h>
 #include <qrcode.h> 
 #include "IOTK.h"
+#include <string.h>
+#if defined(ARDUINO_ARCH_ESP32)
+#include "esp32-hal-psram.h"
+#include "esp_heap_caps.h"
+#endif
 
 #define UI_PERF_LOG 1
 #define UI_TOUCH_RAW_LOG 0
+#define UI_TOUCH_POINT_LOG 1
+#ifndef UI_BMP_USE_PSRAM
+#define UI_BMP_USE_PSRAM 0
+#endif
+#ifndef UI_BMP_PROBE_RUNTIME
+#define UI_BMP_PROBE_RUNTIME 0
+#endif
+#define UI_BMP_PSRAM_DIAG 1
+#ifndef UI_BMP_CACHE_PSRAM
+#define UI_BMP_CACHE_PSRAM 1
+#endif
+#ifndef UI_BMP_PSRAM_READ_ROWS
+#define UI_BMP_PSRAM_READ_ROWS 16
+#endif
+#ifndef UI_BMP_PSRAM_PUSH_ROWS
+#define UI_BMP_PSRAM_PUSH_ROWS 24
+#endif
+#ifndef UI_BMP_PSRAM_DIRECT_PUSH
+#define UI_BMP_PSRAM_DIRECT_PUSH 1
+#endif
+#ifndef UI_DISPLAY_VALIDATE_SOFT_WAKE
+#define UI_DISPLAY_VALIDATE_SOFT_WAKE 0
+#endif
+#ifndef UI_DISPLAY_SOFT_WAKE_MAX_SLEEP_MS
+#define UI_DISPLAY_SOFT_WAKE_MAX_SLEEP_MS 10000UL
+#endif
 
 
 
 volatile bool touchFlag = false;
 volatile unsigned long touchIrqMillis = 0;
+static bool touchControllerReady = false;
 static bool screenSaverActive = false;
+static unsigned long screenSaverEnteredAt = 0;
 unsigned long int lastClick = 0;
 
 // Forward declaration — definição completa mais abaixo (após showConfigQRCode)
@@ -45,6 +78,15 @@ void IRAM_ATTR touchIRQ() {
 
 byte DisplayMode = 0; // 0 = normal, 1 = QR Code
 unsigned long displayModeChangeTime = 0;
+
+#if defined(ARDUINO_ARCH_ESP32)
+#if UI_BMP_USE_PSRAM && UI_BMP_CACHE_PSRAM
+static uint16_t *gBmpCacheBuf = nullptr;
+static uint16_t gBmpCacheW = 0;
+static uint16_t gBmpCacheH = 0;
+static char gBmpCacheFile[64] = {0};
+#endif
+#endif
 
 uint16_t read16(fs::File &f) {
   uint16_t result;
@@ -87,6 +129,105 @@ void drawBmp(const char *filename, int16_t x, int16_t y) {
   unsigned long pushMsTotal = 0;
   uint16_t chunksRendered = 0;
   uint8_t chunkRowsUsed = 0;
+  bool psramAvailable = false;
+
+#if defined(ARDUINO_ARCH_ESP32)
+#if UI_BMP_USE_PSRAM && UI_BMP_CACHE_PSRAM
+  if (gBmpCacheBuf && strcmp(filename, gBmpCacheFile) == 0) {
+    const uint16_t drawW = (uint16_t)min((int32_t)gBmpCacheW, (int32_t)(tft.width() - x));
+    const uint16_t drawH = (uint16_t)min((int32_t)gBmpCacheH, (int32_t)(tft.height() - y));
+    if (drawW == gBmpCacheW && drawH == gBmpCacheH) {
+      const bool oldSwapBytes = tft.getSwapBytes();
+      tft.setSwapBytes(true);
+#if UI_BMP_PSRAM_DIRECT_PUSH
+      if (UI_BMP_PSRAM_DIAG) {
+        Serial.printf("[BMP PSRAM] cache hit file=%s size=%ux%u direct-push=1\n", filename, (unsigned)drawW, (unsigned)drawH);
+      }
+      const unsigned long tPush0 = millis();
+      tft.pushImage(x, y, drawW, drawH, gBmpCacheBuf);
+      pushMsTotal += millis() - tPush0;
+      chunksRendered = 1;
+      chunkRowsUsed = (drawH > 255U) ? 255U : (uint8_t)drawH;
+      tft.setSwapBytes(oldSwapBytes);
+#else
+      uint16_t pushRows = UI_BMP_PSRAM_PUSH_ROWS;
+      uint16_t *pushBuf = nullptr;
+      while (pushRows >= 1) {
+        const size_t pushBufBytesTry = (size_t)drawW * pushRows * sizeof(uint16_t);
+        pushBuf = (uint16_t *)heap_caps_malloc(pushBufBytesTry, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        if (pushBuf) {
+          break;
+        }
+        pushRows = (uint16_t)(pushRows / 2);
+      }
+
+      if (pushBuf) {
+        if (UI_BMP_PSRAM_DIAG) {
+          Serial.printf("[BMP PSRAM] cache hit file=%s size=%ux%u pushRows=%u\n", filename, (unsigned)drawW, (unsigned)drawH, (unsigned)pushRows);
+        }
+        for (uint16_t row = 0; row < drawH; row += pushRows) {
+          const uint16_t rowsNow = (uint16_t)min((int32_t)pushRows, (int32_t)(drawH - row));
+          const size_t rowsBytes = (size_t)drawW * rowsNow * sizeof(uint16_t);
+          memcpy(pushBuf, gBmpCacheBuf + ((size_t)row * drawW), rowsBytes);
+          const unsigned long tPush0 = millis();
+          tft.pushImage(x, y + row, drawW, rowsNow, pushBuf);
+          pushMsTotal += millis() - tPush0;
+          chunksRendered++;
+          delay(0);
+        }
+        free(pushBuf);
+        chunkRowsUsed = (uint8_t)pushRows;
+        tft.setSwapBytes(oldSwapBytes);
+        const unsigned long totalMs = millis() - perfStart;
+        Serial.print("Loaded in "); Serial.print(totalMs);
+        Serial.println(" ms");
+        if (UI_PERF_LOG) {
+          Serial.printf("[BMP PERF] mode=%s cfg_psram=%u avail_psram=%u open=%lums total=%lums read=%lums conv=%lums push=%lums chunks=%u rows/chunk=%u w=%u h=%u\n",
+                        "psram-cache",
+                        (unsigned)UI_BMP_USE_PSRAM,
+                        1U,
+                        0UL,
+                        totalMs,
+                        readMsTotal,
+                        convertMsTotal,
+                        pushMsTotal,
+                        (unsigned)chunksRendered,
+                        (unsigned)chunkRowsUsed,
+                        (unsigned)drawW,
+                        (unsigned)drawH);
+        }
+        return;
+      }
+
+      if (UI_BMP_PSRAM_DIAG) {
+        Serial.println("[BMP PSRAM] cache hit, no internal push buffer; fallback to file path");
+      }
+      tft.setSwapBytes(oldSwapBytes);
+#endif
+
+      const unsigned long totalMs = millis() - perfStart;
+      Serial.print("Loaded in "); Serial.print(totalMs);
+      Serial.println(" ms");
+      if (UI_PERF_LOG) {
+        Serial.printf("[BMP PERF] mode=%s cfg_psram=%u avail_psram=%u open=%lums total=%lums read=%lums conv=%lums push=%lums chunks=%u rows/chunk=%u w=%u h=%u\n",
+                      "psram-cache",
+                      (unsigned)UI_BMP_USE_PSRAM,
+                      1U,
+                      0UL,
+                      totalMs,
+                      readMsTotal,
+                      convertMsTotal,
+                      pushMsTotal,
+                      (unsigned)chunksRendered,
+                      (unsigned)chunkRowsUsed,
+                      (unsigned)drawW,
+                      (unsigned)drawH);
+      }
+      return;
+    }
+  }
+#endif
+#endif
 
   if (read16(bmpFS) == 0x4D42)
   {
@@ -105,6 +246,209 @@ void drawBmp(const char *filename, int16_t x, int16_t y) {
 
       const uint16_t padding = (4 - ((w * 3) & 3)) & 3;
       const size_t rowBytes = (size_t)w * 3U + padding;
+
+      // Garante que nao desenhamos fora da area visivel (ex.: BMP 481x320 em tela 480x320).
+      const uint16_t drawW = (uint16_t)min((int32_t)w, (int32_t)(tft.width() - x));
+      const uint16_t drawH = (uint16_t)min((int32_t)h, (int32_t)(tft.height() - y));
+      if (drawW != w || drawH != h) {
+        Serial.printf("BMP clipped: src=%ux%u draw=%ux%u\n", (unsigned)w, (unsigned)h, (unsigned)drawW, (unsigned)drawH);
+      }
+
+      bool psramPathUsed = false;
+
+#if defined(ARDUINO_ARCH_ESP32)
+#if UI_BMP_USE_PSRAM
+      if (UI_BMP_PSRAM_DIAG) {
+        Serial.printf("[BMP PSRAM] probe begin cfg=%u draw=%ux%u\n", (unsigned)UI_BMP_USE_PSRAM, (unsigned)drawW, (unsigned)drawH);
+      }
+#if UI_BMP_PROBE_RUNTIME
+      psramAvailable = psramFound();
+      if (UI_BMP_PSRAM_DIAG) {
+        Serial.printf("[BMP PSRAM] probe end avail=%u\n", (unsigned)psramAvailable);
+      }
+#else
+      // Evita chamada de probe em runtime e tenta usar PSRAM diretamente.
+      // Se nao houver SPIRAM disponivel, a alocacao falha e cai no fallback chunk.
+      psramAvailable = true;
+      if (UI_BMP_PSRAM_DIAG) {
+        Serial.println("[BMP PSRAM] probe skipped (UI_BMP_PROBE_RUNTIME=0), assume enabled");
+      }
+#endif
+      // Se houver PSRAM, tenta montar um framebuffer RGB565 completo e fazer um unico pushImage.
+      if (psramAvailable) {
+        const size_t fbPixels = (size_t)drawW * (size_t)drawH;
+        const size_t fbBytes = fbPixels * sizeof(uint16_t);
+        if (UI_BMP_PSRAM_DIAG) {
+          Serial.printf("[BMP PSRAM] alloc fb=%u bytes\n", (unsigned)fbBytes);
+        }
+        uint16_t *frameBuf = (uint16_t *)heap_caps_malloc(fbBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        uint16_t readRows = UI_BMP_PSRAM_READ_ROWS;
+        uint8_t *rawChunk = nullptr;
+        while (readRows >= 1) {
+          rawChunk = (uint8_t *)malloc(rowBytes * readRows);
+          if (rawChunk) {
+            break;
+          }
+          readRows = (uint16_t)(readRows / 2);
+        }
+        if (UI_BMP_PSRAM_DIAG) {
+          Serial.printf("[BMP PSRAM] alloc done frameBuf=%p rawChunk=%p rowBytes=%u readRows=%u\n", (void*)frameBuf, (void*)rawChunk, (unsigned)rowBytes, (unsigned)readRows);
+        }
+
+        if (frameBuf && rawChunk) {
+          if (UI_BMP_PSRAM_DIAG) {
+            Serial.println("[BMP PSRAM] convert begin");
+          }
+          bool ok = true;
+          for (uint16_t srcBase = 0; srcBase < h; srcBase += readRows) {
+            const uint16_t rowsNow = (uint16_t)min((int32_t)readRows, (int32_t)(h - srcBase));
+            const size_t bytesToRead = rowBytes * rowsNow;
+            const unsigned long tRead0 = millis();
+            if (bmpFS.read(rawChunk, bytesToRead) != (int)bytesToRead) {
+              ok = false;
+              Serial.println("BMP load failed: short read (psram path)");
+              break;
+            }
+            readMsTotal += millis() - tRead0;
+
+            const unsigned long tConv0 = millis();
+            for (uint16_t localRow = 0; localRow < rowsNow; localRow++) {
+              const uint16_t srcRow = (uint16_t)(srcBase + localRow);
+              const uint16_t dstRow = (uint16_t)(h - 1 - srcRow); // BMP positivo: bottom-up
+              const uint8_t *bptr = rawChunk + ((size_t)localRow * rowBytes);
+              if (dstRow < drawH) {
+                uint16_t *tptr = frameBuf + ((size_t)dstRow * drawW);
+                for (uint16_t col = 0; col < drawW; col++) {
+                  const uint8_t b = *bptr++;
+                  const uint8_t g = *bptr++;
+                  const uint8_t r = *bptr++;
+                  *tptr++ = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+                }
+              } else {
+                bptr += (size_t)drawW * 3U;
+              }
+
+              // Consome bytes restantes da linha de origem quando houver clipping em largura.
+              bptr += (size_t)(w - drawW) * 3U;
+            }
+
+            if ((srcBase & 0x0F) == 0) {
+              delay(0);
+            }
+            convertMsTotal += millis() - tConv0;
+          }
+
+          if (ok) {
+            if (UI_BMP_PSRAM_DIAG) {
+              Serial.println("[BMP PSRAM] convert end, push begin");
+            }
+#if UI_BMP_PSRAM_DIRECT_PUSH
+            const unsigned long tPush0 = millis();
+            tft.pushImage(x, y, drawW, drawH, frameBuf);
+            pushMsTotal += millis() - tPush0;
+            chunksRendered = 1;
+            chunkRowsUsed = (drawH > 255U) ? 255U : (uint8_t)drawH;
+            psramPathUsed = true;
+            if (UI_BMP_PSRAM_DIAG) {
+              Serial.println("[BMP PSRAM] direct push end");
+            }
+
+#if defined(ARDUINO_ARCH_ESP32)
+#if UI_BMP_USE_PSRAM && UI_BMP_CACHE_PSRAM
+            // Mantem framebuffer em PSRAM para reutilizar nas proximas chamadas.
+            if (gBmpCacheBuf && gBmpCacheBuf != frameBuf) {
+              free(gBmpCacheBuf);
+            }
+            gBmpCacheBuf = frameBuf;
+            gBmpCacheW = drawW;
+            gBmpCacheH = drawH;
+            strncpy(gBmpCacheFile, filename, sizeof(gBmpCacheFile) - 1);
+            gBmpCacheFile[sizeof(gBmpCacheFile) - 1] = '\0';
+            frameBuf = nullptr;
+            if (UI_BMP_PSRAM_DIAG) {
+              Serial.printf("[BMP PSRAM] cache store file=%s size=%ux%u\n", gBmpCacheFile, (unsigned)gBmpCacheW, (unsigned)gBmpCacheH);
+            }
+#endif
+#endif
+#else
+            // Em alguns ESP32-S3, pushImage direto de PSRAM pode instabilizar (DMA/WDT).
+            // Faz copia por faixas para buffer interno antes do push.
+            uint16_t pushRows = UI_BMP_PSRAM_PUSH_ROWS;
+            uint16_t *pushBuf = nullptr;
+            while (pushRows >= 1) {
+              const size_t pushBufBytesTry = (size_t)drawW * pushRows * sizeof(uint16_t);
+              pushBuf = (uint16_t *)heap_caps_malloc(pushBufBytesTry, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+              if (pushBuf) {
+                break;
+              }
+              pushRows = (uint16_t)(pushRows / 2);
+            }
+            if (UI_BMP_PSRAM_DIAG) {
+              const size_t pushBufBytes = pushRows ? ((size_t)drawW * pushRows * sizeof(uint16_t)) : 0;
+              Serial.printf("[BMP PSRAM] pushbuf alloc=%p bytes=%u rows=%u\n", (void*)pushBuf, (unsigned)pushBufBytes, (unsigned)pushRows);
+            }
+
+            if (!pushBuf) {
+              Serial.println("BMP psram path fallback: no internal push buffer");
+            } else {
+              for (uint16_t row = 0; row < drawH; row += pushRows) {
+                const uint16_t rowsNow = (uint16_t)min((int32_t)pushRows, (int32_t)(drawH - row));
+                const size_t rowsBytes = (size_t)drawW * rowsNow * sizeof(uint16_t);
+                memcpy(pushBuf, frameBuf + ((size_t)row * drawW), rowsBytes);
+                const unsigned long tPush0 = millis();
+                tft.pushImage(x, y + row, drawW, rowsNow, pushBuf);
+                pushMsTotal += millis() - tPush0;
+                chunksRendered++;
+                delay(0);
+              }
+              if (UI_BMP_PSRAM_DIAG) {
+                Serial.println("[BMP PSRAM] push end");
+              }
+              chunkRowsUsed = pushRows;
+              psramPathUsed = true;
+
+#if defined(ARDUINO_ARCH_ESP32)
+#if UI_BMP_USE_PSRAM && UI_BMP_CACHE_PSRAM
+              // Mantem framebuffer em PSRAM para reutilizar nas proximas chamadas.
+              if (gBmpCacheBuf && gBmpCacheBuf != frameBuf) {
+                free(gBmpCacheBuf);
+              }
+              gBmpCacheBuf = frameBuf;
+              gBmpCacheW = drawW;
+              gBmpCacheH = drawH;
+              strncpy(gBmpCacheFile, filename, sizeof(gBmpCacheFile) - 1);
+              gBmpCacheFile[sizeof(gBmpCacheFile) - 1] = '\0';
+              frameBuf = nullptr;
+              if (UI_BMP_PSRAM_DIAG) {
+                Serial.printf("[BMP PSRAM] cache store file=%s size=%ux%u\n", gBmpCacheFile, (unsigned)gBmpCacheW, (unsigned)gBmpCacheH);
+              }
+#endif
+#endif
+
+              free(pushBuf);
+            }
+#endif
+          }
+        }
+
+        if (rawChunk) free(rawChunk);
+        if (frameBuf) free(frameBuf);
+
+        if (!psramPathUsed) {
+          // Reposiciona para tentar caminho de chunks em seguida.
+          bmpFS.seek(seekOffset);
+          readMsTotal = 0;
+          convertMsTotal = 0;
+          pushMsTotal = 0;
+        }
+      }
+      else if (UI_BMP_PSRAM_DIAG) {
+        Serial.println("[BMP PSRAM] unavailable, fallback chunk");
+      }
+#endif
+#endif
+
+      if (!psramPathUsed) {
 
       // Processa em blocos para reduzir chamadas de FS e TFT sem tentar carregar a imagem inteira.
       uint8_t chunkRows = 8;
@@ -139,8 +483,8 @@ void drawBmp(const char *filename, int16_t x, int16_t y) {
       }
       chunkRowsUsed = chunkRows;
 
-      uint16_t rowsRemaining = h;
-      int16_t drawBottomY = y + h - 1;
+      uint16_t rowsRemaining = drawH;
+      int16_t drawBottomY = y + drawH - 1;
       while (rowsRemaining > 0) {
         const uint8_t rowsThisChunk = (rowsRemaining > chunkRows) ? chunkRows : (uint8_t)rowsRemaining;
         const size_t bytesToRead = rowBytes * rowsThisChunk;
@@ -156,8 +500,8 @@ void drawBmp(const char *filename, int16_t x, int16_t y) {
         for (uint8_t srcRow = 0; srcRow < rowsThisChunk; srcRow++) {
           const uint8_t dstRow = rowsThisChunk - 1 - srcRow;
           const uint8_t *bptr = rawChunk + ((size_t)srcRow * rowBytes);
-          uint16_t *tptr = rgbChunk + ((size_t)dstRow * w);
-          for (uint16_t col = 0; col < w; col++) {
+          uint16_t *tptr = rgbChunk + ((size_t)dstRow * drawW);
+          for (uint16_t col = 0; col < drawW; col++) {
             const uint8_t b = *bptr++;
             const uint8_t g = *bptr++;
             const uint8_t r = *bptr++;
@@ -168,21 +512,26 @@ void drawBmp(const char *filename, int16_t x, int16_t y) {
 
         const int16_t drawTopY = drawBottomY - rowsThisChunk + 1;
         const unsigned long tPush0 = millis();
-        tft.pushImage(x, drawTopY, w, rowsThisChunk, rgbChunk);
+        tft.pushImage(x, drawTopY, drawW, rowsThisChunk, rgbChunk);
         pushMsTotal += millis() - tPush0;
         chunksRendered++;
         drawBottomY -= rowsThisChunk;
         rowsRemaining -= rowsThisChunk;
+        delay(0);
       }
 
       free(rawChunk);
       free(rgbChunk);
+      }
       tft.setSwapBytes(oldSwapBytes);
       const unsigned long totalMs = millis() - perfStart;
       Serial.print("Loaded in "); Serial.print(totalMs);
       Serial.println(" ms");
       if (UI_PERF_LOG) {
-        Serial.printf("[BMP PERF] open=%lums total=%lums read=%lums conv=%lums push=%lums chunks=%u rows/chunk=%u w=%u h=%u\n",
+        Serial.printf("[BMP PERF] mode=%s cfg_psram=%u avail_psram=%u open=%lums total=%lums read=%lums conv=%lums push=%lums chunks=%u rows/chunk=%u w=%u h=%u\n",
+                      psramPathUsed ? "psram-full" : "chunk",
+                      (unsigned)UI_BMP_USE_PSRAM,
+                      (unsigned)psramAvailable,
                       (unsigned long)(openDone - perfStart),
                       totalMs,
                       readMsTotal,
@@ -190,8 +539,8 @@ void drawBmp(const char *filename, int16_t x, int16_t y) {
                       pushMsTotal,
                       (unsigned)chunksRendered,
                       (unsigned)chunkRowsUsed,
-                      (unsigned)w,
-                      (unsigned)h);
+                      (unsigned)drawW,
+                      (unsigned)drawH);
       }
     }
     else Serial.println("BMP format not recognized.");
@@ -208,26 +557,49 @@ uint8_t rd(uint8_t reg){
   return Wire.available()? Wire.read(): 0xFF;
 }
 
-void resetDisplayHardware() {
+static void runDisplayHardwareReset(unsigned long resetLowMs=10,
+                                    unsigned long settleMs=120,
+                                    bool leaveScreenSaver=true,
+                                    bool redrawMain=true) {
+  digitalWrite(TFT_BL, LOW);
   digitalWrite(TFT_RST, LOW);
-  delay(100);
+  delay(resetLowMs);
   digitalWrite(TFT_RST, HIGH);
-  delay(100);
+  delay(settleMs);
   tft.init();
-  forceScreenSaver(false);
-  mainScreen();
+  digitalWrite(TFT_BL, HIGH);
+
+  if (leaveScreenSaver) {
+    screenSaverActive = false;
+  }
+  if (redrawMain) {
+    mainScreen();
+  }
+  lastClick = millis();
+}
+
+void resetDisplayHardware() {
+  runDisplayHardwareReset();
 }
 
 void initTFT() {
   pinMode(TFT_BL, OUTPUT);
   digitalWrite(TFT_BL, HIGH); // Acende a luz de fundo
 
-  pinMode(TOUCH_IRQ, INPUT);
+  // IRQ do touch FT é open-drain em muitos módulos; pull-up evita flutuação.
+  pinMode(TOUCH_IRQ, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(TOUCH_IRQ), touchIRQ, FALLING);
 
   Serial.println("Iniciando TFT ST7796 SPI...");
   tft.init();
   TFTWaintingWifiConnection();
+}
+
+void setTouchControllerReady(bool ready) {
+  touchControllerReady = ready;
+  if (!ready) {
+    touchFlag = false;
+  }
 }
 
 void TFTWaintingWifiConnection() {
@@ -258,9 +630,38 @@ bool ftRead(uint8_t reg, uint8_t* buf, size_t len) {
   return true;
 }
 
+// Tenta acordar o painel sem reinit completo (mais rapido).
+static bool tryWakeDisplaySoft() {
+  digitalWrite(TFT_BL, LOW);
+  tft.writecommand(0x11); // Sleep OUT
+  delay(120);             // Datasheet: aguarda saida de sleep
+  tft.writecommand(0x29); // Display ON
+  delay(20);
+
+#if UI_DISPLAY_VALIDATE_SOFT_WAKE && defined(TFT_MISO) && (TFT_MISO >= 0)
+  // Alguns paineis/modulos nao respondem bem a leitura de registrador.
+  // Mantemos essa validacao opt-in para evitar falso negativo permanente.
+  const uint8_t pwrMode = tft.readcommand8(0x0A);
+  const bool looksAlive = (pwrMode != 0x00) && (pwrMode != 0xFF);
+  if (!looksAlive) {
+    Serial.printf(">>> SCREEN SAVER OFF: soft wake falhou (RDMODE=0x%02X) <<<\n", pwrMode);
+    return false;
+  }
+#endif
+
+  digitalWrite(TFT_BL, HIGH);
+  return true;
+}
+
+static void wakeDisplayHardReset() {
+  runDisplayHardwareReset();
+}
+
+
 void screenSaver(bool enable) {
   if (enable) {
     Serial.println(">>> SCREEN SAVER ON <<<");
+    screenSaverEnteredAt = millis();
     // Se o teclado estiver aberto, fecha como CANCEL
     if (kbActive) {
       kbActive = false;
@@ -272,16 +673,23 @@ void screenSaver(bool enable) {
   }
   else {
     Serial.println(">>> SCREEN SAVER OFF <<<");
-    // Hard reset do hardware para garantir recuperação após longos períodos de sleep.
-    // O Sleep OUT (0x11) sozinho não é suficientemente confiável após sleeps longos:
-    // o controlador fica num estado inconsistente e o display fica em branco.
-    digitalWrite(TFT_BL, LOW);      // Mantém backlight desligado durante reset
-    digitalWrite(TFT_RST, LOW);
-    delay(10);
-    digitalWrite(TFT_RST, HIGH);
-    delay(120);                      // Aguarda estabilização pós-reset (datasheet)
-    tft.init();                      // Re-inicializa completamente o controlador
-    digitalWrite(TFT_BL, HIGH);     // Liga backlight só após init completo
+    const unsigned long sleepElapsed = millis() - screenSaverEnteredAt;
+    const bool preferSoftWake = (screenSaverEnteredAt != 0) && (sleepElapsed <= UI_DISPLAY_SOFT_WAKE_MAX_SLEEP_MS);
+
+    if (preferSoftWake) {
+      if (UI_PERF_LOG) {
+        Serial.printf(">>> SCREEN SAVER OFF: soft wake after %lums <<<\n", sleepElapsed);
+      }
+      if (!tryWakeDisplaySoft()) {
+        wakeDisplayHardReset();
+      }
+    } else {
+      if (UI_PERF_LOG) {
+        Serial.printf(">>> SCREEN SAVER OFF: hard reset after %lums <<<\n", sleepElapsed);
+      }
+      wakeDisplayHardReset();
+    }
+    screenSaverEnteredAt = 0;
     mainScreen();
   }
 }
@@ -916,6 +1324,10 @@ void processTouch() {
     touchFlag = false;
     Serial.println(">>> TOUCH IRQ DETECTED <<<");
 
+    if (!touchControllerReady) {
+      return;
+    }
+
     if (screenSaverActive) {
       forceScreenSaver(false);
       return;
@@ -952,12 +1364,17 @@ void processTouch() {
         if (y >= TFT_WIDTH) y = TFT_WIDTH - 1;
         if (x >= TFT_HEIGHT) x = TFT_HEIGHT - 1;
         x = TFT_HEIGHT - x; // Inverte eixo X para coordenadas da tela
-        y = TFT_WIDTH - y; // Inverte eixo Y para coordenadas da tela
-        y = TFT_WIDTH - y; // Inverte eixo Y para coordenadas da tela
+        // Y mantido sem inversao
         if (UI_TOUCH_RAW_LOG) {
           Serial.printf("RAW: %02X %02X %02X %02X %02X %02X  |  ",
                         p[0], p[1], p[2], p[3], p[4], p[5]);
           Serial.printf("Touch #%u: ID=%u X=%u Y=%u Area=%u\n", i, id, x, y, area);
+        }
+        if (UI_TOUCH_POINT_LOG && i == 0) {
+          uint16_t rawY = ((p[0] & 0x0F) << 8) | p[1];
+          uint16_t rawX = ((p[2] & 0x0F) << 8) | p[3];
+          Serial.printf("[TOUCH PT] raw=(%u,%u) mapped=(%u,%u) id=%u n=%u\n",
+                        rawX, rawY, x, y, id, touches);
         }
 
         // === TECLADO NUMÉRICO: consome o toque e ignora lógica de cantos ===
