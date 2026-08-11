@@ -248,3 +248,23 @@ function executeDiag() {
   //window.location.href = URLArduino + "startdiag_" + sum;
 }
 
+function PromptDismissTodo(todoId, todoName) {
+  new $.Zebra_Dialog(
+    `
+    <div style="text-align:center; padding: 6px 12px; line-height:1.4">
+      <div style="font-weight:bold; font-size:20px">${todoName}</div>
+    </div>
+    `,
+    {
+      title: "Dismiss Task",
+      type: "question",
+      width: 360,
+      buttons: ["Back", "Dismiss"],
+      onClose: function(caption) {
+        if (caption == "Dismiss")
+          DismissTodo(todoId);
+      }
+    }
+  );
+}
+

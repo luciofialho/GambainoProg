@@ -253,7 +253,7 @@ function WriteTodoListTable() {
         style='TodoNormalItem';
         break;      
     };
-    content += "<div class='"+style+"' onClick='DismissTodo("+v.ID+")'> <br>"+v.Name+" </div>";
+    content += "<div class='"+style+"' onClick='PromptDismissTodo("+v.ID+", " + JSON.stringify(v.Name) + ")'> <br>"+v.Name+" </div>";
     });
 
     if (has) {
@@ -267,9 +267,7 @@ function WriteTodoListTable() {
 }
 
 function DismissTodo(ID) {
-    if(confirm('Dismiss?')) {
-      callGambainoJSONAsync(".dt_" + ID);
-    }
+    callGambainoJSONAsync(".dt_" + ID);
 }
 
 // Override procVar parameters 
