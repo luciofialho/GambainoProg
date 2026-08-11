@@ -429,8 +429,15 @@ void MainStateMachine() {
         if (waitFor <= 0) waitFor += 60*24;
         TimeInStatus = -waitFor * 60;
         calculateVolumesAndTemperatures(true);
+        stopTimer = TimeInStatus;
       }
       else {
+        if (HLTVolume < HLTTargetVolume && !waterInIsDone() && TimeInStatus > stopTimer + 5*MINUTES) {
+          setAlertMessage("Check HLT valve positions and water supply");
+        }
+        else if (HLTVolume >= HLTTargetVolume && waterInIsDone()) {
+          waterInStop();
+        }
         if (TimeInStatus > -4*HOURS)
           if (ColdBankTargetTemp.getProgValue() != coldBankTargetTempCurve[1])
             ColdBankTargetTemp = coldBankTargetTempCurve[1];
@@ -659,7 +666,7 @@ void MainStateMachine() {
         if (BKLevel==2 && SubStatus==0) {  // make sure pump runs at least once before whirlpool intake is under wort to avoid bubbles
           BKPump = ON;
           BKPump.setWithDelay(OFF, 7 * SECONDS); 
-          MLTValveB.setWithDelay(CLOSED, 14 * SECONDS); 
+          BKValveA.setWithDelay(OPEN, 7 * SECONDS);
           SubStatus = 1;
         }
         if (BKLevel==3 && SubStatus==1) {
@@ -667,7 +674,7 @@ void MainStateMachine() {
           BKPump.setWithDelay(OFF, 7 * SECONDS); 
           SubStatus = 2;
         }
-        if (BKLevel==4) { // sound alert only
+        if (BKLevel==4) { // sound alert and keep BKPump on
           sound_Attention();
           BKPump = ON;
         }
@@ -706,29 +713,24 @@ void MainStateMachine() {
       }
       else  {
         BKSecondaryControl();
-        if (TimeInStatus>-15) { // turn off in the last 15 seconds  *** CONSTANT
-          if (BKTargetTemp != NOHEAT) 
-            BKTemp = NOHEAT;
-        } 
-        else {
-          if (RcpBoilTemp < 100) { //  using sub boil
-            float tt;
-            float elapsedTime;
 
-            if (Status==KS_FIRSTBOIL)
-              elapsedTime = TimeInStatus + (float)RcpKettleSourFirstBoilTime*MINUTES;
-            else
-              elapsedTime = TimeInStatus + (float)RcpBoilTime*MINUTES;
-            
-            if (elapsedTime < SUBBOILRAMPTIME) { 
-              tt = RcpBoilTemp - SUBBOILRAMPDELTA * (SUBBOILRAMPTIME - elapsedTime) / SUBBOILRAMPTIME;
-            }
-            else
-              tt = RcpBoilTemp;
-            tt = round(tt*10.)/10.;
-            if (BKTargetTemp != tt)
-              BKTargetTemp = tt;
+        if (RcpBoilTemp < 100) { //  using sub boil
+          float tt;
+          float elapsedTime;
+
+          if (Status==KS_FIRSTBOIL)
+            elapsedTime = TimeInStatus + (float)RcpKettleSourFirstBoilTime*MINUTES;
+          else
+            elapsedTime = TimeInStatus + (float)RcpBoilTime*MINUTES;
+          
+          if (elapsedTime < SUBBOILRAMPTIME) { 
+            tt = RcpBoilTemp - SUBBOILRAMPDELTA * (SUBBOILRAMPTIME - elapsedTime) / SUBBOILRAMPTIME;
           }
+          else
+            tt = RcpBoilTemp;
+          tt = round(tt*10.)/10.;
+          if (BKTargetTemp != tt)
+            BKTargetTemp = tt;
         }
 
         // top up water control
@@ -760,6 +762,7 @@ void MainStateMachine() {
           }
 
         if ((GoToNextStatus = (TimeInStatus >= 0))) {
+          BKTargetTemp = NOHEAT;
           BKTargetTemp.override();
           limitBKHeater = false;
         }
@@ -773,7 +776,7 @@ void MainStateMachine() {
         BKTargetTemp = RcpWhirlpoolHoppingTemp;
       }
       else
-        GoToNextStatus = BKTemp <= BKTargetTemp+WHIRLPOOLDELTATEMP || RcpWhirlpoolHoppingTemp==0;
+        GoToNextStatus = (BKTemp > 0) && (BKTemp <= BKTargetTemp+WHIRLPOOLDELTATEMP || RcpWhirlpoolHoppingTemp==0);
       break;
     
     case WHIRLPOOLHOPPING: {
@@ -1238,7 +1241,15 @@ void MainStateMachine() {
           FMTCycle = CLOSED;
           FMTWaterIn = OPEN;
           FMTDrain = OPEN;
+          Todo_ReleaseFMTPressure.start();
         }
+        else 
+          GoToNextStatus = Todo_ReleaseFMTPressure.neededTodoIsReady();
+        break;
+
+      case CIPFMTSETUPSPRAYBALL:
+        if (EnteringStatus) 
+          setupLine(LINEFMTCIP);
         else 
           GoToNextStatus = setupLineIsReady(true);
         break;
@@ -1246,12 +1257,12 @@ void MainStateMachine() {
       case CIPFMTFIRSTOPENRINSE:
         if (EnteringStatus) {
           FMTDrain = CLOSED;
-          waterInStart(2*FMTCIPVOL,WATERTARGET_FMT,true); // open rinse with hot water
+          waterInStart(2*FMTCIPVOL,WATERTARGET_FMT,true); 
         }
         else {
           if (!FMTDrain.asBoolean() &&  WaterInTarget < FMTCIPVOL*1.2)  // reaching half volume - pressure and volume should be enough to open drain
             FMTDrain = OPEN;
-          if (waterInIsDone) {
+          if (waterInIsDone()) {
             Todo_ManualFMTClean.start();
             GoToNextStatus = true;
           }
@@ -1432,8 +1443,15 @@ void MainStateMachine() {
         break;
 
       case KEGCLEANERSETUP:
-        if (EnteringStatus) 
+        if (EnteringStatus) {
+          KegCycle = CLOSED;
+          KegDrain = CLOSED;
+          KegDetergentValve = CLOSED;
+          KegPump = OFF;
+          KegDetergentPump = OFF;
+          waterInStop();          
           Todo_PositionKeg.start();
+        }
         else 
           GoToNextStatus = Todo_PositionKeg.neededTodoIsReady();
         break;
@@ -1521,6 +1539,7 @@ void MainStateMachine() {
           sprintf(litersMsg,"%d liters)",(int)KEGCLEANVOLUME);
           Todo_AddDetergent.start(litersMsg);
           KegDrain = CLOSED;
+          KegPump = OFF;
           KegCycle = OPEN;
           waterInStart(KEGCLEANVOLUME,WATERTARGET_KEG,false);
         }
@@ -1579,6 +1598,8 @@ void MainStateMachine() {
         case KEGRINSE: {
           static byte kegRinseCycle = 0;
           if (EnteringStatus) {
+            KegDetergentValve = CLOSED;
+            KegPump = OFF;
             kegRinseCycle = 1;
             if (OnGoingProgram==PGMKEGCLEAN)
               setSubStatus(1,"Rinse %d/%d: start",kegRinseCycle,KEGRINSECYCLES);
@@ -1660,6 +1681,8 @@ void MainStateMachine() {
           if (EnteringStatus) {
             KegDetergentPump = ON;
             kegSensorStabilityTime = 4000;
+            KegDrain = CLOSED;
+            KegPump = OFF;              
           }
           else {
             if (TimeInStatus > KEGTRANSFERTOCLEANERMINTIME && (KegLiquidSensor != KEGLIQUIDINRETURN || TimeInStatus>KEGTRANSFERTOCLEANERMAXTIME)) { 
@@ -1678,6 +1701,7 @@ void MainStateMachine() {
           if (EnteringStatus) {
             Todo_PositionKeg.start();
             Todo_NoMoreKegs.start();
+            KegDetergentPump = OFF;
             KegCycle = OPEN;
             Buzzer = ON;
           }
@@ -1692,6 +1716,7 @@ void MainStateMachine() {
             }
             else if (Todo_NoMoreKegs.TodoIsReady()) {
               Todo_PositionKeg.dismiss();
+              Buzzer = OFF;
               GoToNextStatus = true;
             }
           }

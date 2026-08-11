@@ -1388,8 +1388,10 @@ void sound_Attention()
     beep(eH, 130);  
     delay(5);
     beep(aH, 40);  
-    Led2 = ON;
-    Led2.setWithDelay(OFF,3);    
+    if (!Led2.asBoolean()) {
+      Led2 = ON;
+      Led2.setWithDelay(OFF,3);    
+    }
   }
 }
 

@@ -49,6 +49,7 @@ Todo Todo_PurgeLine               ("Purge line and collect sanitizer");
 
 Todo Todo_ReportRinseOK           ("Report rinse complete");
 Todo Todo_RedoRinse               ("Repeat rinse");
+Todo Todo_ReleaseFMTPressure      ("Release FMT pressure");
 Todo Todo_ManualFMTClean          ("Manually clean and setup for cleaning/rinse");
 
 Todo Todo_PositionKeg             ("Position keg for cleaning/rinse");

@@ -42,6 +42,7 @@ void statusEntrySetup() {
           KegPump = OFF;
           KegDrain = CLOSED;
           KegDetergentValve = CLOSED;
+          KegDetergentPump = OFF;
 
           break;
             
@@ -319,7 +320,7 @@ void statusEntrySetup() {
           //HLTTargetTemp      
           HLTTargetVolume    = HLTMAXVOLUME;
           HLTPriority        = 'T';
-          BKTargetTemp       = RcpCaramelizationBoil!=0 ? PREBOILTEMP : float(RcpBoilTemp); 
+          BKTargetTemp       = RcpCaramelizationBoil!=0 ? CONSTANTHEAT : float(RcpBoilTemp); 
           BKValveA           = CLOSED;
           BKValveB           = OPEN;
           WhirlpoolValve     = PORT_A;
@@ -361,7 +362,7 @@ void statusEntrySetup() {
           HLTTargetVolume    = NOWATERIN;
           HLTPriority        = 'V';
           BKTargetTemp       = ((RcpBoilTemp >= 100) ? PREBOILTEMP : float(RcpBoilTemp))-SUBBOILRAMPDELTA;
-          BKValveA           = OPEN;
+          BKValveA           = CLOSED;
           BKValveB           = OPEN;
           WhirlpoolValve     = PORT_A;
           BKPump             = OFF;
@@ -388,7 +389,7 @@ void statusEntrySetup() {
           BKTargetTemp       = (RcpBoilTemp >= 100) ? CONSTANTHEAT : float(RcpBoilTemp)- SUBBOILRAMPDELTA;
           BKValveA           = OPEN;
           BKValveB           = CLOSED;
-          BKPump             = Status == KS_FIRSTBOIL || Status == BOIL; // changes in main state machine
+          BKPump             = Status != KS_WAITFIRSTBOIL; // changes in main state machine
           WhirlpoolValve     = PORT_A;
           Chiller1           = CLOSED;
           ColdBankValve      = PORT_A;
@@ -957,7 +958,6 @@ void statusEntrySetup() {
           break;
 
         case CIPFMTSTART ... CIPFMTCOMPLETE:
-          setupLine(LINEFMTCIP);
           CirculationMode    = CIRCNONE;
             HLTValve         = PORT_A;
             HLTPump          = OFF;
@@ -1003,7 +1003,6 @@ void statusEntrySetup() {
           BKWaterIn        = CLOSED;
           ColdBankWaterIn    = CLOSED;          
           TopUpHeater        = OFF;
-          if (debugging) BKLevel = 0;
           break;
 
 

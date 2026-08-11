@@ -307,7 +307,7 @@ void IPCStatusMachine()
         BKValveB = CLOSED;
         WhirlpoolValve = PORT_A;
         FMTDrain = OPEN;
-        FMTCycle = OPEN;
+        FMTCycle.setWithDelay(OPEN, WAITFORVALVE);
       }
       else
         GoToNextStatus = Todo_CleanBK.neededTodoIsReady();

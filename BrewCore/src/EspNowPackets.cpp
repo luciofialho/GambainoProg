@@ -5,7 +5,7 @@
 #include <UI.h>
 
 unsigned long lastFermTempMs     = 0;  // millis of last FERMERTEMPPACKET received
-static int           lastFermTempPovIdx = -1; // which Povoto last sent a temp
+
 
 void sendTransferStartPacket() {
   int idx = int(RcpTargetFermenter) - 1;  // RcpTargetFermenter is 1-based
@@ -38,7 +38,6 @@ void brewCoreHandleFermTemp(char type, const char *payload) {
   float temp = atof(comma + 1);
   FermenterTemp = temp;
   lastFermTempMs     = millis();
-  lastFermTempPovIdx = idx;
   Serial.printf("FermTemp Povoto[%d]: %.1f C\n", idx, temp);
   // If BrewCore is in standby, the Povoto didn't get the transfer-end — resend it.
   // idx is 1-based (= FMTData.PovotoNum), peerPovotos[] is 0-based.
@@ -50,7 +49,7 @@ void brewCoreHandleFermTemp(char type, const char *payload) {
 
 
 void checkFermTempTimeout() {
-  if (lastFermTempMs != 0 && MILLISDIFF(lastFermTempMs, 2UL*60*1000)) {
+  if (MILLISDIFF(lastFermTempMs, 2UL*60*1000)) {
     lastFermTempMs = millis();  // reset so alert fires every 2 min, not every cycle
     setAlertMessage("No fermenter temperature from Povoto for 2 min - retrying");
     sendTransferStartPacket();

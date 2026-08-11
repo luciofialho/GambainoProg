@@ -71,41 +71,42 @@ DEFSTATUS (51, MANUALCIPLINE                ,"Manual CIP - Line")
 DEFSTATUS (52, MANUALCIPFMT                 ,"Manual CIP - FMT")
 
 DEFSTATUS (53, CIPFMTSTART                  ,"FMT: Start")
-DEFSTATUS (54, CIPFMTFIRSTOPENRINSE         ,"FMT: First rinse")
-DEFSTATUS (55, CIPFMTMANUALCLEAN            ,"FMT: Manual clean")
-DEFSTATUS (56, CIPFMTSERVICEWATERRINSE      ,"FMT: Svc water rinse")
-DEFSTATUS (57, CIPFMTDETERGENTCIRC          ,"FMT: Detergent circ")
-DEFSTATUS (58, CIPFMTCHECKRINSE             ,"FMT: Check rinse")
-DEFSTATUS (59, CIPFMTCOMPLETE               ,"FMT: Complete")
-DEFSTATUS (60, KEGCLEANERSETUP              ,"Keg: setup")
-DEFSTATUS (61, KEGCLEANERRINSE              ,"Keg: cleaner rinse")
-DEFSTATUS (62, KEGPREPDETERG                ,"Keg: prep detergent")
-DEFSTATUS (63, KEGDETERGSPRAY               ,"Keg: detergent spray")
-DEFSTATUS (64, KEGSAVEDETERGENT             ,"Keg: save detergent")
-DEFSTATUS (65, KEGRINSE                     ,"Keg: rinse")
-DEFSTATUS (66, KEGRETURNDETERGENT           ,"Keg: return detergent")
-DEFSTATUS (67, KEGASKANOTHERKEG             ,"Keg: do another keg?")
-DEFSTATUS (68, KEGDETERGENTDRAIN            ,"Keg: detergent drain")
-DEFSTATUS (69, KEGCLEANERFINALRINSE         ,"Keg: cleaner final rinse")
+DEFSTATUS (54, CIPFMTSETUPSPRAYBALL         ,"FMT: Setup spray ball")
+DEFSTATUS (55, CIPFMTFIRSTOPENRINSE         ,"FMT: First rinse")
+DEFSTATUS (56, CIPFMTMANUALCLEAN            ,"FMT: Manual clean")
+DEFSTATUS (57, CIPFMTSERVICEWATERRINSE      ,"FMT: Svc water rinse")
+DEFSTATUS (58, CIPFMTDETERGENTCIRC          ,"FMT: Detergent circ")
+DEFSTATUS (59, CIPFMTCHECKRINSE             ,"FMT: Check rinse")
+DEFSTATUS (60, CIPFMTCOMPLETE               ,"FMT: Complete")
+DEFSTATUS (61, KEGCLEANERSETUP              ,"Keg: setup")
+DEFSTATUS (62, KEGCLEANERRINSE              ,"Keg: cleaner rinse")
+DEFSTATUS (63, KEGPREPDETERG                ,"Keg: prep detergent")
+DEFSTATUS (64, KEGDETERGSPRAY               ,"Keg: detergent spray")
+DEFSTATUS (65, KEGSAVEDETERGENT             ,"Keg: save detergent")
+DEFSTATUS (66, KEGRINSE                     ,"Keg: rinse")
+DEFSTATUS (67, KEGRETURNDETERGENT           ,"Keg: return detergent")
+DEFSTATUS (68, KEGASKANOTHERKEG             ,"Keg: do another keg?")
+DEFSTATUS (69, KEGDETERGENTDRAIN            ,"Keg: detergent drain")
+DEFSTATUS (70, KEGCLEANERFINALRINSE         ,"Keg: cleaner final rinse")
 
-DEFSTATUS (70, DIAGI2C                      ,"Diag: I2C buses")
-DEFSTATUS (71, DIAGTHERMOMETERS             ,"Diag: Thermometers")
-DEFSTATUS (72, DIAGMOTORVALVESCOMMAND       ,"Diag: valves command")
-DEFSTATUS (73, DIAGVALVES1                  ,"Diag: Valves 1")
-DEFSTATUS (74, DIAGVALVES2                  ,"Diag: Valves 2")
-DEFSTATUS (75, DIAGVALVES3                  ,"Diag: Valves 3")
-DEFSTATUS (76, DIAGVALVESFMT                ,"Diag: Valves FMT")
-DEFSTATUS (77, DIAGPUMPSFLOWMETERS          ,"Diag: Pumps and flow")
-DEFSTATUS (78, DIAGMLTLEVEL                 ,"Diag: MLT Level Sensors")
-DEFSTATUS (79, DIAGBKLEVEL                  ,"Diag: BK Level Sensors")
-DEFSTATUS (80, DIAGRESULT                   ,"Diag: Result")
+DEFSTATUS (71, DIAGI2C                      ,"Diag: I2C buses")
+DEFSTATUS (72, DIAGTHERMOMETERS             ,"Diag: Thermometers")
+DEFSTATUS (73, DIAGMOTORVALVESCOMMAND       ,"Diag: valves command")
+DEFSTATUS (74, DIAGVALVES1                  ,"Diag: Valves 1")
+DEFSTATUS (75, DIAGVALVES2                  ,"Diag: Valves 2")
+DEFSTATUS (76, DIAGVALVES3                  ,"Diag: Valves 3")
+DEFSTATUS (77, DIAGVALVESFMT                ,"Diag: Valves FMT")
+DEFSTATUS (78, DIAGPUMPSFLOWMETERS          ,"Diag: Pumps and flow")
+DEFSTATUS (79, DIAGMLTLEVEL                 ,"Diag: MLT Level Sensors")
+DEFSTATUS (80, DIAGBKLEVEL                  ,"Diag: BK Level Sensors")
+DEFSTATUS (81, DIAGRESULT                   ,"Diag: Result")
 
-DEFSTATUS (81, CALIBRATEFLOWSTART           ,"Calbr flow: start")
-DEFSTATUS (82, CALIBRATEFLOWSTABILIZATION   ,"Calbr flow: stabilizate")
-DEFSTATUS (83, CALIBRATEFLOWMEASUREMENT     ,"Calbr flow: measurement")
-DEFSTATUS (84, CALIBRATEFLOWEND             ,"Calbr flow: end")
+DEFSTATUS (82, CALIBRATEFLOWSTART           ,"Calbr flow: start")
+DEFSTATUS (83, CALIBRATEFLOWSTABILIZATION   ,"Calbr flow: stabilizate")
+DEFSTATUS (84, CALIBRATEFLOWMEASUREMENT     ,"Calbr flow: measurement")
+DEFSTATUS (85, CALIBRATEFLOWEND             ,"Calbr flow: end")
 
-#define NUMSTATUS                           85
+#define NUMSTATUS                           86
 
 
 #define PGMSTANDBY          0
@@ -243,7 +244,8 @@ const char * const statusNames[NUMSTATUS] = {
   StatusName_81,
   StatusName_82,
   StatusName_83,
-  StatusName_84
+  StatusName_84,
+  StatusName_85
 };
 
 

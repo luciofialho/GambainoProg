@@ -107,7 +107,7 @@ static void handlePovotoEspNow(char type, const char *payload) {
     char *comma = strchr(buf, ',');
     if (!comma) return;
     *comma = '\0';
-    int   batchNum = atoi(buf);
+    int   batchNum = (int)atof(buf);
     float inocTemp = atof(comma + 1);
     BatchData.batchNumber = (uint16_t)batchNum;
     writeBatchDataToNIV();

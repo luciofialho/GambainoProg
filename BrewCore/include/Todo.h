@@ -72,6 +72,7 @@ extern Todo Todo_SetupLine;
 extern Todo Todo_TransferSanitizerToLine ;
 extern Todo Todo_ReportRinseOK;
 extern Todo Todo_RedoRinse;
+extern Todo Todo_ReleaseFMTPressure;
 extern Todo Todo_ManualFMTClean;
 
 extern Todo Todo_PositionKeg;
