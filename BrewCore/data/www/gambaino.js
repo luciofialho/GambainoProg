@@ -35,6 +35,17 @@ var AsyncLock = 0;
 var AV='';
 var JSON_Todo='';
 var CommandInQueue='';
+var PendingRenderAllTimeout = null;
+
+function ScheduleRenderAll(delay) {
+  if (PendingRenderAllTimeout != null)
+    clearTimeout(PendingRenderAllTimeout);
+
+  PendingRenderAllTimeout = setTimeout(function() {
+    PendingRenderAllTimeout = null;
+    RenderAll();
+  }, delay);
+}
 
 function secondsToHMS(s) {
     if (s<0) {
@@ -126,6 +137,8 @@ function callGambainoJSONAsync(str="gj_1") {
 			  }
               JSON_Todo = AV["Todo"];
               ProcessRenderAll();
+              if (str!="gj_1")
+                ScheduleRenderAll(100);
           }
           else
               content = '';
@@ -255,8 +268,7 @@ function WriteTodoListTable() {
 
 function DismissTodo(ID) {
     if(confirm('Dismiss?')) {
-    callGambaino("dt_" + ID);
-    RenderAll();
+      callGambainoJSONAsync(".dt_" + ID);
     }
 }
 

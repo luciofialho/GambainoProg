@@ -741,6 +741,8 @@ void cmdProcess(AsyncWebServerRequest *request,char *cmd) {
                         Todo::getByIndex(atoi(cmdToken[1]))->dismiss();
                 else
                     alert("FIRMWARE ERROR: invalid argument to TodoDismiss");
+              if (compositeIPCommand)
+                JSONOutput(request);
                 break;
                 
             case INSTRSAVEPROCESS: 
