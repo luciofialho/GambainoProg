@@ -1,6 +1,6 @@
 if (URLArduino==null) {
   console.log("Development mode");
-  var URLArduino = "http://192.168.29.178/";
+  var URLArduino = "http://192.168.13.178/";
 }
 else
   console.log("Operational mode");
@@ -413,6 +413,39 @@ function OverrideHM(div) {
   };
 } 
 
+function OverrideKegLiquidSensor(targetValue) {
+  var buttons = ["No liquid", "In tank", "In return", "No OH"];
+  new $.Zebra_Dialog("Choose override for KegLiquidSensor",
+  { type: "question",
+    title: "KegLiquidSensor",
+    buttons: buttons,
+    onClose: function(caption) {
+      var overrideValue = null;
+      switch (caption) {
+        case "No liquid":
+          overrideValue = 0;
+          break;
+        case "In tank":
+          overrideValue = 1;
+          break;
+        case "In return":
+          overrideValue = 2;
+          break;
+        case "No OH":
+          overrideValue = noOH;
+          break;
+        default:
+          break;
+      }
+
+      if (overrideValue !== null) {
+        WriteParam("KegLiquidSensor", overrideValue);
+        RenderAll();
+      }
+    }
+  });
+}
+
 
 
 
@@ -544,6 +577,13 @@ function RenderComponent(Id, Value, OH) {
       case "Text":
         document.getElementById(Id).innerHTML = Value;
         break;            
+
+      case "KegLiquidIndicator":
+        document.getElementById(Id).style.backgroundColor = parseInt(Value) ? "#3fd46b" : "#d7d7d7";
+        document.getElementById(Id).style.boxShadow = parseInt(Value)
+          ? "0 0 8px rgba(63, 212, 107, 0.9)"
+          : "none";
+        break;
         
       case "StatusName":
       case "SubStatusName":
@@ -649,6 +689,11 @@ function ProcessRenderAll() {
    
   var ComponentDivs = document.getElementsByTagName("*");
   //getElementsByClassName(ComponentClasses[i]);
+
+  AV["KegLiquidInTank"] = (parseInt(AV["KegLiquidSensor"]) === 1) ? "1" : "0";
+  AV["KegLiquidInTank_O"] = AV["KegLiquidSensor_O"] ? AV["KegLiquidSensor_O"] : "0";
+  AV["KegLiquidInReturn"] = (parseInt(AV["KegLiquidSensor"]) === 2) ? "1" : "0";
+  AV["KegLiquidInReturn_O"] = AV["KegLiquidSensor_O"] ? AV["KegLiquidSensor_O"] : "0";
 
   chiller2Status = 1;
   topupheaterStatus = 0;

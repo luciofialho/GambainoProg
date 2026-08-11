@@ -406,14 +406,9 @@ void manageLevel() {
           }
       }
     }
-    else { // debugging
-      if (KegPump.asBoolean())
-        KegLiquidSensor = KEGLIQUIDINTANK;
-      else if (KegDetergentPump.asBoolean())
-        KegLiquidSensor = KEGLIQUIDINRETURN;
-      else
-        KegLiquidSensor = KEGLIQUIDNOLIQUID;
-    }
+    else 
+      if (KegLiquidSensor.isOverrided()) 
+        KegLiquidSensor.assumeOverrideAsProg();
   }
 }
 

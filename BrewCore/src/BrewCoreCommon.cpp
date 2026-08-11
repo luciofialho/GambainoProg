@@ -180,6 +180,9 @@ bool safetyCheck(bool condition, const char *exceptionMsg) {
 }
 
 bool waitForValve(float time) {
+  if (debugging)
+    return time>2*SECONDS;
+    
   if (time >= WAITFORVALVE)
     return true;
   else if (time>3*SECONDS && valveCurrentMonitorIsOn && abs(ina219.getCurrent_mA()/ina219.getBusVoltage_V()*12 < valveThresholdCurrent))

@@ -138,6 +138,17 @@ tr {
   text-align:center;
 }
 
+.KegLiquidIndicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid #666;
+  background-color: #d7d7d7;
+  cursor: pointer;
+  position: absolute;
+  z-index: 3;
+}
+
 .TextLeft {
   text-align:left;
 }
@@ -594,6 +605,8 @@ tr {
 #BKValveA              {left: 537px; top: 85px;}
 #BKValveB              {left: 537px; top: 125px;}
 #BKLevel               {left: 483px; top: 48px;}
+#KegLiquidInTank       {left: 526px; top: 342px;}
+#KegLiquidInReturn     {left: 555px; top: 252px;}
 #BKWaterIn             {left: 375px; top: 191px; transform: rotate(90deg) }
 #BKDrain               {left: 340px; top: 210px; transform: rotate(-90deg) scale(0.5,0.5);}
 
@@ -722,6 +735,8 @@ tr {
 
   <div id="MLTTopLevel" onclick="Override(this);" class="TopLevel"></div>  
   <div id="BKLevel" onclick="Override(this);" class="HLTBKLevel"></div>  
+  <div id="KegLiquidInTank" onclick="OverrideKegLiquidSensor(1);" class="KegLiquidIndicator" title="KegLiquidSensor"></div>
+  <div id="KegLiquidInReturn" onclick="OverrideKegLiquidSensor(2);" class="KegLiquidIndicator" title="KegLiquidSensor"></div>
 
 
   <div id="KegPump" onclick="OverrideOnOff(this);" class="Pump"></div>  

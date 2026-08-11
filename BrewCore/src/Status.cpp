@@ -1464,6 +1464,8 @@ void MainStateMachine() {
           KegDrain = CLOSED;           
           stopTimer = TimeInStatus;
           waterInStart(KEGCLEANVOLUME,WATERTARGET_KEG,true);
+          if (debugging)
+            KegLiquidSensor = KEGLIQUIDINTANK;
           setSubStatus(1,"Cleaner water in");
         }
         else {
@@ -1492,11 +1494,15 @@ void MainStateMachine() {
                   if (ellapsed > KEGCLEANERTRANSFEROUTMAXTIMECLEAN) {
                     say("Keg cleaner transfer to detergent tank timed out after %.1f seconds",ellapsed);
                     sound_Attention();
+                    if (debugging)
+                      KegLiquidSensor = KEGLIQUIDNOLIQUID;
                   }
                   stopTimer = TimeInStatus;
                   KegDetergentValve = CLOSED;
                   KegPump = OFF;
                   KegDetergentPump = ON;
+                  if (debugging)
+                    KegLiquidSensor = KEGLIQUIDINRETURN;
                 }
               }
               break;
@@ -1507,6 +1513,8 @@ void MainStateMachine() {
                   if (ellapsed>KEGTRANSFERTOCLEANERMAXTIME) {
                     say("Keg cleaner transfer back timed out after %.1f seconds",ellapsed);
                     sound_Attention();
+                    if (debugging)
+                      KegLiquidSensor = KEGLIQUIDINTANK;
                   }
                   setSubStatus(4,"Drain cleaner");
                   stopTimer = TimeInStatus;
@@ -1523,6 +1531,8 @@ void MainStateMachine() {
                   if (ellapsed > KEGCLEANERTRANSFEROUTMAXTIMECLEAN) {
                     say("Keg cleaner drain timed out after %.1f seconds",ellapsed);
                     sound_Attention();
+                    if (debugging)
+                      KegLiquidSensor = KEGLIQUIDNOLIQUID;
                   }
                   KegDrain = CLOSED;
                   KegPump = OFF;
@@ -1542,6 +1552,8 @@ void MainStateMachine() {
           KegPump = OFF;
           KegCycle = OPEN;
           waterInStart(KEGCLEANVOLUME,WATERTARGET_KEG,false);
+          if (debugging)
+            KegLiquidSensor = KEGLIQUIDINTANK;
         }
         else {
           if (waterInIsDone()) {
@@ -1584,6 +1596,8 @@ void MainStateMachine() {
                 if ((TimeInStatus - stopTimer) > KEGCLEANERTRANSFEROUTMAXTIMECLEAN) {
                   say("Keg detergent transfer to tank timed out after %.1f seconds",TimeInStatus - stopTimer);
                   sound_Attention();
+                  if (debugging)
+                    KegLiquidSensor = KEGLIQUIDNOLIQUID;
                 }
                 KegDetergentValve = CLOSED;
                 KegPump = OFF;
@@ -1610,6 +1624,8 @@ void MainStateMachine() {
             switch(int(SubStatus)) {
               case 1:
                 waterInStart(KEGRINSEVOLUME,WATERTARGET_KEG,true);
+                if (debugging)
+                  KegLiquidSensor = KEGLIQUIDINTANK;
                 KegCycle = OPEN;
                 if (OnGoingProgram==PGMKEGCLEAN)
                   setSubStatus(2,"Rinse %d/%d: Water in",kegRinseCycle,KEGRINSECYCLES);
@@ -1657,6 +1673,8 @@ void MainStateMachine() {
                   if ((TimeInStatus - stopTimer) > KEGCLEANERTRANSFEROUTMAXTIMECLEAN) {
                     say("Keg detergent drain timed out after %.1f seconds",TimeInStatus - stopTimer);
                     sound_Attention();
+                    if (debugging)
+                      KegLiquidSensor = KEGLIQUIDNOLIQUID;
                   }
                   KegDrain = CLOSED;
                   KegPump = OFF;  
@@ -1683,12 +1701,16 @@ void MainStateMachine() {
             kegSensorStabilityTime = 4000;
             KegDrain = CLOSED;
             KegPump = OFF;              
+            if (debugging)
+              KegLiquidSensor = KEGLIQUIDINRETURN;
           }
           else {
             if (TimeInStatus > KEGTRANSFERTOCLEANERMINTIME && (KegLiquidSensor != KEGLIQUIDINRETURN || TimeInStatus>KEGTRANSFERTOCLEANERMAXTIME)) { 
               if (TimeInStatus>KEGTRANSFERTOCLEANERMAXTIME) {
                 say("Keg detergent return timed out after %.1f seconds",TimeInStatus);
                 sound_Attention();
+                if (debugging)
+                  KegLiquidSensor = KEGLIQUIDINTANK;
               }
               KegDetergentPump = OFF;
               GoToNextStatus = true;
@@ -1744,6 +1766,8 @@ void MainStateMachine() {
                   if ((TimeInStatus - stopTimer) > KEGCLEANERTRANSFEROUTMAXTIMECLEAN) {
                     say("Keg detergent drain timed out after %.1f seconds",TimeInStatus - stopTimer);
                     sound_Attention();
+                    if (debugging)
+                      KegLiquidSensor = KEGLIQUIDNOLIQUID;
                   }
                   KegDrain = CLOSED;
                   KegPump = OFF;
