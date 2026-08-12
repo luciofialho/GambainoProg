@@ -116,6 +116,7 @@ bool skipStatus(int s) {
 
 #define FMTCIPMAXSTEPS 40
 byte FMTCIPnSteps = 0;
+byte FMTCIPCycle[FMTCIPMAXSTEPS];
 byte FMTCIPSteps[FMTCIPMAXSTEPS];
 byte FMTCIPCurrentStep = 0;
 byte pureRinseSteps;
@@ -124,15 +125,21 @@ void FMTCIPStartCycle() {
   FMTCIPnSteps = 0;
   byte nDeterg = OnGoingProgram==PGMFMTAUTO2PHASE ? 2 : 1;
   
-  for (byte i=0;i<FMTCIPNUMPURERINSESW;i++)
+  for (byte i=0;i<FMTCIPNUMPURERINSESW;i++) {
+    FMTCIPCycle[FMTCIPnSteps] = 0;
     FMTCIPSteps[FMTCIPnSteps++] = CIPFMTSERVICEWATERRINSE;
+  }
+
   FMTCIPSteps[FMTCIPnSteps++] = CIPFMTCHECKRINSE;
   pureRinseSteps = FMTCIPnSteps;
   
   for (byte j=0; j<nDeterg; j++) {
     FMTCIPSteps[FMTCIPnSteps++] = CIPFMTDETERGENTCIRC;
-    for (byte i=0;i<FMTCIPNUMDETERGRINSESW;i++)
+    for (byte i=0;i<FMTCIPNUMDETERGRINSESW;i++) {
+      FMTCIPCycle[FMTCIPnSteps] = 1+j;
       FMTCIPSteps[FMTCIPnSteps++] = CIPFMTSERVICEWATERRINSE;
+    } 
+    FMTCIPCycle[FMTCIPnSteps] = 1+j;  
     FMTCIPSteps[FMTCIPnSteps++] = CIPFMTCHECKRINSE;
   }
   FMTCIPCurrentStep = 0;
@@ -163,8 +170,16 @@ byte FMTCIPNextStatus(byte redoStatus=0) {
     say("FMT CIP: Entering step %d/%d - %s",FMTCIPCurrentStep,FMTCIPnSteps,statusNames[res]);
 
   return res;
-
 }
+
+bool FMTCIPCycleIsWarm() {
+  if (FMTCIPCycle[FMTCIPCurrentStep-1] == 1) 
+    return int(ProgramParams) / 10 == 2;
+  else if (FMTCIPCycle[FMTCIPCurrentStep-1] == 2) 
+    return int(ProgramParams) % 10 == 2;
+  return false;
+}
+
 
 int dataLogInterval() {
 
@@ -1274,71 +1289,54 @@ void MainStateMachine() {
           forceNextStatus = FMTCIPNextStatus();
         break; 
 
-      case CIPFMTSERVICEWATERRINSE:
+      case CIPFMTSERVICEWATERRINSE: 
         if (EnteringStatus) {
           FMTCycle = CLOSED;
-          FMTDrain = OPEN;
+          FMTDrain = CLOSED;
           FMTPump = OFF;
-          waterInStart(VOLUMETOHEATSERVICEWATER, WATERTARGET_FMT, true);
-          setSubStatus(1,"Warming water");
+          //waterInStart(VOLUMETOHEATSERVICEWATER, WATERTARGET_FMT, true);
+          setSubStatus(1,"Waiting valve");
           stopTimer = 0;
         }
         else {
           switch (int(SubStatus)) {
             case 1:
-              if (waterInIsDone()) {
-                if (stopTimer==0) 
-                  stopTimer = TimeInStatus;
-                else
-                  if ((TimeInStatus - stopTimer) > FMTDRAINTIMETOWARMWATER) {
-                    stopTimer = TimeInStatus;
-                    FMTDrain = CLOSED;
-                    setSubStatus(2,"Waiting valve after warming");
-                  }
+              if (waitForValve(TimeInStatus- stopTimer) && setupLineIsReady()) {
+                waterInStart(FMTCIPVOL, WATERTARGET_FMT, true);
+                FMTCycle = OPEN;
+                setSubStatus(2,"Loading water");
               }
               break;
 
             case 2:
-              if (waitForValve(TimeInStatus- stopTimer) && setupLineIsReady()) {
-                waterInStart(FMTCIPVOL, WATERTARGET_FMT, true);
-                FMTCycle = OPEN;
-                setSubStatus(3,"Loading water");
-              }
-              break;
-
-            case 3:
               setConsoleMessage("Remaining %.1f liters",float(WaterInTarget));
               if (waterInIsDone()) {
                 FMTPump = ON;
                 stopTimer = TimeInStatus;
-                setSubStatus(4,"Spraying water");
+                setSubStatus(3,"Spraying water");
               }
               break;
 
-            case 4: {
+            case 3: {
                 int remain = ((FMTCIPCurrentStep < pureRinseSteps) ? FMTCIPPURERINSECIRCULATIONTIME : FMTCIPRINSECIRCULATIONTIME) - (TimeInStatus - stopTimer);
                 if (remain<=0) {
                   FMTPump = OFF;
                   FMTDrain = OPEN;
                   FMTWaterIn = OPEN;
                   stopTimer = TimeInStatus;
-                  setSubStatus(5,"Drain after spray");
+                  setSubStatus(4,"Drain after spray");
                 }
                 else
                   setCountDownMessage("Remaining %s:%s", remain);
               }
               break;
 
-            case 5:
-              if (!waterInIsDone())
-                stopTimer = TimeInStatus;
-              else { 
-                if ((TimeInStatus - stopTimer) > FMTDRAINTIME + WAITFORVALVE) // time to drain
+            case 4:
+              if ((TimeInStatus - stopTimer) > FMTDRAINTIME + WAITFORVALVE) // time to drain
                   forceNextStatus = FMTCIPNextStatus();
                 setCountDownMessage("Remaining %s:%s",(FMTDRAINTIME + WAITFORVALVE) - (TimeInStatus - stopTimer));
               }
               break;
-          }
         }
         break;
             
@@ -1347,9 +1345,14 @@ void MainStateMachine() {
           FMTDrain = OPEN;
           FMTCycle = CLOSED;
           FMTPump = OFF;
-          waterInStart(VOLUMETOHEATSERVICEWATER, WATERTARGET_FMT, true);
-          setSubStatus(1,"Warming water");
           stopTimer = 0;
+          if (FMTCIPCycleIsWarm()) {
+            waterInStart(VOLUMETOHEATSERVICEWATER, WATERTARGET_FMT, true);
+            setSubStatus(1,"Warming water");
+          }
+          else {
+            setSubStatus(2,"Waiting valve");
+          }
         }
         else {
           switch (int(SubStatus)) {
@@ -1368,7 +1371,7 @@ void MainStateMachine() {
 
             case 2:
               if (waitForValve(TimeInStatus-stopTimer) && setupLineIsReady()) {
-                waterInStart(FMTCIPVOL, WATERTARGET_FMT, true);
+                waterInStart(FMTCIPVOL, WATERTARGET_FMT, FMTCIPCycleIsWarm());
                 FMTCycle = OPEN;
                 sprintf(litersMsg,"%d liters)",(int)FMTCIPVOL);
                 Todo_AddDetergent.start(litersMsg);

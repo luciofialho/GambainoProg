@@ -58,18 +58,19 @@ function selectFMTCIP(cipType) {
   $('.ZebraDialog').remove();
   $('.ZebraDialogBackdrop').remove();
   
-  if (cipType === "One phase cold") {
-    startProgram(25); // ajuste o número do programa conforme necessário
+  // xxyy; xx=10/11 (one/two phase), yz= 1 for cold, 2 for warm, 0 for D/A
+  if (cipType === "One phase cold") { 
+    startProgram(1010); 
   } else if (cipType === "One phase warm") {
-    startProgram(26);
+    startProgram(1020);
   } else if (cipType === "Two phase warm+cold") {
-    startProgram(1127);
+    startProgram(1121);
   } else if (cipType === "Two phase cold+cold") {
-    startProgram(28);
+    startProgram(1111);
   } else if (cipType === "Rinse only") {
-    startProgram(29);
+    startProgram(1000);
   } else if (cipType === "Manual control") {
-    startProgram(30);
+    startProgram(9);
   }
 }
 
@@ -266,5 +267,21 @@ function PromptDismissTodo(todoId, todoName) {
       }
     }
   );
+
+  setTimeout(function() {
+    var dialog = $('.ZebraDialog').last();
+    var buttonBar = dialog.find('.ZebraDialog_Buttons');
+    var buttons = buttonBar.find('a');
+
+    buttonBar.css({
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center'
+    });
+
+    buttons.css({
+      float: 'none'
+    });
+  }, 0);
 }
 
