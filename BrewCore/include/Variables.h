@@ -57,6 +57,7 @@ extern ProcVar
   RcpAddition5,
   RcpFermenterCleaning,
   RcpTargetFermenter,      
+  RcpYeastHydration,
   RcpTopupWater,  
   RcpKettleSourFirstBoilTime,
   RcpKettleSourSouringTemp,  

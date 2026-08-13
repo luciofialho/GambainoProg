@@ -29,6 +29,7 @@ Todo Todo_CleanBK                 ("Clean BK");
 Todo Todo_MashRest                ("Report when ready for circulation");
 Todo Todo_RunOffComplete          ("Report SPARGE completion");
 Todo Todo_FirstWortHopping        ("Add first wort hop");
+Todo Todo_PrepareYeastHydrationWater("Prepare water for yeast hydration");
 Todo Todo_PrepareTopUpPot         ("Prepare top-up water pot");
 Todo Todo_Addition1               ("Addition #1");
 Todo Todo_Addition2               ("Addition #2");

@@ -90,6 +90,13 @@ static EspNowFrame        espnowQueue[ESPNOW_QUEUE_SLOTS];
 static volatile int       espnowQHead = 0;  // written by callback (Core 0)
 static volatile int       espnowQTail = 0;  // read    by loop()  (Core 1)
 
+static void handleResetBrewCore(AsyncWebServerRequest *request) {
+  digitalWrite(RESETBREWCOREPIN, HIGH);
+  delay(500);
+  digitalWrite(RESETBREWCOREPIN, LOW);
+  responseConfirmation(request, "BrewCore reset pulse sent", "/getstatus");
+}
+
 static void handlePacket(char type, const char *payload) {
   switch (type) {
     case LOGPACKET: {
@@ -218,6 +225,7 @@ void setup() {
 
   setStatusSource(getSideKickStatus);
   registerPeerSetupRoute();
+  server.on("/resetbrewcore", HTTP_GET, handleResetBrewCore);
 
   pinMode(RESETBREWCOREPIN, OUTPUT);
   digitalWrite(RESETBREWCOREPIN, LOW); 

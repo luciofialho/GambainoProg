@@ -134,6 +134,7 @@ void FMTCIPStartCycle() {
   pureRinseSteps = FMTCIPnSteps;
   
   for (byte j=0; j<nDeterg; j++) {
+    FMTCIPCycle[FMTCIPnSteps] = 1+j;
     FMTCIPSteps[FMTCIPnSteps++] = CIPFMTDETERGENTCIRC;
     for (byte i=0;i<FMTCIPNUMDETERGRINSESW;i++) {
       FMTCIPCycle[FMTCIPnSteps] = 1+j;
@@ -173,11 +174,14 @@ byte FMTCIPNextStatus(byte redoStatus=0) {
 }
 
 bool FMTCIPCycleIsWarm() {
-  if (FMTCIPCycle[FMTCIPCurrentStep-1] == 1) 
-    return int(ProgramParams) / 10 == 2;
-  else if (FMTCIPCycle[FMTCIPCurrentStep-1] == 2) 
-    return int(ProgramParams) % 10 == 2;
-  return false;
+
+  bool isWarm;
+  if (FMTCIPCycle[FMTCIPCurrentStep] == 1) 
+    isWarm = int(ProgramParams) / 10 == 2;
+  else if (FMTCIPCycle[FMTCIPCurrentStep] == 2) 
+    isWarm = int(ProgramParams) % 10 == 2;
+  //;Serial.println("FMTCIPCycleIsWarm - FMTCIPCurrentStep: " + String(FMTCIPCurrentStep) + " FMTCIPCycle: " + String(FMTCIPCycle[FMTCIPCurrentStep])+" ProgramParams: " + String(int(ProgramParams)) + " isWarm: " + String(isWarm));    
+  return isWarm;
 }
 
 
@@ -216,6 +220,88 @@ int dataLogInterval() {
     return 20 * SECONDSms;
 
   return 0;
+}
+
+void topUpAndHydrationControl(byte procedureToStart=99) { // 1 = yeast ydration, 2 = top up water
+  static byte procedure = 0;
+  static byte pass = 0;
+  static float boilEnd = 0;
+  static float lastTimeInStatusSeen = 0;
+  static int lastStatusSeen = 0;
+
+  if (procedureToStart!=99) {
+    procedure = procedureToStart;
+    pass = 0;
+  }
+
+  if (procedure != 1 && procedure != 2)
+    return;
+
+  if (lastStatusSeen != int(Status)) {
+    lastStatusSeen  = int(Status);
+    if (boilEnd != 0)
+      boilEnd -= lastTimeInStatusSeen + TimeInStatus;
+  }
+  lastTimeInStatusSeen = TimeInStatus;
+
+  switch (pass) {
+    case 0: 
+      if (procedure==1) 
+        Todo_PrepareYeastHydrationWater.start();
+      else
+        Todo_PrepareTopUpPot.start();
+      pass++;
+      break;
+
+    case 1: {
+        bool go;
+        if (procedure==1) {
+          if (Status < SPARGE)
+            go = Todo_PrepareYeastHydrationWater.TodoIsReady();
+          else
+            go = Todo_PrepareYeastHydrationWater.neededTodoIsReady();
+        }
+        else {
+          if (Status<BOIL)
+            go = Todo_PrepareTopUpPot.TodoIsReady();
+          else
+            go = Todo_PrepareTopUpPot.neededTodoIsReady();
+        }
+        if (go) {
+          TopUpHeater = ON;  
+          pass ++;
+        }
+      }
+      break;
+
+    case 2:
+      if (TopUpWaterTemp >= WATERBOILTEMP-3) {
+        boilEnd = TimeInStatus + 20*MINUTES;
+        pass++;
+      }
+      else {
+        if (procedure==1)
+          setConsoleMessage("Heating yeast hydration water");
+        else
+          setConsoleMessage("Heating top-up water");
+      }
+      break;
+
+    case 3:
+      if (TimeInStatus >= boilEnd) {
+        TopUpHeater = OFF;
+        procedure = 0;
+        boilEnd = 0;
+        pass = 0;
+      }
+      else {
+        if (procedure==1)
+          setCountDownMessage("Boiling yeast hydration water ends in %s:%s", (boilEnd - TimeInStatus));
+        else
+          setCountDownMessage("Boiling top-up water ends in %s:%s", (boilEnd - TimeInStatus));
+      }
+      break;
+  }
 }
 
 void BKSecondaryControl() { // caramelization boil and circulation in whirlpool line
@@ -283,6 +369,7 @@ void MainStateMachine() {
     startProgram(programToStart);
     EnteringStatus = true;
     programToStart = 99;
+    topUpAndHydrationControl(99); // reset top up and yeast hydration control
   }
 
   bool isRestoring = restoringState;
@@ -555,7 +642,9 @@ void MainStateMachine() {
     case MASHFIRSTRUN:
       if (EnteringStatus) {
         if (RcpFirstWortHopping.asBoolean()) 
-          Todo_FirstWortHopping.start();          
+          Todo_FirstWortHopping.start();
+        if (RcpYeastHydration.asBoolean())
+          topUpAndHydrationControl(1); // start yeast hydration water preparation
         MLTTargetTemp = NOHEAT;
         stopTimer = 0;
         ColdBankTargetTemp = coldBankTargetTempCurve[3];   
@@ -670,30 +759,33 @@ void MainStateMachine() {
     }
     break;
 
-    case SPARGE:
-      if (EnteringStatus) {
-        Todo_RunOffComplete.start();
-        HLTPump.setLatency(30 * SECONDS); /**** Constante *****/
-        Todo_PrepareTopUpPot.start();
-        SubStatus = 0;
-      }
-      else {
-        if (BKLevel==2 && SubStatus==0) {  // make sure pump runs at least once before whirlpool intake is under wort to avoid bubbles
-          BKPump = ON;
-          BKPump.setWithDelay(OFF, 7 * SECONDS); 
-          BKValveA.setWithDelay(OPEN, 7 * SECONDS);
-          SubStatus = 1;
+    case SPARGE: {
+        static float yeastHydrationBoilingStart = 0;
+        if (EnteringStatus) {
+          Todo_RunOffComplete.start();
+          HLTPump.setLatency(30 * SECONDS); /**** Constante *****/
+          SubStatus = 0;
+          yeastHydrationBoilingStart = 0;
+          TopUpHeater = ON;
         }
-        if (BKLevel==3 && SubStatus==1) {
-          BKPump = ON;
-          BKPump.setWithDelay(OFF, 7 * SECONDS); 
-          SubStatus = 2;
+        else {
+          if (BKLevel==2 && SubStatus==0) {  // make sure pump runs at least once before whirlpool intake is under wort to avoid bubbles
+            BKPump = ON;
+            BKPump.setWithDelay(OFF, 7 * SECONDS); 
+            BKValveA.setWithDelay(OPEN, 7 * SECONDS);
+            SubStatus = 1;
+          }
+          if (BKLevel==3 && SubStatus==1) {
+            BKPump = ON;
+            BKPump.setWithDelay(OFF, 7 * SECONDS); 
+            SubStatus = 2;
+          }
+          if (BKLevel==4) { // sound alert and keep BKPump on
+            sound_Attention();
+            BKPump = ON;
+          }
+          GoToNextStatus = Todo_RunOffComplete.TodoIsReady();
         }
-        if (BKLevel==4) { // sound alert and keep BKPump on
-          sound_Attention();
-          BKPump = ON;
-        }
-        GoToNextStatus = Todo_RunOffComplete.TodoIsReady();
       }
       break;
   
@@ -1784,11 +1876,14 @@ void MainStateMachine() {
 //--------------------- Diagnostic program
        case DIAGI2C:
           if (EnteringStatus) {
-            setSubStatus(99,"wainting to start program");
+            if (debugging)
+              GoToNextStatus = true;
+              
+            setSubStatus(99,"waiting to start program");
           }
           else {
             if (SubStatus==99) {
-              if (TimeInStatus >= 40) {
+              if (TimeInStatus >= 5*SECONDS) {
                 setSubStatus(0,"I2C scan");
                 diagEntry(1,"I2C devices");
                 if (valveCurrentMonitorIsOn)
@@ -1896,7 +1991,9 @@ void MainStateMachine() {
                                                       && ProcVar::ProcVarByIndex(idx)->I2CCluster()!=VALVESK_ADDR
                                                       && ProcVar::ProcVarByIndex(idx)->I2CCluster()!=VALVESL_ADDR
                                                       && ProcVar::ProcVarByIndex(idx)->I2CCluster()!=VALVESM_ADDR
-                                                      && ProcVar::ProcVarByIndex(idx)->I2CCluster()!=VALVESN_ADDR) 
+                                                      && ProcVar::ProcVarByIndex(idx)->I2CCluster()!=VALVESN_ADDR
+                                                      && ProcVar::ProcVarByIndex(idx) != &DrainBlock
+                                                      && ProcVar::ProcVarByIndex(idx) != &BKDrain) 
                         idx++;
                       if (idx < ProcVar::numVars()) {
                         stopTimer = TimeInStatus;
@@ -1923,7 +2020,7 @@ void MainStateMachine() {
             switch (int(SubStatus)) {
               case 0: 
                 if (TimeInStatus >= stopTimer + WAITFORVALVE + 2*FLOWREADINGSTABILIZATIONTIME) {
-                  diagEntry(2,"Circuit 1 initial pass thru", "%.1f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,WaterInFlow);
+                  diagEntry(2,"Circuit 1 initial pass thru", "%.1f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,float(WaterInFlow));
                   MLTDrain = CLOSED;
                   setSubStatus(1,"MLT drain valve");
                   stopTimer = TimeInStatus;
@@ -1932,7 +2029,7 @@ void MainStateMachine() {
 
               case 1:
                 if (TimeInStatus >= stopTimer + WAITFORVALVE + FLOWREADINGSTABILIZATIONTIME) {
-                  diagEntry(2,"MLT Drain Valve", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,WaterInFlow);
+                  diagEntry(2,"MLT Drain Valve", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,float(WaterInFlow));
                   MLTDrain = OPEN;
                   MLTValveB = CLOSED;
                   setSubStatus(2,"MLT Valve B");
@@ -1942,7 +2039,7 @@ void MainStateMachine() {
 
               case 2:
                 if (TimeInStatus >= stopTimer + WAITFORVALVE + FLOWREADINGSTABILIZATIONTIME) {
-                  diagEntry(2,"MLT Valve B", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,WaterInFlow);
+                  diagEntry(2,"MLT Valve B", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,float(WaterInFlow));
                   MLTValveB = OPEN;
                   BKValveA = CLOSED;
                   setSubStatus(3,"BK Valve A");
@@ -1952,7 +2049,7 @@ void MainStateMachine() {
 
               case 3:
                 if (TimeInStatus >= stopTimer + WAITFORVALVE + FLOWREADINGSTABILIZATIONTIME) {
-                  diagEntry(2,"BK  Valve A", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,WaterInFlow);
+                  diagEntry(2,"BK  Valve A", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,float(WaterInFlow));
                   BKValveA = OPEN;
                   WhirlpoolValve = PORT_B;
                   setSubStatus(4,"Whirlpool Valve (B side)");
@@ -1962,7 +2059,7 @@ void MainStateMachine() {
 
               case 4:
                 if (TimeInStatus >= stopTimer + WAITFORVALVE + 2*FLOWREADINGSTABILIZATIONTIME) {
-                  diagEntry(2,"Whirlpool Valve (B side)", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,WaterInFlow);
+                  diagEntry(2,"Whirlpool Valve (B side)", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,float(WaterInFlow));
                   WhirlpoolValve = PORT_A;
                   BKWaterIn = CLOSED;
                   setSubStatus(5,"BK Water In Valve");
@@ -1972,7 +2069,7 @@ void MainStateMachine() {
 
               case 5:
                 if (TimeInStatus >= stopTimer + WAITFORVALVE + FLOWREADINGSTABILIZATIONTIME) {
-                  diagEntry(2,"BK Water in Valve", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,WaterInFlow);
+                  diagEntry(2,"BK Water in Valve", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,float(WaterInFlow));
                   BKWaterIn = OPEN;
                   ColdWaterIn        = CLOSED;
                   setSubStatus(6,"Cold Water In Valve");
@@ -1982,7 +2079,7 @@ void MainStateMachine() {
 
               case 6:
                 if (TimeInStatus >= stopTimer + WAITFORVALVE + FLOWREADINGSTABILIZATIONTIME) {
-                  diagEntry(2,"Cold Water In Valve", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,WaterInFlow);
+                  diagEntry(2,"Cold Water In Valve", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,float(WaterInFlow));
                   ColdWaterIn        = OPEN;
                   setSubStatus(7,"Circuit 1 final pass thru");
                   stopTimer = TimeInStatus;                  
@@ -1991,7 +2088,7 @@ void MainStateMachine() {
 
               case 7: 
                 if (TimeInStatus >= stopTimer + WAITFORVALVE + 2*FLOWREADINGSTABILIZATIONTIME) {
-                  diagEntry(2,"Circuit 1 final pass thru", "%.1f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,WaterInFlow);
+                  diagEntry(2,"Circuit 1 final pass thru", "%.1f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,float(WaterInFlow));
                   ColdWaterIn        = CLOSED;
                   GoToNextStatus = true;
                 }
@@ -2010,7 +2107,7 @@ void MainStateMachine() {
             switch (int(SubStatus)) {
               case 0: 
                 if (TimeInStatus >= stopTimer + WAITFORVALVE + 2*FLOWREADINGSTABILIZATIONTIME) {
-                  diagEntry(2,"Circuit 2 initial pass thru", "%.1f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,WaterInFlow);
+                  diagEntry(2,"Circuit 2 initial pass thru", "%.1f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,float(WaterInFlow));
                   MLTValveA = CLOSED;
                   setSubStatus(1,"MLT Valve A");
                   stopTimer = TimeInStatus;                  
@@ -2018,9 +2115,9 @@ void MainStateMachine() {
                 break;
 
               case 1:
-                if (TimeInStatus >= stopTimer + WAITFORVALVE + FLOWREADINGSTABILIZATIONTIME) {
-                  diagEntry(2,"MLT Valve A", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,WaterInFlow);
-                  setSubStatus(2,"HLT Valve A passing");
+                if (TimeInStatus >= stopTimer + WAITFORVALVE + FLOWREADINGSTABILIZATIONTIME*2) {
+                  diagEntry(2,"MLT Valve A", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,float(WaterInFlow));
+                  setSubStatus(2,"HLT Valve (A side)");
                   HLTValve = PORT_A;
                   stopTimer = TimeInStatus;
                 }
@@ -2028,7 +2125,7 @@ void MainStateMachine() {
 
               case 2:
                 if (TimeInStatus >= stopTimer + WAITFORVALVE + FLOWREADINGSTABILIZATIONTIME) {
-                  diagEntry(2,"HLT Valve A passing", "%.1f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,WaterInFlow);
+                  diagEntry(2,"HLT Valve (A side)", "%.1f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,float(WaterInFlow));
                   HLTValve = PORT_B;
                   MLTValveA = OPEN;
                   HotWaterIn = CLOSED;
@@ -2039,7 +2136,7 @@ void MainStateMachine() {
 
               case 3:
                 if (TimeInStatus >= stopTimer + WAITFORVALVE + FLOWREADINGSTABILIZATIONTIME) {
-                  diagEntry(2,"Hot Water In Valve", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,WaterInFlow);
+                  diagEntry(2,"Hot Water In Valve", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,float(WaterInFlow));
                   HotWaterIn = OPEN;
                   setSubStatus(4,"Circuit 2 final pass thru");
                   stopTimer = TimeInStatus;                  
@@ -2048,7 +2145,7 @@ void MainStateMachine() {
 
               case 4: 
                 if (TimeInStatus >= stopTimer + WAITFORVALVE + 2*FLOWREADINGSTABILIZATIONTIME) {
-                  diagEntry(2,"Circuit 2 final pass thru", "%.1f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,WaterInFlow);
+                  diagEntry(2,"Circuit 2 final pass thru", "%.1f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,float(WaterInFlow));
                   GoToNextStatus = true;
                 }
             }
@@ -2065,56 +2162,56 @@ void MainStateMachine() {
             switch (int(SubStatus)) {
               case 0: 
                 if (TimeInStatus >= stopTimer + WAITFORVALVE + 2*FLOWREADINGSTABILIZATIONTIME) {
-                  diagEntry(2,"Circuit 3 initial pass thru", "%.1f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,WaterInFlow);
+                  diagEntry(2,"Circuit 3 initial pass thru", "%.1f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,float(WaterInFlow));
                   HLTValve = PORT_B;
-                  setSubStatus(1,"HLT Valve (B side closed)");
+                  setSubStatus(1,"HLT Valve (B side)");
                   stopTimer = TimeInStatus;                  
                 }
                 break;
 
               case 1:
                 if (TimeInStatus >= stopTimer + WAITFORVALVE*2 + 2*FLOWREADINGSTABILIZATIONTIME) {
-                  diagEntry(2,"HLT Valve (B side closed)", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,WaterInFlow);
-                  setSubStatus(2,"HLT Valve (B side open)");
-                  HLTValve = PORT_B;
-                  MLTValveA = OPEN;
-                  stopTimer = TimeInStatus;                    
-                }
-                break; 
-
-              case 2: 
-                if (TimeInStatus >= stopTimer + WAITFORVALVE + 2*FLOWREADINGSTABILIZATIONTIME) {
-                  diagEntry(2,"HLT Valve (B side open)", "%.1f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,WaterInFlow);
+                  diagEntry(2,"HLT Valve (B side)", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,float(WaterInFlow));
                   HLTValve = PORT_A;
                   MLTValveA = CLOSED;
                   WhirlpoolValve = PORT_A;
-                  setSubStatus(3,"Whilrpool Valve (A side)");
+                  setSubStatus(2,"Whilrpool Valve (A side)");
                   stopTimer = TimeInStatus;                  
                 }
                 break;
 
-              case 3:
+              case 2:
                 if (TimeInStatus >= stopTimer + WAITFORVALVE + 2*FLOWREADINGSTABILIZATIONTIME) {
-                  diagEntry(2,"Whilrpool Valve (A side)", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,WaterInFlow);
-                  setSubStatus(4,"BK Valve B");
+                  diagEntry(2,"Whilrpool Valve (A side)", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,float(WaterInFlow));
+                  setSubStatus(3,"BK Valve B");
                   WhirlpoolValve = PORT_B;
                   BKValveB = CLOSED;
                   stopTimer = TimeInStatus;                    
                 }
                 break; 
 
+              case 3:
+                if (TimeInStatus >= stopTimer + WAITFORVALVE + FLOWREADINGSTABILIZATIONTIME) {
+                  diagEntry(2,"BK Valve B", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,float(WaterInFlow));
+                  BKValveB = OPEN;
+                  BKWaterIn = CLOSED;
+                  stopTimer = TimeInStatus;                    
+                  setSubStatus(4,"BK Water In Valve");
+                }
+                break;
+
               case 4:
                 if (TimeInStatus >= stopTimer + WAITFORVALVE + FLOWREADINGSTABILIZATIONTIME) {
-                  diagEntry(2,"BK Valve B", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,WaterInFlow);
+                  diagEntry(2,"BK Water In Valve", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,float(WaterInFlow));
+                  BKWaterIn = OPEN;
+                  stopTimer = 0;
                   setSubStatus(5,"Circuit 3 final pass thru");
-                  BKValveB = OPEN;
-                  stopTimer = TimeInStatus;                    
                 }
                 break; 
 
               case 5: 
                 if (TimeInStatus >= stopTimer + WAITFORVALVE + 2*FLOWREADINGSTABILIZATIONTIME) {
-                  diagEntry(2,"Circuit 3 final pass thru", "%.1f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,WaterInFlow);
+                  diagEntry(2,"Circuit 3 final pass thru", "%.1f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,float(WaterInFlow));
                   GoToNextStatus = true;
                 }
                 break;
@@ -2133,7 +2230,7 @@ void MainStateMachine() {
           switch (int(SubStatus)) {
             case 0: 
               if (TimeInStatus >= stopTimer + WAITFORVALVE + 2*FLOWREADINGSTABILIZATIONTIME) {
-                diagEntry(2,"FMT circuit initial pass thru", "%.1f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,WaterInFlow);
+                diagEntry(2,"FMT circuit initial pass thru", "%.1f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,float(WaterInFlow));
                 FMTDrain = CLOSED;
                 setSubStatus(1,"FMT Drain Valve");
                 stopTimer = TimeInStatus;                  
@@ -2143,7 +2240,7 @@ void MainStateMachine() {
 
             case 1:
               if (TimeInStatus >= stopTimer + WAITFORVALVE*2 + 2*FLOWREADINGSTABILIZATIONTIME) {
-                diagEntry(2,"Cold Drain valve", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,WaterInFlow);
+                diagEntry(2,"Cold Drain valve", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,float(WaterInFlow));
                 setSubStatus(2,"FMT Cycle Valve");
                 FMTDrain = OPEN;
                 FMTCycle = CLOSED;
@@ -2153,7 +2250,7 @@ void MainStateMachine() {
 
             case 2: 
               if (TimeInStatus >= stopTimer + WAITFORVALVE + 2*FLOWREADINGSTABILIZATIONTIME) {
-                diagEntry(2,"FMT Cycle Valve", "%.1f L/min", WaterInFlow < freeFlow*0.7 ? 0 : 2,WaterInFlow);
+                diagEntry(2,"FMT Cycle Valve", "%.1f L/min", WaterInFlow < freeFlow*0.7 ? 0 : 2,float(WaterInFlow));
                 FMTCycle = OPEN;
                 FMTWaterIn = CLOSED;
                 setSubStatus(3,"FMT Water In");
@@ -2163,7 +2260,7 @@ void MainStateMachine() {
 
             case 3:
               if (TimeInStatus >= stopTimer + WAITFORVALVE + 2*FLOWREADINGSTABILIZATIONTIME) {
-                diagEntry(2,"FMT Water In", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,WaterInFlow);
+                diagEntry(2,"FMT Water In", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,float(WaterInFlow));
                 setSubStatus(5,"FMT circuit final pass thru");
                 FMTWaterIn = OPEN;
                 stopTimer = TimeInStatus;                    
@@ -2172,7 +2269,7 @@ void MainStateMachine() {
 
             case 5: 
               if (TimeInStatus >= stopTimer + WAITFORVALVE + 2*FLOWREADINGSTABILIZATIONTIME) {
-                diagEntry(2,"Circuit 3 final pass thru", "%.1f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,WaterInFlow);
+                diagEntry(2,"Circuit 3 final pass thru", "%.1f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,float(WaterInFlow));
                 GoToNextStatus = true;
               }
               break;
@@ -2197,8 +2294,8 @@ void MainStateMachine() {
                 if (TimeInStatus > stopTimer + WAITFORVALVE + LONGFLOWREADINGSTABILIZATIONTIME) {
                   diagRefFlow = WaterInFlow;
                   diagRefTransferFlow = TransferFlow;
-                  diagEntry(2,"Inlet metered flow", "%.1f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,WaterInFlow);
-                  diagEntry(2,"HLT out metered flow", "%.1f L/min", HLT2MLTFlow > POSITIVEFLOWREADING ? 0 : 2,HLT2MLTFlow);
+                  diagEntry(2,"Inlet metered flow", "%.1f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,float(WaterInFlow));
+                  diagEntry(2,"HLT out metered flow", "%.1f L/min", HLT2MLTFlow > POSITIVEFLOWREADING ? 0 : 2,float(HLT2MLTFlow));
                   diagEntry(2,"FMT in  metered flow", "%.1f L/min", float(TransferFlow) > POSITIVEFLOWREADING ? 0 : 2,float(TransferFlow));
                   setSubStatus(1,"Meters - cold water - BK pump");
                   diagEntry(1,SubStatusLabel); 
@@ -2361,6 +2458,8 @@ void MainStateMachine() {
   if (Status >= PREBREWHOTWATERPREP && Status <= MASHMASHING)
     IPCStatusMachine();  
 
+  topUpAndHydrationControl();
+
   if (GoToNextStatus || NextStatus || forceNextStatus) {
     sound_stateChange();
     if (forceNextStatus) {
@@ -2383,6 +2482,7 @@ void MainStateMachine() {
         say("...");
         say("Entering standby mode...");
         say();
+        topUpAndHydrationControl(99); // reset top up and yeast hydration control
       }
     }
   }

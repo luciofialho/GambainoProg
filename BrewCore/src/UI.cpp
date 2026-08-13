@@ -979,6 +979,7 @@ className = getClassName(value, missValue);\n\
   addRcpVar(st,RcpStartTime,1,VARTYPESIMPLE); 
   addRcpVar(st,RcpFermenterCleaning,0,VARTYPESIMPLE);
   addRcpVar(st,RcpTargetFermenter,0,VARTYPESIMPLE);
+  addRcpVar(st,RcpYeastHydration,0,VARTYPESIMPLE);
   addRcpVar(st,RcpTopupWater,0,VARTYPESIMPLE);
   addRcpVar(st,RcpGrainWeight,1,VARTYPESIMPLE);
   addRcpVar(st,RcpMashTime,0,VARTYPESIMPLE);

@@ -99,6 +99,7 @@ DECL('R',RcpAddition4,                       ,MODEFLOAT,            CONFIGPERSIS
 DECL('R',RcpAddition5,                       ,MODEFLOAT,            CONFIGPERSISTENCE,  -1,       NOPIN,               DATALOGOFF,     JSONRECIPE,   NOTINVERTED, AUTOOVERRIDE,   NODALLAS)
 DECL('R',RcpFermenterCleaning,               ,MODEFLOAT,            CONFIGPERSISTENCE,  1,        NOPIN,               DATALOGOFF,     JSONRECIPE,   NOTINVERTED, AUTOOVERRIDE,   NODALLAS)
 DECL('R',RcpTargetFermenter,                 ,MODEFLOAT,            CONFIGPERSISTENCE,  1,        NOPIN,               DATALOGOFF,     JSONRECIPE,   NOTINVERTED, AUTOOVERRIDE,   NODALLAS)
+DECL('R',RcpYeastHydration,                  ,MODEFLOAT,            CONFIGPERSISTENCE,  0,        NOPIN,               DATALOGOFF,     JSONRECIPE,   NOTINVERTED, AUTOOVERRIDE,   NODALLAS)
 DECL('R',RcpTopupWater,                      ,MODEFLOAT,            CONFIGPERSISTENCE,  1,        NOPIN,               DATALOGOFF,     JSONRECIPE,   NOTINVERTED, AUTOOVERRIDE,   NODALLAS)
 DECL('R',RcpKettleSourFirstBoilTime,         ,MODEFLOAT,            CONFIGPERSISTENCE,  0,        NOPIN,               DATALOGOFF,     JSONRECIPE,   NOTINVERTED, AUTOOVERRIDE,   NODALLAS)
 DECL('R',RcpKettleSourSouringTemp,           ,MODEFLOAT,            CONFIGPERSISTENCE,  0,        NOPIN,               DATALOGOFF,     JSONRECIPE,   NOTINVERTED, AUTOOVERRIDE,   NODALLAS)

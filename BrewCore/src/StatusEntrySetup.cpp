@@ -1024,7 +1024,7 @@ void statusEntrySetup() {
           BKTargetTemp       = NOHEAT;
           BKValveA           = OPEN;
           BKValveB           = CLOSED;
-          WhirlpoolValve     = PORT_B;
+          WhirlpoolValve     = PORT_A;
           BKPump             = OFF;
           Chiller1           = CLOSED;
           ColdBankValve      = PORT_A;

@@ -51,6 +51,7 @@ extern Todo Todo_PurgeLine;
 extern Todo Todo_MashRest;
 extern Todo Todo_RunOffComplete;
 extern Todo Todo_FirstWortHopping;
+extern Todo Todo_PrepareYeastHydrationWater;
 extern Todo Todo_PrepareTopUpPot;
 extern Todo Todo_Addition1;
 extern Todo Todo_Addition2;
