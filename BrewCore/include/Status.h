@@ -122,7 +122,7 @@ DEFSTATUS (85, CALIBRATEFLOWEND             ,"Calbr flow: end")
 #define PGMFMTAUTO1PHASE   10
 #define PGMFMTAUTO2PHASE   11
 #define PGMKEGCLEAN        12 // 12xy = x=1 full clean, x=2 rinse only; y=0 setup, y=1 no setup
-#define PGMNA1             13
+#define PGMKEGONESTEPRINSE 13
 #define PGMNA2             14
 #define PGMNA3             15
 #define PGMDIAGMANUAL      16
@@ -148,7 +148,7 @@ const byte pgmStatusRange [NUMPROGRAMS][2] = {
   {CIPFMTSTART,CIPFMTCOMPLETE},             //10 
   {CIPFMTSTART,CIPFMTCOMPLETE},             //11  
   {KEGCLEANERSETUP,KEGCLEANERFINALRINSE},   //12
-  {0,0},   //13
+  {KEGRINSE,KEGRINSE},   //13
   {0,0},   //14
   {0,0},   //15
   {DIAGI2C,DIAGRESULT},                     //16

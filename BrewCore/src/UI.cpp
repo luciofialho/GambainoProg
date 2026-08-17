@@ -56,7 +56,8 @@ extern char bigBuffer[];
 #define INSTRFACTORYRESET       21
 #define INSTRCOLDSTATUS         22
 #define INSTRSTARTDIAG          23
-#define NUMCOMMANDS             24
+#define INSTRRECONNECTNETWORK   24
+#define NUMCOMMANDS             25
 
 #define INSTRSYNTAX_CMDONLY     0
 #define INSTRSYNTAX_TAG         1
@@ -88,7 +89,8 @@ const int INSTRSYNTAX[NUMCOMMANDS] = {
   INSTRSYNTAX_CMDONLY,        // INSTRRESUMEPROCESS
   INSTRSYNTAX_CMDONLY,        // INSTRFACTORYRESET
   INSTRSYNTAX_CMDONLY,        // INSTRCOLDSTATUS
-  INSTRSYNTAX_VALUE           // STARTDIAG
+  INSTRSYNTAX_VALUE,          // STARTDIAG
+  INSTRSYNTAX_CMDONLY         // INSTRRECONNECTNETWORK
 };
 bool requestFromIP = false;
 int echoMode = 0;
@@ -462,6 +464,7 @@ void cmdProcess(AsyncWebServerRequest *request,char *cmd) {
     if (!strcmp(cmdToken[0],"factoryreset"))                                    instr = INSTRFACTORYRESET;
     if (!strcmp(cmdToken[0],"coldstatus")    || !strcmp(cmdToken[0],"cold"))    instr = INSTRCOLDSTATUS;
     if (!strcmp(cmdToken[0],"startdiag"))                                       instr = INSTRSTARTDIAG;
+    if (!strcmp(cmdToken[0],"reconnectnetwork") || !strcmp(cmdToken[0],"net"))   instr = INSTRRECONNECTNETWORK;
 
 
     if (instr==-1) {
@@ -687,6 +690,17 @@ void cmdProcess(AsyncWebServerRequest *request,char *cmd) {
                     delay(100);
                 }
                 ESPRestart(request);
+                break;
+
+            case INSTRRECONNECTNETWORK:
+                say();
+                say("RECONNECTNETWORK REQUEST RECEIVED");
+                say();
+                while (client.connected()) {
+                    client.stop();
+                    delay(100);
+                }                
+                reconnectNetwork();
                 break;
 
             case INSTRREINIT:
@@ -1213,6 +1227,7 @@ void commandHelp(AsyncWebServerRequest *request) {
     strnncat(bigBuffer,"FACTORYRESET - Restore factory defauts"                                                                       ,BIGBUFFERSIZE); strnncat(bigBuffer,newLine,BIGBUFFERSIZE);
     strnncat(bigBuffer,"COLDstatus - formated status of cold side (http only)"                                                        ,BIGBUFFERSIZE); strnncat(bigBuffer,newLine,BIGBUFFERSIZE);
     strnncat(bigBuffer,"STARTDIAG <parameters - bitmask> - start diagnostic"                                                          ,BIGBUFFERSIZE); strnncat(bigBuffer,newLine,BIGBUFFERSIZE);
+    strnncat(bigBuffer,"ReconnectNetwork | rn - disconnect and restart the WiFi connection process"                                    ,BIGBUFFERSIZE); strnncat(bigBuffer,newLine,BIGBUFFERSIZE);
     strnncat(bigBuffer,""                                                                                                             ,BIGBUFFERSIZE); strnncat(bigBuffer,newLine,BIGBUFFERSIZE);
 
     strnncat(bigBuffer,"DIRECT URLs (case senstive)"                                                                                  ,BIGBUFFERSIZE); strnncat(bigBuffer,newLine,BIGBUFFERSIZE);

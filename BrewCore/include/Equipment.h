@@ -51,7 +51,7 @@ const float coldBankTargetTempCurve[]= {10,7,5,3,1}; //prebrew, 3 hours to begin
 
 #define KEGRINSECYCLES                 5
 #define KEGRINSETIMEDURINGCLEANING     (60*SECONDS)
-#define KEGRINSEONLYTIME               (180*SECONDS)
+#define KEGRINSEONLYTIME               (300*SECONDS)
 #define KEGRINSEVOLUME                 5
 #define KEGCLEANVOLUME                 4
 #define KEGCLEANTIME                   (10*MINUTES)

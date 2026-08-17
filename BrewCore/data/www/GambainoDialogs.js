@@ -1,3 +1,53 @@
+// Override procVar parameters - replaces the native prompt() with a Zebra_Dialog "prompt" type
+function Override(div) {
+  new $.Zebra_Dialog("", {
+    type: "prompt",
+    title: "Override " + div.id,
+    default_value: "",
+    width: 300,
+    buttons: ["Cancel", "Ok"],
+    onClose: function(caption, value) {
+      if (caption === "Ok" || caption === true) {
+        if (value != null && value != "") {
+          WriteParam(div.id, value);
+          RenderAll();
+        }
+        else {
+          WriteParam(div.id, noOH);
+          RenderAll();
+        }
+      }
+    }
+  });
+
+  setTimeout(function() {
+    var dialog = $('.ZebraDialog').last();
+    var buttonBar = dialog.find('.ZebraDialog_Buttons');
+    var buttons = buttonBar.find('a');
+
+    // drop the type icon so its reserved left padding doesn't skew the input off-center
+    dialog.removeClass('ZebraDialog_Icon ZebraDialog_Prompt');
+
+    buttonBar.css({
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center'
+    });
+
+    buttons.css({
+      float: 'none'
+    });
+
+    dialog.find('.ZebraDialog_Prompt_Input').css({
+      display: 'block',
+      width: '80%',
+      margin: '0 auto',
+      textAlign: 'center',
+      float: 'none'
+    });
+  }, 0);
+}
+
 function menuLineCIP() {
   new $.Zebra_Dialog(
     `
@@ -84,7 +134,7 @@ function menuKegClean() {
         <button class="dlg-btn-large" onclick="selectKegClean('Detergent pre cleaning')">Detergent pre cleaning</button>
         <button class="dlg-btn-large" onclick="selectKegClean('Detergent pre cleaning no setup')">Detergent pre cleaning<br>no setup</button><br><br>
         <button class="dlg-btn-large" onclick="selectKegClean('Rinse only')">Rinse only</button>
-        <button class="dlg-btn-large" onclick="selectKegClean('Rinse only no setup')">Rinse only<br>no setup</button><br><br>
+        <button class="dlg-btn-large" onclick="selectKegClean('One step rinse')">One step rinse</button><br><br>
       </div>
     </div>
     `,
@@ -112,8 +162,8 @@ function selectKegClean(cleaningType) {
     startProgram(1212);
   } else if (cleaningType === "Rinse only") {
     startProgram(1221);
-  } else if (cleaningType === "Rinse only no setup") {
-    startProgram(1422);
+  } else if (cleaningType === "One step rinse") {
+    startProgram(1300);
   }
 }
 

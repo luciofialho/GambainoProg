@@ -168,14 +168,11 @@ void manageHydrometers()
     #define WIFACTOR (572.6) // number of pulses per liter: (6*Q-8), Q=L/min
     #define WICORRECTION 20.9 // Qs = (f+8)/360
 
-    #define HLTFACTOR (586) 
+    #define HLTFACTOR 575// estava (586)  até 13/08
     #define HLTCORRECTION 0
 
-    #define TRANSFERFACTOR 648.3 
+    #define TRANSFERFACTOR 630 // estava 648.3 até 13/08
     #define TRANSFERCORRECTION 2.4
-
-    #define KEGDETERGFACTOR 637.74
-    #define KEGDETERGCORRECTION 3.37
 
 
     #define WIADJ  (1.000)

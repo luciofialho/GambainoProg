@@ -45,6 +45,13 @@ void handleResetDisplay(AsyncWebServerRequest *request) {
   request->redirect("/control");
 }
 
+void handleReconnectNetwork(AsyncWebServerRequest *request) {
+  Serial.println(">>> RECONNECTNETWORK REQUEST <<<");
+  responseConfirmation(request, "Reconnecting to WiFi...", "/control");
+  delay(1000);  // let the response flush before dropping WiFi
+  reconnectNetwork();
+}
+
 char * getPovotoStatus(char *st) {
   char smallBuf[100] = "Implementar";
   NTPFormatedDateTime(smallBuf);
@@ -194,6 +201,7 @@ void setup() {
   server.on("/pressuredump", HTTP_GET, handlePressureDumpCSV);
   
   server.on("/resetdisplay", HTTP_GET, handleResetDisplay);
+  server.on("/net", HTTP_GET, handleReconnectNetwork);
 
   setStatusSource(getPovotoStatus);
   registerPeerSetupRoute();

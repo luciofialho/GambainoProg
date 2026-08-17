@@ -1,6 +1,6 @@
 if (URLArduino==null) {
   console.log("Development mode");
-  var URLArduino = "http://192.168.13.178/";
+  var URLArduino = "http://192.168.29.178/";
 }
 else
   console.log("Operational mode");
@@ -270,24 +270,8 @@ function DismissTodo(ID) {
     callGambainoJSONAsync(".dt_" + ID);
 }
 
-// Override procVar parameters 
-
-function Override(div) {
-  v = div.id;
-
-  var overrideValue = prompt(v);
-  
-  if (overrideValue != null) {
-    if (overrideValue != "") {
-      WriteParam(v, overrideValue);
-      RenderAll();
-    }
-    else {
-      WriteParam(v, noOH);
-      RenderAll();
-    }
-  };
-};
+// Override procVar parameters
+// Override(div) is now defined in GambainoDialogs.js, as a Zebra_Dialog prompt
 
 function OverrideAB(div) {
   new $.Zebra_Dialog("Choose override for " + div.id,

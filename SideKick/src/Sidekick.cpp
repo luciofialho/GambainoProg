@@ -97,6 +97,13 @@ static void handleResetBrewCore(AsyncWebServerRequest *request) {
   responseConfirmation(request, "BrewCore reset pulse sent", "/getstatus");
 }
 
+static void handleReconnectNetwork(AsyncWebServerRequest *request) {
+  Serial.println(">>> RECONNECTNETWORK REQUEST <<<");
+  responseConfirmation(request, "Reconnecting to WiFi...", "/getstatus");
+  delay(1000);  // let the response flush before dropping WiFi
+  reconnectNetwork();
+}
+
 static void handlePacket(char type, const char *payload) {
   switch (type) {
     case LOGPACKET: {
@@ -226,6 +233,7 @@ void setup() {
   setStatusSource(getSideKickStatus);
   registerPeerSetupRoute();
   server.on("/resetbrewcore", HTTP_GET, handleResetBrewCore);
+  server.on("/net", HTTP_GET, handleReconnectNetwork);
 
   pinMode(RESETBREWCOREPIN, OUTPUT);
   digitalWrite(RESETBREWCOREPIN, LOW); 

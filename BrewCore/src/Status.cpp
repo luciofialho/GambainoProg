@@ -1156,22 +1156,39 @@ void MainStateMachine() {
     case CIPDLOADHEAT: {
       if (EnteringStatus) {
         sprintf(litersMsg,"%d liters)",(int)CIPDVOLUME);
-        if (CIPLineMode() != 0)
-          Todo_AddDetergent.start(litersMsg);
+        setSubStatus(0,"Preparing water");
       }
       else {
-        if (CIPLineMode()==0) {
-          if (BKTemp >= WATERBOILTEMP - 2 && !BKPump.asBoolean()) { //when near boil, start pump to heat line
-            BKPump = ON;
-          }
-          GoToNextStatus = waterInIsDone() && (BKTemp >= WATERBOILTEMP || BKTemp >= BKTargetTemp - ALLOWEDTEMPOFFSET);
+        switch (int(SubStatus)) {
+          case 0:
+            if (BKTemp >= WATERBOILTEMP - 2 ||
+                BKTemp >= BKTargetTemp - 2) { 
+              BKPump = ON;
+              setSubStatus(1,"Heating line");
+            }
+            break;
+
+          case 1: 
+            if (waterInIsDone() && (BKTemp >= WATERBOILTEMP || BKTemp >= BKTargetTemp - ALLOWEDTEMPOFFSET)) {
+              if (CIPLineMode() != 0) {
+                Todo_AddDetergent.start(litersMsg);
+                setSubStatus(2, "Waiting for detergent");
+              }
+              else
+                GoToNextStatus = true;
+            }
+            break;
+
+          case 2:
+             GoToNextStatus = Todo_AddDetergent.neededTodoIsReady();
+             break;
         }
-        else
-          GoToNextStatus = waterInIsDone() && Todo_AddDetergent.neededTodoIsReady() && BKTemp >= BKTargetTemp - ALLOWEDTEMPOFFSET;
       }
       break;
     }
         
+        if (CIPLineMode() != 0)
+
 
     case CIPDCIRCULATION1:
     case CIPDCIRCULATION2:
@@ -1779,7 +1796,7 @@ void MainStateMachine() {
                     if (OnGoingProgram==PGMKEGCLEAN)
                       setSubStatus(1,"Rinse %d/%d: start",kegRinseCycle,KEGRINSECYCLES);
                     else
-                      setSubStatus(1,"Rinse start");
+                      GoToNextStatus = true;
                   }
                   else {
                     GoToNextStatus = true;
@@ -2173,7 +2190,6 @@ void MainStateMachine() {
                 if (TimeInStatus >= stopTimer + WAITFORVALVE*2 + 2*FLOWREADINGSTABILIZATIONTIME) {
                   diagEntry(2,"HLT Valve (B side)", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,float(WaterInFlow));
                   HLTValve = PORT_A;
-                  MLTValveA = CLOSED;
                   WhirlpoolValve = PORT_A;
                   setSubStatus(2,"Whilrpool Valve (A side)");
                   stopTimer = TimeInStatus;                  
@@ -2204,7 +2220,7 @@ void MainStateMachine() {
                 if (TimeInStatus >= stopTimer + WAITFORVALVE + FLOWREADINGSTABILIZATIONTIME) {
                   diagEntry(2,"BK Water In Valve", "%.1f L/min", WaterInFlow <= NOFLOWREADING ? 0 : 2,float(WaterInFlow));
                   BKWaterIn = OPEN;
-                  stopTimer = 0;
+                  stopTimer = TimeInStatus;
                   setSubStatus(5,"Circuit 3 final pass thru");
                 }
                 break; 
@@ -2250,7 +2266,7 @@ void MainStateMachine() {
 
             case 2: 
               if (TimeInStatus >= stopTimer + WAITFORVALVE + 2*FLOWREADINGSTABILIZATIONTIME) {
-                diagEntry(2,"FMT Cycle Valve", "%.1f L/min", WaterInFlow < freeFlow*0.7 ? 0 : 2,float(WaterInFlow));
+                diagEntry(2,"FMT Cycle Valve", "%.1f L/min", WaterInFlow < freeFlow*0.9 ? 0 : 2,float(WaterInFlow));
                 FMTCycle = OPEN;
                 FMTWaterIn = CLOSED;
                 setSubStatus(3,"FMT Water In");
@@ -2306,10 +2322,10 @@ void MainStateMachine() {
 
               case 1:
                 if (TimeInStatus > stopTimer + WAITFORVALVE + LONGFLOWREADINGSTABILIZATIONTIME) {
-                  diagEntry(2,"Inlet metered flow",   "%.4f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,WaterInFlow);
-                  diagEntry(2,"HLT out metered flow", "%.4f L/min (dev: %.1f)", diagFlowDevStatus(HLT2MLTFlow,WaterInFlow), HLT2MLTFlow, diagFlowDeviation(HLT2MLTFlow,WaterInFlow));
-                  diagEntry(2,"FMT in  metered flow", "%.4f L/min (dev: %.1f)", diagFlowDevStatus(float(TransferFlow),WaterInFlow), float(TransferFlow), diagFlowDeviation(float(TransferFlow),WaterInFlow));
-                  diagEntry(2,"BK Pump effect", "%.4f L/min", WaterInFlow > diagRefFlow + 1.5 ? 0 : 2, WaterInFlow-diagRefFlow); /**** constante */
+                  diagEntry(2,"Inlet metered flow",   "%.2f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,float(WaterInFlow));
+                  diagEntry(2,"HLT out metered flow", "%.2f L/min (dev: %.1f)", diagFlowDevStatus(HLT2MLTFlow,WaterInFlow), float(HLT2MLTFlow), diagFlowDeviation(HLT2MLTFlow,WaterInFlow));
+                  diagEntry(2,"FMT in  metered flow", "%.2f L/min (dev: %.1f)", diagFlowDevStatus(float(TransferFlow),WaterInFlow), float(TransferFlow), diagFlowDeviation(float(TransferFlow),WaterInFlow));
+                  diagEntry(2,"BK Pump effect", "%.2f L/min", WaterInFlow > diagRefFlow + 1.5 ? 0 : 2, WaterInFlow-diagRefFlow); /**** constante */
                   setSubStatus(2,"Meters - cold water - HLT pump");
                   diagEntry(1,SubStatusLabel); 
                   BKPump = OFF;
@@ -2320,10 +2336,10 @@ void MainStateMachine() {
 
               case 2:
                 if (TimeInStatus > stopTimer + WAITFORVALVE + LONGFLOWREADINGSTABILIZATIONTIME*2) {
-                  diagEntry(2,"Inlet metered flow", "%.1f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,WaterInFlow);
-                  diagEntry(2,"HLT out metered flow", "%.1f L/min (dev: %.1f)", diagFlowDevStatus(HLT2MLTFlow,WaterInFlow), HLT2MLTFlow, diagFlowDeviation(HLT2MLTFlow,WaterInFlow));
-                  diagEntry(2,"FMT in  metered flow", "%.1f L/min (dev: %.1f)", diagFlowDevStatus(float(TransferFlow),WaterInFlow), float(TransferFlow), diagFlowDeviation(float(TransferFlow),WaterInFlow));
-                  diagEntry(2,"HLT Pump effect", "%.1f L/min", WaterInFlow > diagRefFlow + 1.5 ? 0 : 2, WaterInFlow-diagRefFlow); /**** constante */
+                  diagEntry(2,"Inlet metered flow", "%.2f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,float(WaterInFlow));
+                  diagEntry(2,"HLT out metered flow", "%.2f L/min (dev: %.1f)", diagFlowDevStatus(HLT2MLTFlow,WaterInFlow), float(HLT2MLTFlow), diagFlowDeviation(HLT2MLTFlow,WaterInFlow));
+                  diagEntry(2,"FMT in  metered flow", "%.2f L/min (dev: %.1f)", diagFlowDevStatus(float(TransferFlow),WaterInFlow), float(TransferFlow), diagFlowDeviation(float(TransferFlow),WaterInFlow));
+                  diagEntry(2,"HLT Pump effect", "%.2f L/min", WaterInFlow > diagRefFlow + 1.5 ? 0 : 2, WaterInFlow-diagRefFlow); /**** constante */
                   setSubStatus(3,"Meters - cold water - MLT pump");
                   diagEntry(1,SubStatusLabel);
                   HLTPump = OFF;
@@ -2334,10 +2350,10 @@ void MainStateMachine() {
 
               case 3:
                 if (TimeInStatus > stopTimer + WAITFORVALVE + LONGFLOWREADINGSTABILIZATIONTIME) {
-                  diagEntry(2,"Inlet metered flow", "%.1f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,WaterInFlow);
-                  diagEntry(2,"HLT out metered flow", "%.1f L/min (dev: %.1f)", diagFlowDevStatus(HLT2MLTFlow,WaterInFlow), HLT2MLTFlow, diagFlowDeviation(HLT2MLTFlow,WaterInFlow));
-                  diagEntry(2,"FMT in  metered flow", "%.1f L/min (dev: %.1f)", diagFlowDevStatus(float(TransferFlow),WaterInFlow), float(TransferFlow), diagFlowDeviation(float(TransferFlow),WaterInFlow));
-                  diagEntry(2,"MLT Pump effect", "%.1f L/min", WaterInFlow > diagRefFlow + 0.7 ? 0 : 2, WaterInFlow-diagRefFlow); /**** constante */
+                  diagEntry(2,"Inlet metered flow", "%.2f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,float(WaterInFlow));
+                  diagEntry(2,"HLT out metered flow", "%.2f L/min (dev: %.1f)", diagFlowDevStatus(HLT2MLTFlow,WaterInFlow), float(HLT2MLTFlow), diagFlowDeviation(HLT2MLTFlow,WaterInFlow));
+                  diagEntry(2,"FMT in  metered flow", "%.2f L/min (dev: %.1f)", diagFlowDevStatus(float(TransferFlow),float(WaterInFlow)), float(TransferFlow), diagFlowDeviation(float(TransferFlow),float(WaterInFlow)));
+                  diagEntry(2,"MLT Pump effect", "%.2f L/min", WaterInFlow > diagRefFlow + 0.7 ? 0 : 2, WaterInFlow-diagRefFlow); /**** constante */
                   setSubStatus(4," Meters - hot water - no pumps");
                   diagEntry(1,SubStatusLabel);
                   MLTPump = OFF;
@@ -2349,14 +2365,14 @@ void MainStateMachine() {
 
               case 4:
                 if (TimeInStatus > stopTimer + WAITFORVALVE + LONGFLOWREADINGSTABILIZATIONTIME) {
-                  diagEntry(2,"Inlet metered flow", "%.1f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,WaterInFlow);
+                  diagEntry(2,"Inlet metered flow", "%.2f L/min", WaterInFlow > POSITIVEFLOWREADING ? 0 : 2,float(WaterInFlow));
                   float normalized = WaterInFlow/TransferFlow * diagRefTransferFlow;
 
-                  diagEntry(2,"Inlet comparable to cold normalized by FMT flow","%.1f L/min (dev: %.1f%)", diagFlowDevStatus(normalized,diagRefFlow), normalized, diagFlowDeviation(normalized,diagRefFlow));
+                  diagEntry(2,"Inlet comparable to cold normalized by FMT flow","%.2f L/min (dev: %.1f%)", diagFlowDevStatus(normalized,diagRefFlow), normalized, diagFlowDeviation(normalized,diagRefFlow));
 //                    devLabel(normalized,diagRefFlow).c_str(), diagFlowDevStatus(normalized,diagRefFlow));
 
-                  diagEntry(2,"HLT out metered flow", "%.1f L/min (dev: %.1f)", diagFlowDevStatus(HLT2MLTFlow,WaterInFlow), HLT2MLTFlow, diagFlowDeviation(HLT2MLTFlow,WaterInFlow));
-                  diagEntry(2,"FMT in  metered flow", "%.1f L/min (dev: %.1f)", diagFlowDevStatus(float(TransferFlow),WaterInFlow), float(TransferFlow), diagFlowDeviation(float(TransferFlow),WaterInFlow));
+                  diagEntry(2,"HLT out metered flow", "%.2f L/min (dev: %.1f)", diagFlowDevStatus(float(HLT2MLTFlow),float(WaterInFlow)), float(HLT2MLTFlow), diagFlowDeviation(float(HLT2MLTFlow),float(WaterInFlow)));
+                  diagEntry(2,"FMT in  metered flow", "%.2f L/min (dev: %.1f)", diagFlowDevStatus(float(TransferFlow),WaterInFlow), float(TransferFlow), diagFlowDeviation(float(TransferFlow),WaterInFlow));
                   GoToNextStatus = true; // others pumps were already tested and are weaker than BK, so no need to repeat hot water with them
                 }
                 break;
