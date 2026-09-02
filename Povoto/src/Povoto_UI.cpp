@@ -27,6 +27,9 @@
 #include "Swiss_911_Extra_Compressed_Regular42pt7b.h"
 #include "Swiss_911_Extra_Compressed_Regular60pt7b.h"
 #include "Swiss_911_Extra_Compressed_Regular72pt7b.h"
+#if defined(ARDUINO_ARCH_ESP32)
+#include "esp32-hal-psram.h"
+#endif
 
 extern TFT_eSPI tft;
 
@@ -263,9 +266,10 @@ void mainScreen() {
   screenData();
   const unsigned long t2 = millis();
   if (UI_PERF_LOG) {
-    Serial.printf("[UI PERF] mainScreen total=%lums bg=%lums data=%lums\n",
+    Serial.printf("[UI PERF] mainScreen total=%lums bg=%lums data=%lums psram=%u\n",
                   (unsigned long)(t2 - t0),
                   (unsigned long)(t1 - t0),
-                  (unsigned long)(t2 - t1));
+                  (unsigned long)(t2 - t1),
+                  (unsigned)psramFound());
   }
 }

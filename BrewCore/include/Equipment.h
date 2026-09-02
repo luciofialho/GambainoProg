@@ -139,6 +139,7 @@ const float CIPLinePotSoakTimes[3] =
 #define WATERBOILTEMP                  97.5   // water temperature to be considered boil in standby flag - consider altitude
 #define WORTBOILTEMP                   97.6   // water temperature to be considered boil in standby flag - consider altitude
 #define WORTTEMPTOAVOIDBOILDOVER       97.4   // wort temperature to avoid boil over
+#define TOPUPWATERTEMPBOILOFFSET          5
 
 
 #define INFUSIONTEMPLOSS                2          // in percent

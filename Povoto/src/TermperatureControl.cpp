@@ -190,8 +190,8 @@ void temperatureControl() {
   else {
     float minTarget = SetPointData.setPointTemp;
     float maxTarget = SetPointData.setPointTemp + FMTOFFSET;
-    if ((mode==FMTCHILL) && millis()-lastModeChange > 2*60000L && ControlData.temperature > 8) /*** constantes ****/
-      minTarget += 0.1; // reduce histeresis after turning off
+    if ((mode==FMTCHILL) && millis()-lastModeChange > 3*60000L && ControlData.temperature > 8) /*** constantes ****/
+      minTarget += 0.1; // reduce histeresis 
     if (ControlData.temperature < 4) {
       minTarget -= FMTOFFSET; 
       //maxTarget += FMTOFFSET;
@@ -310,20 +310,27 @@ void temperatureControl() {
 
   updateCountersTimes(chillControl, heatControl);
 
+  
   if (!inPressureNoiseWindow()) {
     digitalWrite(PINCHILLER, chillControl);
     digitalWrite(PINHEATER, heatControl);
-    digitalWrite(PINTRANSFERVALVE, ControlData.transferOverride==1 ? HIGH : (ControlData.transferOverride==2 ? LOW : ControlData.transferValve ? HIGH : LOW));
-    digitalWrite(PINRELIEFVALVE, ControlData.reliefOverride==1 ? HIGH : (ControlData.reliefOverride==2 ? LOW : ControlData.reliefValve ? HIGH : LOW));
+
+    if (chillControl)
+      digitalWrite(PINLEDCHILLER, HIGH);
+    else if (interruptedCooling)
+      digitalWrite(PINLEDCHILLER, (millis() % 500) < 50);
+
+    if (heatControl)
+      digitalWrite(PINLEDHEATER, HIGH);
+    else if (interruptedHeating)
+      digitalWrite(PINLEDHEATER, (millis() % 500) < 50);
   }
-
-  digitalWrite(PINLED, (millis() % 2000) > 500 && (millis() % 2000) < 550);
-
 }
 
 char *getTemperatureControlStatus(char *st) {
   char buf[2048];  
-    sprintf(buf, "<br>-------TEMPERATURE CONTROL<br>Temperature: %.2f C<br>Environment Temp: %.2f C<br>Target: %.2f C<br>Mode: %s<br>Chill: %s<br>Heat: %s<br>Total chill time: %ld s<br>Total heat time: %ld s<br>", 
+    sprintf(buf, "<br>-------TEMPERATURE CONTROL<br>Dallas sensor: %s<br>Temperature: %.2f C<br>Environment Temp: %.2f C<br>Target: %.2f C<br>Mode: %s<br>Chill: %s<br>Heat: %s<br>Total chill time: %ld s<br>Total heat time: %ld s<br>", 
+          (dallasTemperature == NOTaTEMP || dallasTemperature == 85) ? "NOT DETECTED" : "OK",
           ControlData.temperature,
           environmentTemp,
           SetPointData.setPointTemp,

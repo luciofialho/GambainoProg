@@ -12,7 +12,7 @@ extern TFT_eSPI tft;
 #define PINHEATER 40
 #define PINLEDHEATER 2
 #define PINTRANSFERVALVE 41
-#define PINRELIEFVALVE 42
+#define PINVENTINGLED 42
 
 #define PINBUZZER 47
 #define PINLED    13
@@ -24,12 +24,13 @@ extern TFT_eSPI tft;
 #define FMTIDLE 1
 #define FMTHEAT 2
 
-#define FMTOFFSET 0.2
+#define FMTOFFSET 0.3
 #define FMTSLOWINCREMENTTIME (36*60L*1000L) // time to change 0.1 ºC ex. 36 minutes = 4ºC per day
 
 extern float dallasTemperature;
 extern bool  debugTemperatureOverride;
 extern float environmentTemp;
 extern byte DisplayMode;
+extern bool  soundAlarm;
 
   

@@ -38,6 +38,7 @@ char buf[2048];
 
 static volatile bool resetDisplayRequested = false;
 static char datalogBuffer[MAXPACKETSIZE+2];
+bool soundAlarm = false;
 
 void handleResetDisplay(AsyncWebServerRequest *request) {
   Serial.println(">>> RESET DISPLAY REQUEST <<<");
@@ -102,6 +103,13 @@ char * getPovotoStatus(char *st) {
     strnncat(st, buf, MAXSTATUSLEN);
   }
 
+  // Estado atual dos pinos digitais
+  snprintf(buf, 199,
+    "<br><b>Pins:</b> Chiller=%d LedChiller=%d Heater=%d LedHeater=%d TransferValve=%d ReliefValve=%d Buzzer=%d Led=%d<br>",
+    digitalRead(PINCHILLER), digitalRead(PINLEDCHILLER), digitalRead(PINHEATER), digitalRead(PINLEDHEATER),
+    digitalRead(PINTRANSFERVALVE), digitalRead(PINVENTINGLED), digitalRead(PINBUZZER), digitalRead(PINLED));
+  strnncat(st, buf, MAXSTATUSLEN);
+
   return st;
 }
 
@@ -114,7 +122,7 @@ static void handlePovotoEspNow(char type, const char *payload) {
     char *comma = strchr(buf, ',');
     if (!comma) return;
     *comma = '\0';
-    int   batchNum = (int)atof(buf);
+    int   batchNum = atoi(buf);
     float inocTemp = atof(comma + 1);
     BatchData.batchNumber = (uint16_t)batchNum;
     writeBatchDataToNIV();
@@ -241,7 +249,7 @@ void setup() {
   pinMode(PINHEATER, OUTPUT);
   pinMode(PINLEDHEATER, OUTPUT);
   pinMode(PINTRANSFERVALVE, OUTPUT);
-  pinMode(PINRELIEFVALVE, OUTPUT);
+  pinMode(PINVENTINGLED, OUTPUT);
   pinMode(PINBUZZER, OUTPUT);
   pinMode(PINLED,OUTPUT);
   pinMode(PINBTN, INPUT);
@@ -250,16 +258,20 @@ void setup() {
   digitalWrite(PINHEATER, LOW); 
   digitalWrite(PINLEDHEATER, LOW);  
   digitalWrite(PINTRANSFERVALVE, LOW);
-  digitalWrite(PINRELIEFVALVE, LOW);
+  digitalWrite(PINVENTINGLED, LOW);
   digitalWrite(PINBUZZER, LOW);
   digitalWrite(PINLED, LOW);
 
-  Serial.println("[BOOT CKPT] before mainScreen");
   mainScreen();
-  Serial.println("[BOOT CKPT] after mainScreen");
 
   DallasSetup(PINDALLAS);
   uniqueDallasThermometer(dallasTemperature);
+  delay(800); // aguarda 1a conversao do DS18B20 para diagnostico
+  if (dallasTemperature == NOTaTEMP || dallasTemperature == 85) {
+    Serial.println("[DALLAS] Termometro NAO detectado");
+  } else {
+    Serial.printf("[DALLAS] Termometro detectado. Temperatura inicial: %.2f C\n", dallasTemperature);
+  }
 
   GLogSetBuffer(datalogBuffer, sizeof(datalogBuffer));
 }
@@ -320,6 +332,18 @@ void loop() {
   if (resetDisplayRequested) {
     resetDisplayRequested = false;
     resetDisplayHardware();
+  }
+
+  { // buzzer do alarme: liga por 1s a cada acionamento de soundAlarm
+    static unsigned long lastAlarm = 0;
+    if (soundAlarm) {
+      lastAlarm = millis();
+      soundAlarm = false;
+      digitalWrite(PINBUZZER, millis() % 1000 < 250 ? HIGH : LOW);
+    } 
+    else if (millis() > lastAlarm + 1000) {
+      digitalWrite(PINBUZZER, LOW);
+    }
   }
 
   static unsigned long buttonPressStart = 0;

@@ -21,16 +21,16 @@
 #include "esp_heap_caps.h"
 #endif
 
-#define UI_PERF_LOG 1
+#define UI_PERF_LOG 0
 #define UI_TOUCH_RAW_LOG 0
-#define UI_TOUCH_POINT_LOG 1
+#define UI_TOUCH_POINT_LOG 0
 #ifndef UI_BMP_USE_PSRAM
 #define UI_BMP_USE_PSRAM 0
 #endif
 #ifndef UI_BMP_PROBE_RUNTIME
 #define UI_BMP_PROBE_RUNTIME 0
 #endif
-#define UI_BMP_PSRAM_DIAG 1
+#define UI_BMP_PSRAM_DIAG 0
 #ifndef UI_BMP_CACHE_PSRAM
 #define UI_BMP_CACHE_PSRAM 1
 #endif
@@ -1272,7 +1272,7 @@ static void doBeginConditioning() {
   SetPointData.mode = MODE_CONDITIONING;
   writeSetPointDataToNIV();
   resetChillHeatCycle();
-  Serial.println(">>> Touch: mode changed to CONDITIONING <<<");
+  //Serial.println(">>> Touch: mode changed to CONDITIONING <<<");
   mainScreen();
 }
 
@@ -1322,7 +1322,7 @@ void processTouch() {
     }
     lastClick = millis();
     touchFlag = false;
-    Serial.println(">>> TOUCH IRQ DETECTED <<<");
+    //Serial.println(">>> TOUCH IRQ DETECTED <<<");
 
     if (!touchControllerReady) {
       return;
@@ -1397,7 +1397,7 @@ void processTouch() {
 
         // Zona de toque: número do batch (x=50..130, y=5..45) → abre batch info screen
         if (touches == 1 && x >= 45 && x <= 160 && y >= 0 && y <= 50) {
-          Serial.println(">>> TOUCH: abrindo batch info screen <<<");
+          //Serial.println(">>> TOUCH: abrindo batch info screen <<<");
           if (UI_PERF_LOG) Serial.printf("[TOUCH PERF] batchInfo trigger=%lums\n", (unsigned long)(millis() - touchProcessStart));
           showBatchInfoScreen();
           return;
@@ -1405,7 +1405,7 @@ void processTouch() {
 
         // Zona de toque: lado esquerdo da tela → abre UI de tarefas
         if (touches == 1 && x < 80) {
-          Serial.println(">>> TOUCH: abrindo UI de tarefas <<<");
+          //Serial.println(">>> TOUCH: abrindo UI de tarefas <<<");
           if (UI_PERF_LOG) Serial.printf("[TOUCH PERF] taskUI trigger=%lums\n", (unsigned long)(millis() - touchProcessStart));
           if (taskWindowType != 0) {
             showActiveTaskScreen();
@@ -1429,14 +1429,14 @@ void processTouch() {
           digitalWrite(TFT_RST,LOW);
           delay(100);
           digitalWrite(TFT_RST,HIGH);
-          Serial.println(">>> RESET DISPLAY <<<");
+          //Serial.println(">>> RESET DISPLAY <<<");
           delay(100);
           tft.init();
         }
 
         // Zona de toque: label "Target" da temperatura (~screen x=270..430, y=88..122)
         if (touches == 1 && x >= 260 && x <= 430 && y >= 85 && y <= 125) {
-          Serial.println(">>> TOUCH: abrindo teclado de temperatura target <<<");
+          //Serial.println(">>> TOUCH: abrindo teclado de temperatura target <<<");
           if (UI_PERF_LOG) Serial.printf("[TOUCH PERF] tempKeyboard trigger=%lums\n", (unsigned long)(millis() - touchProcessStart));
           openTempKeyboard();
           return;
@@ -1444,7 +1444,7 @@ void processTouch() {
 
         // Zona de toque: label "Slow target" da temperatura (~screen x=270..430, y=126..165)
         if (touches == 1 && x >= 260 && x <= 430 && y >= 126 && y <= 165) {
-          Serial.println(">>> TOUCH: abrindo teclado de slow temperature target <<<");
+          //Serial.println(">>> TOUCH: abrindo teclado de slow temperature target <<<");
           if (UI_PERF_LOG) Serial.printf("[TOUCH PERF] slowTempKeyboard trigger=%lums\n", (unsigned long)(millis() - touchProcessStart));
           openSlowTempKeyboard();
           return;
@@ -1452,7 +1452,7 @@ void processTouch() {
 
         // Zona de toque: label "Target" da pressão (~screen x=270..430, y=230..262)
         if (touches == 1 && x >= 260 && x <= 430 && y >= 230 && y <= 262) {
-          Serial.println(">>> TOUCH: abrindo teclado de pressao target <<<");
+          //Serial.println(">>> TOUCH: abrindo teclado de pressao target <<<");
           if (UI_PERF_LOG) Serial.printf("[TOUCH PERF] pressureKeyboard trigger=%lums\n", (unsigned long)(millis() - touchProcessStart));
           openPressureKeyboard();
           return;

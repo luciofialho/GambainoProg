@@ -88,7 +88,6 @@ struct ControlData_t {
   bool chillerSwitch;
   bool heaterSwitch;
   bool transferValve;
-  bool reliefValve;
   byte chillerOverride;
   byte heaterOverride;
   byte transferOverride;

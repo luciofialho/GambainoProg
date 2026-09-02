@@ -729,7 +729,7 @@ void ProcVar::WriteI2Cs() {
             data = ProcVar::I2CGetClusterValue(j);
 
             int err;
-            if (Wire.requestFrom(int(cluster),1,true) == 1) {
+            if (Wire.requestFrom(uint8_t(cluster),-1,true) == 1) {
               byte b = Wire.read();
               if (b != data) { // then try again to confirm if it was not a read error
                 delay(5); 

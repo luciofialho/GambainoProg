@@ -245,7 +245,7 @@ void topUpAndHydrationControl(byte procedureToStart=99) { // 1 = yeast ydration,
   lastTimeInStatusSeen = TimeInStatus;
 
   switch (pass) {
-    case 0: 
+    case 0: // start todo
       if (procedure==1) 
         Todo_PrepareYeastHydrationWater.start();
       else
@@ -253,7 +253,7 @@ void topUpAndHydrationControl(byte procedureToStart=99) { // 1 = yeast ydration,
       pass++;
       break;
 
-    case 1: {
+    case 1: { // wait for todo 
         bool go;
         if (procedure==1) {
           if (Status < SPARGE)
@@ -267,15 +267,14 @@ void topUpAndHydrationControl(byte procedureToStart=99) { // 1 = yeast ydration,
           else
             go = Todo_PrepareTopUpPot.neededTodoIsReady();
         }
-        if (go) {
-          TopUpHeater = ON;  
+        if (go) 
           pass ++;
-        }
       }
       break;
 
-    case 2:
-      if (TopUpWaterTemp >= WATERBOILTEMP-3) {
+    case 2: // heating until reach boiling termperature
+      TopUpHeater = ON;
+      if (TopUpWaterTemp >= WATERBOILTEMP-TOPUPWATERTEMPBOILOFFSET) {
         boilEnd = TimeInStatus + 20*MINUTES;
         pass++;
       }
@@ -287,20 +286,30 @@ void topUpAndHydrationControl(byte procedureToStart=99) { // 1 = yeast ydration,
       }
       break;
 
-    case 3:
+    case 3: // boiling
       if (TimeInStatus >= boilEnd) {
         TopUpHeater = OFF;
-        procedure = 0;
+        if (procedure == 1)
+          procedure = 2;
+        else
+          procedure = 0;
         boilEnd = 0;
         pass = 0;
       }
       else {
+        if (!TopUpHeater.asBoolean() && TopUpWaterTemp < WATERBOILTEMP-TOPUPWATERTEMPBOILOFFSET) {
+          TopUpHeater = ON;
+        }
+        else if (TopUpHeater.asBoolean() && TopUpWaterTemp >= WATERBOILTEMP) {
+          TopUpHeater = OFF;
+        }
+
         if (procedure==1)
           setCountDownMessage("Boiling yeast hydration water ends in %s:%s", (boilEnd - TimeInStatus));
         else
           setCountDownMessage("Boiling top-up water ends in %s:%s", (boilEnd - TimeInStatus));
       }
-      break;
+      break;    
   }
 }
 
@@ -760,13 +769,10 @@ void MainStateMachine() {
     break;
 
     case SPARGE: {
-        static float yeastHydrationBoilingStart = 0;
         if (EnteringStatus) {
           Todo_RunOffComplete.start();
           HLTPump.setLatency(30 * SECONDS); /**** Constante *****/
           SubStatus = 0;
-          yeastHydrationBoilingStart = 0;
-          TopUpHeater = ON;
         }
         else {
           if (BKLevel==2 && SubStatus==0) {  // make sure pump runs at least once before whirlpool intake is under wort to avoid bubbles
@@ -839,34 +845,6 @@ void MainStateMachine() {
           if (BKTargetTemp != tt)
             BKTargetTemp = tt;
         }
-
-        // top up water control
-        if (Status == BOIL)
-          switch (int(SubStatus)) {
-            case 0: 
-              if (Todo_PrepareTopUpPot.neededTodoIsReady()) {
-                setSubStatus(1,"Heating top up water");
-                TopUpHeater = ON;
-              }
-              break;
-            case 1:
-              if (!TopUpHeater.asBoolean())
-                TopUpHeater = ON;
-
-              if (TopUpWaterTemp >= WATERBOILTEMP-3) {
-                stopTimer = TimeInStatus+15*MINUTES;
-                setSubStatus(2,"Boiling top up water");
-              }
-              break;
-            case 2:
-              if (TimeInStatus > stopTimer) {
-                setSubStatus(3,"");
-                TopUpHeater = OFF;
-              }
-              else
-                setCountDownMessage("Top up water boiling ends in %s:%s", stopTimer-TimeInStatus);
-              break;
-          }
 
         if ((GoToNextStatus = (TimeInStatus >= 0))) {
           BKTargetTemp = NOHEAT;
@@ -1846,6 +1824,7 @@ void MainStateMachine() {
               Buzzer = ON;   
             if (Todo_PositionKeg.TodoIsReady()) {
               forceNextStatus = OnGoingProgram==PGMKEGCLEAN ? KEGDETERGSPRAY : KEGRINSE;
+              Buzzer = OFF;
               Todo_NoMoreKegs.dismiss();
             }
             else if (Todo_NoMoreKegs.TodoIsReady()) {

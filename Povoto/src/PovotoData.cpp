@@ -84,7 +84,6 @@ ControlData_t ControlData = {
   .chillerSwitch = false,
   .heaterSwitch = false,
   .transferValve = false,
-  .reliefValve = false,
   .chillerOverride = 0,
   .heaterOverride = 0,
   .transferOverride = 0,

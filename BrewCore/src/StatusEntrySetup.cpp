@@ -261,7 +261,7 @@ void statusEntrySetup() {
             MLTPump          = OFF;
 
           HLTTargetTemp      = RcpMashTemp + HeatAdditiveCorrection;        
-          HLTTargetVolume    = BKMAXVOLUME - (rampInfusionVolume + infusionVolume) + RcpGrainWeight + HLTDEADVOLUME + MLTVOLUMELTOFALSEBOTTOM + 20; // *2 estimates constante  //HLTVolume + (HLTMAXVOLUME-HLTVolume)/1.027; /*** Constante: dilatação da água que vai entrar ***/
+          HLTTargetVolume    = HLTMAXVOLUME - (rampInfusionVolume + infusionVolume) + RcpGrainWeight + HLTDEADVOLUME + MLTVOLUMELTOFALSEBOTTOM + 20; // *2 estimates constante  //HLTVolume + (HLTMAXVOLUME-HLTVolume)/1.027; /*** Constante: dilatação da água que vai entrar ***/
                                if (HLTTargetVolume>HLTMAXVOLUME) HLTTargetVolume = HLTMAXVOLUME;
           HLTPriority        = 'T';
           BKTargetTemp       = NOHEAT;
@@ -280,7 +280,7 @@ void statusEntrySetup() {
           setupLine(LINEBREW);                
           CirculationMode    = CIRCHEAT;
           //HLTTargetTemp   
-          HLTTargetVolume    = BKMAXVOLUME - (rampInfusionVolume + infusionVolume) + RcpGrainWeight + HLTDEADVOLUME + MLTVOLUMELTOFALSEBOTTOM + 20; // *2 estimates constante  //HLTVolume + (HLTMAXVOLUME-HLTVolume)/1.027; /*** Constante: dilatação da água que vai entrar ***/
+          HLTTargetVolume    = HLTMAXVOLUME - (rampInfusionVolume + infusionVolume) + RcpGrainWeight + HLTDEADVOLUME + MLTVOLUMELTOFALSEBOTTOM + 20; // *2 estimates constante  //HLTVolume + (HLTMAXVOLUME-HLTVolume)/1.027; /*** Constante: dilatação da água que vai entrar ***/
                                if (HLTTargetVolume>HLTMAXVOLUME) HLTTargetVolume = HLTMAXVOLUME;
           HLTPriority        = 'T';
           BKTargetTemp       = NOHEAT;

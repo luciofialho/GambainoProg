@@ -4,6 +4,7 @@
 #include "PovotoTasks.h"
 #include "PovotoData.h"
 #include "PressureControl.h"
+#include "IOTK.h"
 
 byte taskWindowType = 0;
 unsigned long taskWindowEndTime = 0;
@@ -15,9 +16,15 @@ static void startTask(byte type) {
   taskWindowEndTime = millis() + (unsigned long)TASK_TIMEOUT_MIN * 60000UL;
 }
 
-static void endTask() {
-  taskWindowEndTime = millis() + (unsigned long)CalibrationData.nucleationWindow * 60000UL;
+static void endTask(unsigned long restWindowMinutes) {
+  if (restWindowMinutes)
+    taskWindowEndTime = millis() + restWindowMinutes * 60000UL;
+  else {
+    taskWindowType = 0;
+    taskWindowEndTime = 0;
+  }
 }
+
 
 void startDumpTask() {
   dumpStartPressureBar = ControlData.pressure;
@@ -31,34 +38,34 @@ void startDynamicHoppingTask() { startTask(5); }
 
 void endDumpTask() {
   applyDumpWindowHeadspaceRecalc(dumpStartHeadspaceL, dumpStartPressureBar, ControlData.pressure);
-  taskWindowType = 0;
-  taskWindowEndTime = 0;
+  endTask(0);
 }
 
 void endGasTask() {
-  endTask();
+  endTask(CalibrationData.nucleationWindow);
 }
 
 void endLiquidTask() {
-  endTask();
+  endTask(CalibrationData.nucleationWindow);
 }
 
 void endDryHoppingTask() {
-  endTask();
+  endTask(CalibrationData.nucleationWindow);
 }
 
 void endDynamicHoppingTask() {
-  endTask();
+  endTask(CalibrationData.nucleationWindow);
 }
 
 void checkTaskExpiration() {
-  if (taskWindowType != 0 && taskWindowEndTime != 0 && millis() > taskWindowEndTime) {
-    if (taskWindowType == 1) {
-      endDumpTask();
-    }
-    else {
-      taskWindowType = 0;
-      taskWindowEndTime = 0;
+  if (taskWindowType != 0 && taskWindowEndTime != 0 && MILLISDIFF(taskWindowEndTime,0)) {
+    switch (taskWindowType) {
+      case 1: endDumpTask(); break;
+      case 2: endGasTask(); break;
+      case 3: endLiquidTask(); break;
+      case 4: endDryHoppingTask(); break;
+      case 5: endDynamicHoppingTask(); break;
+      default: taskWindowType = 0; taskWindowEndTime = 0; break;
     }
   }
 }

@@ -13,10 +13,8 @@
 
 
 #define DEBUGACCELERATION (debugging ? 20L : 1L)
-#define EQUALIZATIONTIME (1000 / DEBUGACCELERATION)
-#define TRANSFERTIME (10000 / DEBUGACCELERATION) 
+#define TRANSFERTIME (8000 / DEBUGACCELERATION) 
 #define RELIEFTIME (8000 / DEBUGACCELERATION)
-#define SOLENOIDCLOSINGTIME (1000 / DEBUGACCELERATION)
 
 #define PRESSURE_MEDIAN_WINDOW 36
 #define CURRENT_MEDIAN_MIN_SAMPLE_MS 25
@@ -57,12 +55,8 @@ float dissolvedCO2Mols = 0.0f;
 float headSpaceCO2Mols = 0.0f;
 float sgPointGenerationTime = 0.0f;
 
-static unsigned long int timeToEquilizeExpansionTank = 0;
 static unsigned long int timeToStartExpansion     = 0;
 static unsigned long int timeToFinishExpansion    = 0;
-static unsigned long int timeToStartVenting       = 0;
-static unsigned long int timeToFinishVenting      = 0;
-static unsigned long int timeToFinishRelief     = 0;
 static unsigned long int timeToRegisterPressure = 0; // after a relief event
 static unsigned long int noPressureReadUntil = 0;
 static float lastPressure = 0;
@@ -531,7 +525,7 @@ float convertCurrentToPressure(float current) {
       }
     }
   }
-  else {
+  else { // linear interpolation
     const float denom = CalibrationData.pressure1Current - CalibrationData.pressure0Current;
     if (fabsf(denom) > 0.000001f) {
       float ratio = (current - CalibrationData.pressure0Current) / denom;
@@ -544,6 +538,10 @@ float convertCurrentToPressure(float current) {
   }
 
   return pressure;
+}
+
+bool inTheMiddleOfRelief() {
+  return (timeToStartExpansion || timeToFinishExpansion || timeToRegisterPressure);
 }
 
 void readPressure() {
@@ -573,7 +571,7 @@ void readPressure() {
     }
     else { //is debugging
       static unsigned long lastPressureIncrease = 0;
-      if (sgPointGenerationTime != 0 && timeToFinishVenting == 0 && beerSG > 1.010f) {
+      if (sgPointGenerationTime != 0 && !inTheMiddleOfRelief() && beerSG > 1.010f) {
         if (MILLISDIFF(lastPressureIncrease,1000*sgPointGenerationTime))  {
           lastPressureIncrease = millis();
           ControlData.pressure += 0.1f;
@@ -786,28 +784,18 @@ void processPressure(bool afterRelief) {
 }
 
 bool processReliefCycle() {
-  if (timeToFinishRelief || timeToRegisterPressure) {
-    if (timeToEquilizeExpansionTank) {
-      if (MILLISDIFF(timeToEquilizeExpansionTank, 0)) {
-        digitalWrite(PINTRANSFERVALVE, LOW);
-        digitalWrite(PINRELIEFVALVE, HIGH);
-        ControlData.transferValve = false;
-        ControlData.reliefValve = true;
-        timeToEquilizeExpansionTank = 0;
-        timeToStartExpansion += millis();
-      }
+  if (inTheMiddleOfRelief()) {
+    if (timeToStartExpansion) {
+      if (!MILLISDIFF(timeToStartExpansion, 0)) {
+        digitalWrite(PINVENTINGLED, HIGH); // just to control led indicating delay to finish last cycle relief
+        ;Serial.printf("Cor: vermelha (2) %lu\n", millis() / 1000);
     }
-    else if (timeToStartExpansion) {
-      if (MILLISDIFF(timeToStartExpansion, 0)) {
+      else {
         //;Serial.printf("[PRESSURE] %lu / %lu: Abrindo transfer valve. Pressure=%.2f bar\n", millis(), timeToStartExpansion, ControlData.pressure);
         lastPressure = ControlData.pressure;
         blindHighPressure = ControlData.pressure;
         blindHighPressureMillis = millis();
-        if (ControlData.reliefValve) {
-          digitalWrite(PINRELIEFVALVE, LOW);
-          ControlData.reliefValve = false;
-          delay(200);
-        }
+        digitalWrite(PINVENTINGLED, LOW);
         digitalWrite(PINTRANSFERVALVE, HIGH);
         markSolenoidToggle();
         ControlData.transferValve = true;
@@ -819,51 +807,31 @@ bool processReliefCycle() {
       if (MILLISDIFF(timeToFinishExpansion, 0)) {
         //;Serial.printf("[PRESSURE] %lu / %lu: Fechando transfer valve. Pressure=%.2f bar\n", millis(), timeToFinishExpansion, ControlData.pressure);
         digitalWrite(PINTRANSFERVALVE, LOW);
+        digitalWrite(PINVENTINGLED, HIGH);
        markSolenoidToggle();
         ControlData.transferValve = false;
-        timeToStartVenting    += millis();
         resetCurrentMedianFilter();
         noPressureReadUntil = millis() + TRANSFER_CLOSE_PRESSURE_BLOCK_MS;
-        timeToRegisterPressure = noPressureReadUntil + 1000; // registra após o período de bloqueio pós-fechamento da transfer
+        timeToRegisterPressure = noPressureReadUntil; // registra após o período de bloqueio pós-fechamento da transfer
         timeToFinishExpansion = 0;
       }
     }
-    else if (timeToStartVenting) {
-      if(MILLISDIFF(timeToStartVenting, 0)) {
-        //;Serial.printf("[PRESSURE] %lu / %lu: Abrindo relief valve. Pressure=%.2f bar\n", millis(), timeToStartVenting, ControlData.pressure);
-        digitalWrite(PINRELIEFVALVE, HIGH);
-        markSolenoidToggle();
-        ControlData.reliefValve = true;
-        timeToFinishVenting += millis();
-        timeToStartVenting = 0;
-      }
-    }
-
-    else if (timeToFinishVenting) {
-      if (MILLISDIFF(timeToFinishVenting, 0)) {
-        //;Serial.printf("[PRESSURE] %lu / %lu: Fechando relief valve. Pressure=%.2f bar\n", millis(), timeToFinishVenting, ControlData.pressure);
-        digitalWrite(PINRELIEFVALVE, LOW);
-        markSolenoidToggle();
-        ControlData.reliefValve = false;
-        timeToFinishVenting = 0;
-        timeToFinishRelief += millis();
-      }
-    }
-    else {
+    /*else {
       digitalWrite(PINTRANSFERVALVE, LOW);
-      digitalWrite(PINRELIEFVALVE, LOW);
+      digitalWrite(PINVENTINGLED, LOW);
       ControlData.transferValve = false;  
-      ControlData.reliefValve = false;
-      if (timeToFinishRelief && MILLISDIFF(timeToFinishRelief, 0)) {
-        timeToFinishRelief = 0;
-      }
-    }
+        ;Serial.println("Cor: apagada2");
+
+    }*/
 
     if (timeToRegisterPressure) {
       if (MILLISDIFF(timeToRegisterPressure, 0)) {
         //;Serial.printf("[PRESSURE] %lu / %lu: Registrando pressão. Pressure=%.2f bar\n", millis(), timeToRegisterPressure, ControlData.pressure);
         timeToRegisterPressure = 0;
         processPressure(true);
+        digitalWrite(PINVENTINGLED, LOW);        
+        digitalWrite(PINTRANSFERVALVE, LOW);
+
       }
     }    
     
@@ -873,9 +841,10 @@ bool processReliefCycle() {
     return false;
 }
 
+
 void pressureRelief(bool fromVolumeDetermination) {
   static unsigned long lastReliefEvent = 0;
-  if (timeToFinishRelief) { // if we're still in the middle of a relief, ignore new relief requests to avoid overlapping and potential hardware issues
+  if (inTheMiddleOfRelief()) { // if we're still in the middle of a relief, ignore new relief requests to avoid overlapping and potential hardware issues
     return;
   }
 
@@ -933,36 +902,30 @@ void pressureRelief(bool fromVolumeDetermination) {
   const bool isBrewingTransfer = (SetPointData.mode == MODE_BREWING_TRANSFERING);
   const unsigned long reliefDurationDivisor = isBrewingTransfer ? 2UL : 1UL;
 
-  const unsigned long scaledEqualizationTime = (unsigned long)EQUALIZATIONTIME;
   const unsigned long scaledTransferTime = (unsigned long)TRANSFERTIME / reliefDurationDivisor;
-  const unsigned long scaledSolenoidClosingTime = isBrewingTransfer ? 0: (unsigned long)SOLENOIDCLOSINGTIME;
   const unsigned long scaledReliefTime = (unsigned long)RELIEFTIME / reliefDurationDivisor;
   const unsigned long scaledExtraMs = isBrewingTransfer ? 0: extraMs;
   const unsigned long scaledFinishMs = isBrewingTransfer ? 0 : 1000UL;
   
   
-  if (MILLISDIFF(lastReliefEvent,5*60L*1000L)) {
-    timeToEquilizeExpansionTank = millis() + holdPressureDueToTemperatureRelays();;
-    timeToStartExpansion     = scaledEqualizationTime;
-  }
-  else {
-    timeToEquilizeExpansionTank = 0;
+  if (MILLISDIFF(lastReliefEvent,TRANSFERTIME + RELIEFTIME)) {
     timeToStartExpansion     = millis() + holdPressureDueToTemperatureRelays();
   }
+  else {
+    timeToStartExpansion     = lastReliefEvent + TRANSFERTIME + RELIEFTIME;
+    if (timeToStartExpansion < millis() + holdPressureDueToTemperatureRelays()) {
+      timeToStartExpansion = millis() + holdPressureDueToTemperatureRelays();
+    }
+  }
   timeToFinishExpansion    = scaledTransferTime + scaledExtraMs;
-  timeToStartVenting       = scaledSolenoidClosingTime;
-  timeToFinishVenting      = scaledReliefTime + scaledExtraMs;
-  // processPressureRelays uses timeToFinishRelief as the cycle-active flag.
-  // In MODE_OFF (volume determination), scaledFinishMs is 0, so keep a non-zero flag.
-  timeToFinishRelief     = (scaledFinishMs > 0) ? scaledFinishMs : 1UL;
   timeToRegisterPressure = 0; // garante que estado anterior não vaza para novo ciclo
 
 
   lastReliefEvent = millis()
 
 
-  ;Serial.printf("[PRESSURE] Relief requested: pressure=%.2f bar, extraMs=%lu, transferOpen=%lu, transferClose=%lu, reliefOpen=%lu, reliefClose=%lu\n", 
-                ControlData.pressure, extraMs, timeToStartExpansion, timeToFinishExpansion, timeToStartVenting, timeToFinishVenting);
+  ;Serial.printf("[PRESSURE] Relief requested: pressure=%.2f bar, extraMs=%lu, transferOpen=%lu, transferClose=%lu\n", 
+                ControlData.pressure, extraMs, timeToStartExpansion, timeToFinishExpansion );
 
   // NÃO chamar processReliefCycle() aqui:
   // pressureRelief() é chamado do async web task (core 0) e processReliefCycle()
@@ -970,7 +933,7 @@ void pressureRelief(bool fromVolumeDetermination) {
   // Chamar aqui cria uma race condition onde ambos executam stage 1 simultaneamente
   // e o += millis() de timeToFinishExpansion é aplicado duas vezes,
   // resultando em timeToFinishExpansion ≈ 2*millis()+5000 → transfer fica aberto por ~16min.
-  // O main loop chamará processReliefCycle() dentro de milissegundos.
+
 }
 
 void handlePressureHistoryCSV(AsyncWebServerRequest *request) {
@@ -1230,7 +1193,7 @@ bool startVolumeDetermination(char *reason, size_t reasonSize) {
     return false;
   }
 
-  if (volumeDeterminationActive || timeToFinishRelief) {
+  if (volumeDeterminationActive || inTheMiddleOfRelief()) {
     if (reason && reasonSize > 0) {
       snprintf(reason, reasonSize, "Process in progress");
     }
@@ -1330,7 +1293,7 @@ void pressureControl() {
 
   if (SetPointData.mode != MODE_OFF &&
       !volumeDeterminationActive &&
-      !timeToFinishRelief &&
+      !inTheMiddleOfRelief() &&
       pressureReliefHistory) {
     releasePressureReliefHistory();
   }
@@ -1356,10 +1319,11 @@ void pressureControl() {
     }
   } else if (SetPointData.setPointPressure > 0.0f && 
              ControlData.pressure > (SetPointData.setPointPressure / sqrt(pressureDropFactor)) &&
-             (taskWindowType == 0 || !MILLISDIFF(taskWindowEndTime, 0))) {
+             (taskWindowType == 0 || MILLISDIFF(taskWindowEndTime, 0))) {
     pressureRelief(false);
   }
-  if (ControlData.pressure > CalibrationData.maximumPressure) {
+  else if (ControlData.pressure > CalibrationData.maximumPressure) {
+    soundAlarm = true;
     pressureRelief(false);
   }
 
@@ -1440,7 +1404,7 @@ char *getPressureControlStatus(char *st) {
   // --- Diagnóstico de relés ---
   unsigned long now = millis();
   strnncat(st, "<br>--- Relay cycle ---<br>", 2048);
-  if (!timeToFinishRelief) {
+  if (!inTheMiddleOfRelief()) {
     strnncat(st, "Cycle: IDLE<br>", 2048);
   } else {
     strnncat(st, "Cycle: ACTIVE<br>", 2048);
@@ -1450,27 +1414,15 @@ char *getPressureControlStatus(char *st) {
     } else if (timeToFinishExpansion) {
       snprintf(tmp, sizeof(tmp), "Stage: transfer OPEN - closes in %ld ms<br>",
                (long)(timeToFinishExpansion - now));
-    } else if (timeToStartVenting) {
-      snprintf(tmp, sizeof(tmp), "Stage: waiting to open relief (in %ld ms)<br>",
-               (long)(timeToStartVenting - now));
     } else if (timeToRegisterPressure) {
-      snprintf(tmp, sizeof(tmp), "Stage: relief OPEN - measuring pressure in %ld ms<br>",
+      snprintf(tmp, sizeof(tmp), "Stage: transfer CLOSED - measuring pressure in %ld ms<br>",
                (long)(timeToRegisterPressure - now));
-    } else if (timeToFinishVenting) {
-      snprintf(tmp, sizeof(tmp), "Stage: relief OPEN - closes in %ld ms<br>",
-               (long)(timeToFinishVenting - now));
-    } else {
-      snprintf(tmp, sizeof(tmp), "Stage: finishing (cooldown %ld ms)<br>",
-               (long)(timeToFinishRelief - now));
     }
     strnncat(st, tmp, 2048);
     snprintf(tmp, sizeof(tmp),
-             "timeToStartExpansion=%lu timeToFinishExpansion=%lu<br>"
-             "timeToStartVenting=%lu timeToFinishVenting=%lu<br>"
-             "timeToFinishRelief=%lu timeToRegister=%lu<br>",
+             "timeToStartExpansion=%lu<br>timeToFinishExpansion=%lu<br>timeToRegisterPressure=%lu<br>",
              timeToStartExpansion, timeToFinishExpansion,
-             timeToStartVenting, timeToFinishVenting,
-             timeToFinishRelief, timeToRegisterPressure);
+             timeToRegisterPressure);
     strnncat(st, tmp, 2048);
   }
 

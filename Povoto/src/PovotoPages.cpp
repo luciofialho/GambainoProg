@@ -1333,18 +1333,6 @@ void handleControlDataPage(AsyncWebServerRequest *request) {
   strncat(html, buffer, remaining);
   
   remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='r'><label>Relief:</label><select id='g' name='reliefOverride' onchange='u(\"g\",\"h\")'>", remaining);
-  sprintf(buffer, "<option value='0'%s>Auto</option><option value='1'%s>ON</option><option value='2'%s>OFF</option></select>",
-          ControlData.reliefOverride == 0 ? " selected" : "",
-          ControlData.reliefOverride == 1 ? " selected" : "",
-          ControlData.reliefOverride == 2 ? " selected" : "");
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, buffer, remaining);
-  sprintf(buffer, "<input type='checkbox' id='h'%s readonly onclick='return false'></div>", ControlData.reliefValve ? " checked" : "");
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, buffer, remaining);
-
-  remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<button type='submit'>Save</button>"
                "<button type='button' onclick='window.location=\"/\"'>Back</button>"
                "</form>", remaining);
