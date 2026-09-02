@@ -214,7 +214,7 @@ void doDataLog() {
     GLogAddData(ControlData.pressure, 3);
     GLogAddData(SetPointData.setPointPressure, 3);
     GLogAddData(getTemperatureModeLabel());
-    GLogAddData(beerVolume, 1);
+    GLogAddData(beerVolume, 3);
     GLogAddData(beerSG,5);
     GLogAddData(beerPlato,3);
     GLogAddData(beerABV,2);
