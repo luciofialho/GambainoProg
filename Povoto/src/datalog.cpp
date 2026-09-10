@@ -201,6 +201,13 @@ void doDataLog() {
     GLogAddData("ChillTime");
     GLogAddData("HeatTime");
     GLogAddData("taskWindowType");
+    GLogAddData("pressureOnReliefExtrap");
+    GLogAddData("PressureAfterRelief");
+    GLogAddData("PressureAfterReliefMillis");
+    GLogAddData("AdjustedPressureAfterRelief");
+    GLogAddData("PressureReachedTarget");
+    GLogAddData("PressureReachedTargetMillis");
+    GLogAddData("PressureDropFactor");
     GLogAddData("Millis");
     GLogSend();
     headerWritten = true;
@@ -216,7 +223,7 @@ void doDataLog() {
     GLogAddData(getTemperatureModeLabel());
     GLogAddData(beerVolume, 3);
     GLogAddData(beerSG,5);
-    GLogAddData(beerPlato,3);
+    GLogAddData(SGToApparentPlato(beerSG),3);
     GLogAddData(beerABV,2);
     GLogAddData(CountersData.totalReliefCount,0);
     GLogAddData(CountersData.totalMolsEjected,3);
@@ -228,6 +235,13 @@ void doDataLog() {
     GLogAddData(CountersData.totalChillTime/3600.,2);
     GLogAddData(CountersData.totalHeatTime /3600.,2);
     GLogAddData(taskWindowTypeToText(taskWindowType));
+    GLogAddData(pressureOnReliefExtrap,3);
+    GLogAddData(pressureAfterRelief,3);
+    GLogAddData(pressureAfterReliefMillis);
+    GLogAddData(adjustedPressureAfterRelief,3);
+    GLogAddData(pressureReachedTarget,3);
+    GLogAddData(pressureReachedTargetMillis);
+    GLogAddData(pressureDropFactor,5);
     GLogAddData(millis());
     GLogSend();
   }

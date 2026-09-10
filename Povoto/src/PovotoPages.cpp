@@ -62,7 +62,7 @@ void handleMainMenu(AsyncWebServerRequest *request) {
   }
   html += "<div class='status-box'>";
   html += "<div class='status-item'><strong>Temperature:</strong> " + String(ControlData.temperature, 1) + " °C</div>";
-  html += "<div class='status-item'><strong>Pressure:</strong> " + String(ControlData.pressure, 1) + " bar</div>";
+  html += "<div class='status-item'><strong>Pressure:</strong> " + String(ControlData.pressure, 2) + " bar</div>";
   html += "<div class='status-item'><strong>Volume:</strong> " + String(beerVolume, 1) + " L</div>";
   html += "<div class='status-item'><strong>SG:</strong> " + String(beerSG, 3) + String(reliefsPerHourText) + "</div>";
   html += "<div class='status-item'><strong>Uptime:</strong> " + uptimeStr + "</div>";
@@ -345,6 +345,15 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
   strncat(html, "</div>", remaining);
 
   remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<div class='form-group'>"
+               "<label for='FMTEffectiveVentingExponent'>Effective Venting Exponent:</label>", remaining);
+  sprintf(buffer, "<input type='number' id='FMTEffectiveVentingExponent' name='FMTEffectiveVentingExponent' value='%.3f' step='0.001'>", FMTData.FMTEffectiveVentingExponent);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, buffer, remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "</div>", remaining);
+
+  remaining = BUFFER_SIZE - strlen(html) - 1;
     strncat(html, "<button type='submit'>Save</button> "
                  "<button type='button' class='btn-secondary' onclick='window.location=\"/\"'>Cancel</button>"
                  "</form>"
@@ -402,6 +411,9 @@ void handleFMTDataUpdate(AsyncWebServerRequest *request) {
     int pin = request->getParam("FMTKeypadPin", true)->value().toInt();
     if (pin >= 0 && pin <= 9999)
       FMTData.FMTKeypadPin = pin;
+  }
+  if (request->hasParam("FMTEffectiveVentingExponent", true)) {
+    FMTData.FMTEffectiveVentingExponent = request->getParam("FMTEffectiveVentingExponent", true)->value().toFloat();
   }
   writeFMTDataToNIV();
   updatePatmFromFMTAltitude();
@@ -940,14 +952,6 @@ void handleCountersDataPage(AsyncWebServerRequest *request) {
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='form-group'><label for='derivedBeerSG'>Beer SG:</label>", remaining);
   snprintf(buffer, sizeof(buffer), "<input type='number' id='derivedBeerSG' value='%.4f' step='0.0001' readonly>", beerSG);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, buffer, remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div>", remaining);
-
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='form-group'><label for='derivedBeerPlato'>Beer Plato:</label>", remaining);
-  snprintf(buffer, sizeof(buffer), "<input type='number' id='derivedBeerPlato' value='%.3f' step='0.001' readonly>", beerPlato);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;

@@ -300,7 +300,7 @@ void topUpAndHydrationControl(byte procedureToStart=99) { // 1 = yeast ydration,
         if (!TopUpHeater.asBoolean() && TopUpWaterTemp < WATERBOILTEMP-TOPUPWATERTEMPBOILOFFSET) {
           TopUpHeater = ON;
         }
-        else if (TopUpHeater.asBoolean() && TopUpWaterTemp >= WATERBOILTEMP) {
+        else if (TopUpHeater.asBoolean() && TopUpWaterTemp >= WATERBOILTEMP-1) {  
           TopUpHeater = OFF;
         }
 

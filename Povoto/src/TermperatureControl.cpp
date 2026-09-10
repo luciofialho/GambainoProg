@@ -185,14 +185,17 @@ void temperatureControl() {
 
   newMode = mode;
 
-  if (ControlData.temperature == NOTaTEMP || SetPointData.setPointTemp == NOTaTEMP) 
+  if (ControlData.temperature == NOTaTEMP || SetPointData.setPointTemp == NOTaTEMP) {
     newMode = FMTIDLE;
+    interruptedCooling = false;
+    interruptedHeating = false;
+  }
   else {
     float minTarget = SetPointData.setPointTemp;
     float maxTarget = SetPointData.setPointTemp + FMTOFFSET;
     if ((mode==FMTCHILL) && millis()-lastModeChange > 3*60000L && ControlData.temperature > 8) /*** constantes ****/
       minTarget += 0.1; // reduce histeresis 
-    if (ControlData.temperature < 4) {
+    if (ControlData.temperature < 6) {
       minTarget -= FMTOFFSET; 
       //maxTarget += FMTOFFSET;
     }
@@ -319,11 +322,15 @@ void temperatureControl() {
       digitalWrite(PINLEDCHILLER, HIGH);
     else if (interruptedCooling)
       digitalWrite(PINLEDCHILLER, (millis() % 500) < 50);
+    else
+      digitalWrite(PINLEDCHILLER, LOW);
 
     if (heatControl)
       digitalWrite(PINLEDHEATER, HIGH);
     else if (interruptedHeating)
       digitalWrite(PINLEDHEATER, (millis() % 500) < 50);
+    else
+      digitalWrite(PINLEDHEATER, LOW);
   }
 }
 

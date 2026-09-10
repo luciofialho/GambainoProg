@@ -280,9 +280,6 @@ void loop() {
   handle_IOTK();
   checkPerfSentinel("Handle");
 
-  checkDebugMode();
-
-
   ProcVar::setDatalogData(RcpBatchNum,datalogFolderNameInUse,"Hot",statusNames[int(Status)], SubStatusLabel, IPCStatusNames[int(IPCStatus)]); 
 
 
@@ -301,8 +298,7 @@ void loop() {
   tempVolControl();
   CircControl();
   ProcVar::acquireDallas(); 
-  processDerivedVars();
-
+  
   checkPerfSentinel("Main loop - Part B");
 
   coldSideControl();

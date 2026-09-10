@@ -21,11 +21,11 @@ void configVariables()
 //    Fermenter2Control.setLatency  (1  * MINUTES);
     ColdBankControl  .setLatency  (2  * MINUTES);
 
-   // ProcVar::I2CSetInvertedCluster(RELAYSA_ADDR);
+    //ProcVar::I2CSetInvertedCluster(RELAYSA_ADDR);
     //ProcVar::I2CSetInvertedCluster(RELAYSB_ADDR);
-    /*ProcVar::I2CSetInvertedCluster(RELAYSC_ADDR);
-    ProcVar::I2CSetInvertedCluster(RELAYSD_ADDR);
-    ProcVar::I2CSetInvertedCluster(RELAYSE_ADDR);*/
+    //ProcVar::I2CSetInvertedCluster(RELAYSC_ADDR);
+    //ProcVar::I2CSetInvertedCluster(RELAYSD_ADDR);
+    //ProcVar::I2CSetInvertedCluster(RELAYSE_ADDR);*/
     
     
     ProcVar::I2CSetDualBitCluster(VALVESJ_ADDR);
@@ -41,9 +41,6 @@ void warmBoot()       // ignore any on going process, set values to stand by sta
     Status    = 0;
 }
 
-void processDerivedVars()
-{
-}
 
 void quickI2CSetZeros() {
   byte clusters[] = {RELAYSA_ADDR, RELAYSB_ADDR, RELAYSC_ADDR, RELAYSD_ADDR, RELAYSE_ADDR,

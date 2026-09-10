@@ -101,11 +101,11 @@ void waterInStart(float liters, byte target, bool isHot) {
            WaterTargetLabels[target-1], 
            isHot ? "hot" : "cold");
 
-    HLTWaterIn = target == WATERTARGET_HLT ? OPEN : CLOSED;
-    BKWaterIn  = target == WATERTARGET_BK ? OPEN : CLOSED;
-    ColdBankWaterIn = target == WATERTARGET_COLDBANK ? OPEN : CLOSED;
-    KegWaterIn = target == WATERTARGET_KEG ? OPEN : CLOSED;
-    FMTWaterIn = target == WATERTARGET_FMT ? OPEN : CLOSED;
+    HLTWaterIn = (target == WATERTARGET_HLT) ? OPEN : CLOSED;
+    BKWaterIn  = (target == WATERTARGET_BK) ? OPEN : CLOSED;
+    ColdBankWaterIn = (target == WATERTARGET_COLDBANK) ? OPEN : CLOSED;
+    KegWaterIn = (target == WATERTARGET_KEG) ? OPEN : CLOSED;
+    FMTWaterIn = (target == WATERTARGET_FMT) ? OPEN : CLOSED;
   }
   else 
     waterInStop();

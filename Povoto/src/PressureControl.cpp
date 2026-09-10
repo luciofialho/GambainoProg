@@ -24,7 +24,7 @@
 
 #define SOLENOID_NOISE_MS 400
 
-#define TRANSFER_CLOSE_PRESSURE_BLOCK_MS 5000
+#define TRANSFER_CLOSE_PRESSURE_BLOCK_MS 1000
 
 #define PRESSURE_SAMPLE_MIN_MS 250
 #define PRESSURE_SAMPLES_MAX 3000
@@ -50,7 +50,6 @@ float headSpaceVolume = 0.0f;
 float beerVolume = 0.0f;
 float beerSG = 0.0;
 float beerABV = 0.0;
-float beerPlato = 0.0f;
 float dissolvedCO2Mols = 0.0f;
 float headSpaceCO2Mols = 0.0f;
 float sgPointGenerationTime = 0.0f;
@@ -59,12 +58,15 @@ static unsigned long int timeToStartExpansion     = 0;
 static unsigned long int timeToFinishExpansion    = 0;
 static unsigned long int timeToRegisterPressure = 0; // after a relief event
 static unsigned long int noPressureReadUntil = 0;
-static float lastPressure = 0;
 
-static float blindHighPressure = 0;
-static unsigned long int blindHighPressureMillis = 0;
-static float blindLowPressure = 0;
-static unsigned long int blindLowPressureMillis = 0;
+float  adjustedPressureAfterRelief;
+
+float pressureOnReliefMeas = 0.0f;
+float pressureOnReliefExtrap = 0;
+float pressureAfterRelief = 0;
+unsigned long pressureAfterReliefMillis = 0;
+float pressureReachedTarget = 0;
+unsigned long int pressureReachedTargetMillis = 0;
 
 struct PressureReliefRecord {
   char timestamp[32];
@@ -88,7 +90,7 @@ static uint16_t pressureReliefIndex = 0;
 static uint16_t pressureReliefCount = 0;
 static int16_t pendingReliefIndex = -1;
 static unsigned long lastSolenoidToggleMillis = 0;
-static float pressureDropFactor = 0.99f;
+float pressureDropFactor = 0.99f;
 
 static bool volumeDeterminationActive = false;
 static float volumeStartPressure = 0.0f;
@@ -307,17 +309,50 @@ float CO2Mass(float mols) {
     return mols * CO2MOLAR_MASS;
 }
 
-float SGToPlato(float sg) {
-  if (sg < 1.0f) return 0.0f;
-  float sg2 = sg * sg;
-  float sg3 = sg2 * sg;
-  return -616.868f + 1111.14f * sg - 630.272f * sg2 + 135.997f * sg3;
+float SGToApparentPlato(float sg) {
+  return ((135.997f * sg - 630.272f) * sg
+          + 1111.14f) * sg
+          - 616.868f;
 }
 
-float PlatoToSG(float plato) {
-  if (plato <= 0.0f) return 1.0f;
-  return 1.0f + plato / (258.6f - (plato / 258.2f) * 227.1f);
+float SGToRealPlato(float sg) {
+  const float oe = SGToApparentPlato(BatchData.batchOG);
+  const float ae = SGToApparentPlato(sg);
+
+  return 0.1808f * oe + 0.8192f * ae;
 }
+
+float ApparentPlatoToSG(float apparentPlato) {
+    // Boa estimativa inicial
+    float sg = 1.0f + apparentPlato /
+        (258.6f - (apparentPlato / 258.2f) * 227.1f);
+
+    // Inverte SGToApparentPlato()
+    for (int i = 0; i < 4; i++) {
+        float calculatedPlato = SGToApparentPlato(sg);
+
+        // Derivada do polinômio Plato(SG)
+        float derivative =
+            1111.14f
+            - 1260.544f * sg
+            + 407.991f * sg * sg;
+
+        sg -= (calculatedPlato - apparentPlato) / derivative;
+    }
+
+    return sg;
+}
+
+float RealPlatoToSG(float realPlato) {
+    const float originalPlato =
+        SGToApparentPlato(BatchData.batchOG);
+
+    const float apparentPlato =
+        (realPlato - 0.1808f * originalPlato) / 0.8192f;
+
+    return ApparentPlatoToSG(apparentPlato);
+}
+
 
 float CO2DissolvedMols(float pressureBar, float sg, float temperatureC, float volumeL) {
   if (pressureBar <= 0.0f || volumeL <= 0.0f) {
@@ -328,12 +363,21 @@ float CO2DissolvedMols(float pressureBar, float sg, float temperatureC, float vo
   const float kH_298 = 0.0334f; // mol/(L*atm) at 25C for CO2 in water fonte: Sander, R. (2015). Compilation of Henry's law constants (version 4.0) for water as solvent. Atmospheric Chemistry and Physics, 15(8), 4399-4981. https://doi.org/10.5194/acp-15-4399-2015
   const float pressureAtm = (pressureBar+Patm) * 0.986923f; // constant is bar --> atm conversion
 
-  float kH = kH_298 * expf(2400.0f * (1.0f / 298.15f - 1.0f / tempK));
+  float kH = kH_298 * expf(2400.0f * (1.0f / tempK - 1.0f / 298.15f));
 
-  float sgPoints = (sg - 1.0f) * 1000.0f;
+  float sgConsidered;
+  if (std::isfinite(sg)) 
+    sgConsidered = sg;
+  else
+    sgConsidered = BatchData.batchOG;
+
+  float sgPoints = (sgConsidered - 1.0f) * 1000.0f;
   float sgCorrection = 1.0f - (sgPoints * 0.0015f); // Correção linear: cada ponto de SG reduz a solubilidade em 0.15%. Ex: SG 1.050 tem correção de 7.5%, SG 1.100 tem correção de 15%. Fonte: https://www.brewersfriend.com/2012/11/19/co2-solubility-in-beer/
   if (sgCorrection < 0.5f) sgCorrection = 0.5f;
   if (sgCorrection > 1.0f) sgCorrection = 1.0f;
+  if (!isfinite(sgCorrection)) {
+    sgCorrection = 1.0f;
+  }
 
   float molPerL = kH * pressureAtm * sgCorrection;
   return molPerL * volumeL;
@@ -656,7 +700,77 @@ static void finalizeVolumeDeterminationSummary() {
   showVolumeStatus(line1, line2, line3);
 }
 
+void calculateFermentationState() {
+  const float OE =
+      SGToApparentPlato(BatchData.batchOG)
+      + BatchData.addedPlato;
 
+  const float initialSG =
+    ApparentPlatoToSG(OE);
+
+  const float initialDensityKgL =
+    initialSG * 0.9982f;  // SG 20/20
+
+  const float initialBeerMassG =
+    1000.0f *
+    beerVolume * 
+    initialDensityKgL;
+
+  const float initialExtractMassG =
+    initialBeerMassG * OE / 100.0f;
+
+  const float producedCO2Mols =
+    CountersData.totalMolsEjected
+    + CountersData.CO2InSolution
+    + headSpaceCO2Mols;
+
+  const float producedCO2MassG =
+    44.0095f * producedCO2Mols;
+
+  const float fermentedExtractMassG =
+    producedCO2MassG * 2.0665f / 0.9565f;
+
+  const float producedYeastMassG =
+    producedCO2MassG * 0.11f / 0.9565f;
+
+  const float producedEthanolMassG =
+    producedCO2MassG / 0.9565f;
+
+  const float remainingExtractMassG =
+    initialExtractMassG -
+    fermentedExtractMassG;
+
+  // Cerveja clarificada e degaseificada
+  const float currentBeerMassG =
+    initialBeerMassG -
+    producedCO2MassG -
+    producedYeastMassG;
+
+  const float beerRealPlato =
+    100.0f *
+    remainingExtractMassG /
+    currentBeerMassG;
+
+  const float beerApparentPlato =
+    (beerRealPlato - 0.1808f * OE) /
+    0.8192f;
+
+  beerSG =
+    ApparentPlatoToSG(beerApparentPlato);
+
+  const float beerABW =
+    100.0f *
+    producedEthanolMassG /
+    currentBeerMassG;
+
+  const float beerDensityKgL =
+    beerSG * 0.9982f;
+
+  beerABV =
+    beerABW *
+    beerDensityKgL /
+    0.78924f;
+}
 
 void processPressure(bool afterRelief) {
   if (afterRelief && debugging) {
@@ -671,21 +785,16 @@ void processPressure(bool afterRelief) {
   if  (afterRelief) {
     static float lastPressureDrop = 0;
 
-    float pressureGainOverTime = (blindHighPressure - blindLowPressure) / (blindHighPressureMillis - blindLowPressureMillis);
-    if (pressureGainOverTime < 0 || pressureGainOverTime > 1e-4) {
-      pressureGainOverTime = 0;
-    }
-    
-    float blindWindowCorrection = pressureGainOverTime * (millis() - blindHighPressureMillis);
-    
-    //lastPressureDrop = ControlData.pressure - lastPressure + blindWindowCorrection;
-
-    blindLowPressure = ControlData.pressure;
-    blindLowPressureMillis = millis();
+    pressureAfterRelief = ControlData.pressure;
+    pressureAfterReliefMillis = millis();
+    pressureReachedTarget = 0;
+    pressureReachedTargetMillis = 0;
+    adjustedPressureAfterRelief = (pressureOnReliefMeas+Patm) * powf(((pressureAfterRelief+Patm) / (pressureOnReliefMeas+Patm)), (1.0f / FMTData.FMTEffectiveVentingExponent)) - Patm;
+       // Todo: tentar fazer esse expoente ser determinado dinamicamente ou entao apurar o fator de queda de pressao ao na ejeçao (talvez so sirva para fermentacao  estavel e intensa)
 
     float instantPressureDropFactor = 1.0f;
-    if (lastPressure > 0.01f) {
-      instantPressureDropFactor = (ControlData.pressure - blindWindowCorrection*0) / lastPressure; // Lucio: retornar blindWindowCorrection
+    if (pressureOnReliefExtrap > 0.01f) {
+      instantPressureDropFactor = (adjustedPressureAfterRelief / pressureOnReliefExtrap); 
     }
 
     // Keep factor in a valid range for log() and downstream equations.
@@ -693,7 +802,7 @@ void processPressure(bool afterRelief) {
     lnPressureDropAvg.add(logf(instantPressureDropFactor));
     pressureDropFactor = expf(lnPressureDropAvg.value());
     pressureDropFactor = fmaxf(0.001f, fminf(pressureDropFactor, 0.999f));
-    
+
     headSpaceVolume = volumeEstimationFromPressureDrop(pressureDropFactor); 
     updateBeerVolumeFromHeadspace();
     
@@ -704,7 +813,8 @@ void processPressure(bool afterRelief) {
     }
     pendingReliefIndex = -1;
 
-    float ejectedMols = ControlData.pressure * FMTData.FMTReliefVolume / (CONST_R * kelvin(ControlData.temperature));
+    //float ejectedMols = adjustedPressureAfterRelief * FMTData.FMTReliefVolume / (CONST_R * kelvin(ControlData.temperature));
+    float ejectedMols = (pressureOnReliefExtrap - adjustedPressureAfterRelief) * headSpaceVolume / (CONST_R * kelvin(ControlData.temperature)); // removes the apparent pressure drop caused by polytropic cooling.
     CountersData.totalMolsEjected += ejectedMols;
     
     CountersData.totalReliefCount += 1;    
@@ -728,7 +838,7 @@ void processPressure(bool afterRelief) {
 
 //  CountersData.SGAttenuation -= EstimateSGFromProducedCO2Mol(beerSG, beerVolume, CountersData.totalCO2MolsProduced - lastTotalCO2MolsProceduced) - beerSG;
 //  Serial.println(EstimateSGFromProducedCO2Mol(beerSG, beerVolume, CountersData.totalCO2MolsProduced - lastTotalCO2MolsProceduced) *1000.0);
-
+/*
   float Pi = SGToPlato(BatchData.batchOG) + BatchData.addedPlato;
   float SGu = 1 + (Pi / (258.6-(Pi/258.2)*227.1));
   float totalCO2Mols = CountersData.totalMolsEjected + CountersData.CO2InSolution + headSpaceCO2Mols;
@@ -738,8 +848,9 @@ void processPressure(bool afterRelief) {
              / 0.8192;
   beerSG = PlatoToSG(beerPlato);
   beerABV = 100*(105*(BatchData.batchOG - beerSG) / (100 - beerSG) * (beerSG / 0.79));
-
+  */
   //beerSG = BatchData.batchOG - CountersData.SGAttenuation;
+  calculateFermentationState();
   
   if (afterRelief && volumeDeterminationActive) {
     volumeIteration++;
@@ -757,7 +868,7 @@ void processPressure(bool afterRelief) {
       record.volumeMetricsValid = false;
 
       if (record.tiK > 0.0f && record.tfK > 0.0f && record.pi > 0.0f && record.nReliefs > 0) {
-        record.pfAdjusted = record.pressureAfter * (record.tiK / record.tfK);
+        record.pfAdjusted = (record.pressureAfter+Patm) * (record.tiK / record.tfK) - Patm;
         if (record.pfAdjusted > 0.0f) {
           record.factorMedio = powf(record.pfAdjusted / record.pi, 1.0f / (float)record.nReliefs);
 
@@ -779,22 +890,20 @@ void processPressure(bool afterRelief) {
       volumeRecordIndex = -1;
     }
   }
-
-  lastPressure = ControlData.pressure;
 }
 
 bool processReliefCycle() {
   if (inTheMiddleOfRelief()) {
+    static unsigned long ReliefStartPressureTime = 0;
     if (timeToStartExpansion) {
       if (!MILLISDIFF(timeToStartExpansion, 0)) {
         digitalWrite(PINVENTINGLED, HIGH); // just to control led indicating delay to finish last cycle relief
         ;Serial.printf("Cor: vermelha (2) %lu\n", millis() / 1000);
-    }
+      }
       else {
         //;Serial.printf("[PRESSURE] %lu / %lu: Abrindo transfer valve. Pressure=%.2f bar\n", millis(), timeToStartExpansion, ControlData.pressure);
-        lastPressure = ControlData.pressure;
-        blindHighPressure = ControlData.pressure;
-        blindHighPressureMillis = millis();
+        pressureOnReliefMeas = ControlData.pressure;
+        ReliefStartPressureTime = millis();
         digitalWrite(PINVENTINGLED, LOW);
         digitalWrite(PINTRANSFERVALVE, HIGH);
         markSolenoidToggle();
@@ -806,9 +915,18 @@ bool processReliefCycle() {
     else if (timeToFinishExpansion) {
       if (MILLISDIFF(timeToFinishExpansion, 0)) {
         //;Serial.printf("[PRESSURE] %lu / %lu: Fechando transfer valve. Pressure=%.2f bar\n", millis(), timeToFinishExpansion, ControlData.pressure);
+        float extrapolation =
+            (pressureOnReliefMeas - pressureReachedTarget)
+            * float(millis() - ReliefStartPressureTime)
+            / float(ReliefStartPressureTime - pressureReachedTargetMillis);
+        if (!isfinite(extrapolation) || extrapolation < 0 || extrapolation > 0.02) {
+          extrapolation = 0.0f;
+        }
+        pressureOnReliefExtrap = pressureOnReliefMeas + extrapolation;
+
         digitalWrite(PINTRANSFERVALVE, LOW);
         digitalWrite(PINVENTINGLED, HIGH);
-       markSolenoidToggle();
+        markSolenoidToggle();
         ControlData.transferValve = false;
         resetCurrentMedianFilter();
         noPressureReadUntil = millis() + TRANSFER_CLOSE_PRESSURE_BLOCK_MS;
@@ -847,7 +965,7 @@ void pressureRelief(bool fromVolumeDetermination) {
   if (inTheMiddleOfRelief()) { // if we're still in the middle of a relief, ignore new relief requests to avoid overlapping and potential hardware issues
     return;
   }
-
+  
   if (fromVolumeDetermination) {
     const uint16_t nextCycle = volumeIteration + 1;
     const bool shouldRecordCycle = (nextCycle >= VOLUME_DETERMINATION_RECORD_START_CYCLE &&
@@ -1286,7 +1404,6 @@ float getVolumeDeterminationCalculatedSoFar() {
 void pressureControl() {
   if (beerSG == 0) {
     beerSG = BatchData.batchOG;
-    beerPlato = SGToPlato(beerSG);
   }
 
   readPressure();
@@ -1309,6 +1426,11 @@ void pressureControl() {
       lastPressureCheckMillis = millis();
       processPressure(false);
     }
+  }
+
+  if (ControlData.pressure >= SetPointData.setPointPressure && pressureReachedTargetMillis==0) {
+    pressureReachedTarget = ControlData.pressure;
+    pressureReachedTargetMillis = millis();
   }
 
   if (volumeDeterminationActive) {
@@ -1353,8 +1475,8 @@ void pressureControl() {
   }
 }
 
+char tmp[160];
 char *getPressureControlStatus(char *st) {
-  char tmp[160];
 
   int16_t rawShuntRegister = 0;
   st[0] = '\0';
@@ -1388,7 +1510,7 @@ char *getPressureControlStatus(char *st) {
              pressureDropFactor * 100, headSpaceVolume, beerVolume);
         strnncat(st, tmp, 2048);
 
-    snprintf(tmp, sizeof(tmp), "----<br>Beer SG: %.4f<br>Beer ABV: %.2f%%<br>", beerSG, beerABV);
+    snprintf(tmp, sizeof(tmp), "----<br>Beer OG: %.4f<br>Beer SG: %.4f<br>Beer ABV: %.2f%%<br>", BatchData.batchOG, beerSG, beerABV);
         strnncat(st, tmp, 2048);
 
 

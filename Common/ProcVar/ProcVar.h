@@ -26,10 +26,10 @@
 #define DALLAS3             2,0,0
 #define DALLAS4             3,0,0
 
-#define NOTPERSISTENT       (byte)0
-#define PROCESSPERSISTENCE  (byte)1
-#define CONFIGPERSISTENCE   (byte)2
-#define OVERRIDEPERSISTENCE (byte)255  // not a persistence group, but a option to use in function call
+#define NOTPERSISTENT       (uint8_t)0
+#define PROCESSPERSISTENCE  (uint8_t)1
+#define CONFIGPERSISTENCE   (uint8_t)2
+#define OVERRIDEPERSISTENCE (uint8_t)255  // not a persistence group, but a option to use in function call
 #define CONFIGEEPROMSTARTADDR   100
 #define CONFIGEEPROMENDADDR     499
 #define PROCESSEEPROMSTARTADDR  500
@@ -70,9 +70,9 @@ extern const int BIGBUFFERSIZE;
 extern uint8_t NODALLAS                 [];
 
 typedef struct {
-  byte              delayValueToSet;
+  uint8_t              delayValueToSet;
   unsigned long     delayWhenToSet;
-  byte              latencyTime;
+  uint8_t              latencyTime;
   unsigned long     lastLatencyTimeMillis;
 } timeControlStruct;
 
@@ -93,7 +93,7 @@ struct dataLogTaskParameters {
 typedef struct {
   uint8_t *addr;
   unsigned long lastFluctuationMillis;
-  byte fluctuationPos;
+  uint8_t fluctuationPos;
   float fluctuationVect[DALLASFLUCTUATIONNUM]; 
   int8_t avgPos;
   float avgReads[DALLASAVERAGESIZE];
@@ -106,7 +106,7 @@ typedef struct {
 } DallasStruct;
 
 typedef union {
-  struct {byte b0,b1,b2,b3;} bytes;
+  struct {uint8_t b0,b1,b2,b3;} bytes;
   float f;
   uint32_t li;
 } eeStruct; // for eeprom
@@ -117,13 +117,13 @@ class ProcVar {
                     const char    *_pinID_,
                     const char    *_pinAlias_,
                     float         _defaultValue_,
-                    byte          _pin_,
-                    byte          _I2CCluster_,
-                    byte          _I2CMask_,
-                    byte          _mode_,
-                    byte          _persistenceGroup_,
-                    byte          _dataLogGroup_,
-                    byte          _JSONGroup_,
+                    uint8_t          _pin_,
+                    uint8_t          _I2CCluster_,
+                    uint8_t          _I2CMask_,
+                    uint8_t          _mode_,
+                    uint8_t          _persistenceGroup_,
+                    uint8_t          _dataLogGroup_,
+                    uint8_t          _JSONGroup_,
                     bool          _isInverted_,
                     bool          _autoOverride_,
                     uint8_t      *_DallasAddr_
@@ -135,13 +135,13 @@ class ProcVar {
         char    *tag();
         char    *alias();
         float   defaultValue();
-        byte    pin();
-        byte    I2CCluster();
-        byte    I2CMask();
-        byte    mode();
-        byte    persistenceGroup();
-        byte    dataLogGroup();
-        byte    JSONGroup();
+        uint8_t    pin();
+        uint8_t    I2CCluster();
+        uint8_t    I2CMask();
+        uint8_t    mode();
+        uint8_t    persistenceGroup();
+        uint8_t    dataLogGroup();
+        uint8_t    JSONGroup();
         bool    isInverted();
         bool    autoOverride();
         bool    timeControl();
@@ -158,7 +158,7 @@ class ProcVar {
         operator int()    {if (overrided != NOTOVERRIDED) return (int)overrided; else return (int)progValue;};        
         operator long int()    {if (overrided != NOTOVERRIDED) return (long int)overrided; else return (long int)progValue;};        
         operator long unsigned int()    {if (overrided != NOTOVERRIDED) return (long unsigned int)overrided; else return (long unsigned int)progValue;};        
-        operator byte()   {if (overrided != NOTOVERRIDED) return (byte)(int)overrided; else return (byte)(int)progValue;};        
+        operator uint8_t()   {if (overrided != NOTOVERRIDED) return (uint8_t)(int)overrided; else return (uint8_t)(int)progValue;};        
         bool   asBoolean();
 
         void  setBooleanFromOffset(float TargetValue, float ActualValue, float Offset, char Signal = '+');
@@ -167,7 +167,7 @@ class ProcVar {
         bool  getProgValueAsBoolean();
         float getOverridedValue();
         void  assumeOverrideAsProg();
-        byte  isOverrided();
+        uint8_t  isOverrided();
 
         void  write();
         char  *displayString(char *buf,bool noAddress = false);
@@ -179,14 +179,14 @@ class ProcVar {
         bool  isValidTemp();
         
 
-        static byte numVars();
-        static ProcVar* ProcVarByIndex(byte idx);
-        static byte numI2CClusters();
-        static byte I2CClusterAddress(byte idx);
-        static byte I2CGetClusterValue(byte idx);
-        static void I2CSetClusterValue(byte idx,byte data,byte valid);
-        static void I2CSetInvertedCluster(byte idx);
-        static void I2CSetDualBitCluster(byte idx);
+        static uint8_t numVars();
+        static ProcVar* ProcVarByIndex(uint8_t idx);
+        static uint8_t numI2CClusters();
+        static uint8_t I2CClusterAddress(uint8_t idx);
+        static uint8_t I2CGetClusterValue(uint8_t idx);
+        static void I2CSetClusterValue(uint8_t idx,uint8_t data,uint8_t valid);
+        static void I2CSetInvertedCluster(uint8_t idx);
+        static void I2CSetDualBitCluster(uint8_t idx);
 
         static ProcVar *ProcVarByID(const char *ID);
         static void    releaseAllOverrides();
@@ -196,12 +196,12 @@ class ProcVar {
         static void    acquireDallas();        
         static void    DallasScan(char * buf=NULL, int bufSize=0);
         static void    forceResetToFactory();
-        static void    writeToEEPROM(byte persistenceGroup);
-        static void    readFromEEPROM(byte persistenceGroup);
-        static bool    checkI2CCluster(byte j, char * device, char * msg);
+        static void    writeToEEPROM(uint8_t persistenceGroup);
+        static void    readFromEEPROM(uint8_t persistenceGroup);
+        static bool    checkI2CCluster(uint8_t j, char * device, char * msg);
         static char *  getClustersStatus(char *st);
-        static char *  getDallasStatus(char *st, byte mode, int bufSize);
-        static String  getDallasStatus(byte mode, int bufSize);
+        static char *  getDallasStatus(char *st, uint8_t mode, int bufSize);
+        static String  getDallasStatus(uint8_t mode, int bufSize);
 
         static void         dataLogHeader(char *buf, int bufSize);
         static void         setDatalogInterval(uint32_t interval) {datalogInterval_ = interval;};
@@ -217,20 +217,20 @@ class ProcVar {
         char          pinID_[PINIDLENGTH+1];
         char          pinAlias_[PINALIASLENGTH+1];
         float         defaultValue_;
-        byte          pin_;
-        byte          I2CCluster_;
-        byte          I2CMask_;
-        byte          mode_;
-        byte          persistenceGroup_;
-        byte          dataLogGroup_;
-        byte          JSONGroup_;
+        uint8_t          pin_;
+        uint8_t          I2CCluster_;
+        uint8_t          I2CMask_;
+        uint8_t          mode_;
+        uint8_t          persistenceGroup_;
+        uint8_t          dataLogGroup_;
+        uint8_t          JSONGroup_;
         bool          isInverted_;
         bool          autoOverride_;
         void          *ext_;    
  
         float         progValue;
         float         overrided;
-        //byte          count;
+        //uint8_t          count;
 
         static uint32_t datalogInterval_;
         static void (*say)(const char *format,...);
@@ -243,7 +243,7 @@ class ProcVar {
 
         static char*   ConvertDallasAddrToString(char *buf, uint8_t* addr);
         
-        static unsigned long    persistenceChecksum(byte PersistenceGroup);
+        static unsigned long    persistenceChecksum(uint8_t PersistenceGroup);
         static void             write_eeStructToEEPROM(int addr, eeStruct v);
         static eeStruct         read_eeStructFromEEPROM(int addr);
 

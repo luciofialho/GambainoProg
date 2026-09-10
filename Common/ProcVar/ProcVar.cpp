@@ -38,14 +38,14 @@ SemaphoreHandle_t mutexLog;
 uint8_t NODALLAS                 [] = {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00};
 
 #define MAXPROCVARS 120
-byte    numProcVars = 0;
-byte    numI2CClusters_;
-byte    I2CClusters [MAXI2CCTRL];
+uint8_t    numProcVars = 0;
+uint8_t    numI2CClusters_;
+uint8_t    I2CClusters [MAXI2CCTRL];
 boolean I2CInitialized[MAXI2CCTRL];
 boolean I2CClusterChanged[MAXI2CCTRL];
 boolean I2CClusterInverted[MAXI2CCTRL];
 boolean I2CClusterDualBit[MAXI2CCTRL];
-byte    I2CModes[MAXI2CCTRL];
+uint8_t    I2CModes[MAXI2CCTRL];
 ProcVar *ProcVars[MAXPROCVARS];
 
 uint32_t ProcVar::datalogInterval_ = 0;
@@ -56,7 +56,7 @@ void (*ProcVar::alert)(const char *format,...) = NULL;
 DallasTemperature *DallasDevs [MAXDALLASBUSES];
 OneWire           *DallasBuses[MAXDALLASBUSES];
 unsigned long int lastDallasRequest = 0;
-byte numDallasBuses = 0;
+uint8_t numDallasBuses = 0;
 
 const int BIGBUFFERSIZE = 4000;
 char bigBuffer[BIGBUFFERSIZE+1];
@@ -73,13 +73,13 @@ ProcVar::ProcVar(
   const char    *_pinID_,
   const char    *_pinAlias_,
   float         _defaultValue_,
-  byte          _pin_,
-  byte          _I2CCluster_,
-  byte          _I2CMask_,
-  byte          _mode_,
-  byte          _persistenceGroup_,
-  byte          _dataLogGroup_,
-  byte          _JSONGroup_,
+  uint8_t          _pin_,
+  uint8_t          _I2CCluster_,
+  uint8_t          _I2CMask_,
+  uint8_t          _mode_,
+  uint8_t          _persistenceGroup_,
+  uint8_t          _dataLogGroup_,
+  uint8_t          _JSONGroup_,
   bool          _isInverted_,
   bool          _autoOverride_,
   uint8_t       *_DallasAddr_
@@ -111,15 +111,15 @@ void ProcVar::initProcVarLib() {
     if (numProcVars > MAXPROCVARS) 
         alert(" Error: exceeded maximum number of ProcVars");
 
-    for (byte i=0; i<MAXI2CCTRL; i++) {
+    for (uint8_t i=0; i<MAXI2CCTRL; i++) {
       I2CInitialized[i] = false;
       I2CClusterChanged[i] = false;
       I2CClusterInverted[i] = false;
       I2CClusterDualBit[i] = false;
     }
 
-    byte numDallasVar = 0;
-    byte numTimeCtrlVar = 0;
+    uint8_t numDallasVar = 0;
+    uint8_t numTimeCtrlVar = 0;
 
     for (int i = 0; i<numProcVars; i++) { // for each ProcVar
         ProcVar *x = ProcVars[i];
@@ -129,7 +129,7 @@ void ProcVar::initProcVarLib() {
 
         if (x->pin() != 0) {
             if (x->modeIsOutput()) {
-                byte  def = x->isInverted() ? !x->defaultValue() : x->defaultValue();
+                uint8_t  def = x->isInverted() ? !x->defaultValue() : x->defaultValue();
                 digitalWrite(x->pin(),def);
                 pinMode(x->pin(),OUTPUT);
                 digitalWrite(x->pin(),def);
@@ -178,7 +178,7 @@ void ProcVar::initProcVarLib() {
             ((DallasStruct*)x->ext_)->addr = temp;
             ((DallasStruct*)x->ext_)->lastFluctuationMillis = 0;
             ((DallasStruct*)x->ext_)->fluctuationPos = 0;
-            for (byte i=0;i<DALLASFLUCTUATIONNUM;i++)
+            for (uint8_t i=0;i<DALLASFLUCTUATIONNUM;i++)
               ((DallasStruct*)x->ext_)->fluctuationVect[i] = i;
             ((DallasStruct*)x->ext_)->avgPos = -DALLASAVERAGESIZE;
             ((DallasStruct*)x->ext_)->lossesCount = 0;
@@ -218,31 +218,31 @@ float ProcVar::defaultValue() {
     return defaultValue_;
 }
 
-byte ProcVar::pin() {
+uint8_t ProcVar::pin() {
     return pin_; 
 }
 
-byte ProcVar::I2CCluster() {
+uint8_t ProcVar::I2CCluster() {
     return I2CCluster_; 
 }
 
-byte ProcVar::I2CMask() {
+uint8_t ProcVar::I2CMask() {
     return I2CMask_; 
 }
 
-byte ProcVar::mode() {
+uint8_t ProcVar::mode() {
     return mode_; 
 }
 
-byte ProcVar::persistenceGroup() {
+uint8_t ProcVar::persistenceGroup() {
     return persistenceGroup_; 
 }
 
-byte ProcVar::dataLogGroup() {
+uint8_t ProcVar::dataLogGroup() {
     return dataLogGroup_; 
 }
 
-byte ProcVar::JSONGroup() {
+uint8_t ProcVar::JSONGroup() {
     return JSONGroup_; 
 }
 
@@ -444,7 +444,7 @@ void ProcVar::assumeOverrideAsProg()
   }
 }
 
-byte ProcVar::isOverrided()
+uint8_t ProcVar::isOverrided()
 {
   return (overrided != NOTOVERRIDED);
 }
@@ -563,28 +563,28 @@ ProcVar* ProcVar::setLatency(unsigned long time)
     return this;
 }
 
-byte ProcVar::numVars()
+uint8_t ProcVar::numVars()
 {
     return numProcVars;
 }
 
-ProcVar* ProcVar::ProcVarByIndex(byte idx)
+ProcVar* ProcVar::ProcVarByIndex(uint8_t idx)
 {
     return ProcVars[idx];
 }
 
-byte ProcVar::numI2CClusters()
+uint8_t ProcVar::numI2CClusters()
 {
     return numI2CClusters_;
 }
 
-byte ProcVar::I2CClusterAddress(byte idx)
+uint8_t ProcVar::I2CClusterAddress(uint8_t idx)
 {
     return I2CClusters[idx];
 }
 
-byte ProcVar::I2CGetClusterValue(byte idx) {
-  byte data;
+uint8_t ProcVar::I2CGetClusterValue(uint8_t idx) {
+  uint8_t data;
 
   data = 0x00;
   for (int i=0;i<numProcVars;i++)
@@ -597,26 +597,26 @@ byte ProcVar::I2CGetClusterValue(byte idx) {
           data = data | (ProcVars[i]->I2CMask()) << 1;
     }
   if (I2CClusterInverted[idx]) {
-    Serial.print("data antes: ");Serial.println(data, BIN);
+    //Serial.print("data antes: ");Serial.println(data, BIN);
     data = ~data; 
-    Serial.print("%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% processed cluster inverted: ");Serial.println(idx);
-    Serial.print("data depois: ");Serial.println(data, BIN);
+    //Serial.print("%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% processed cluster inverted: ");Serial.println(idx);
+    //Serial.print("data depois: ");Serial.println(data, BIN);
   }
   return data;
 }
 
-void ProcVar::I2CSetInvertedCluster(byte idx)
+void ProcVar::I2CSetInvertedCluster(uint8_t idx)
 {
-  byte i;
+  uint8_t i;
   for (i = 0; (i < numI2CClusters_) && (I2CClusters[i] != idx); i++);
   if (I2CClusters[i] == idx) {
     I2CClusterInverted[i] = true;
   }
 }
 
-void ProcVar::I2CSetDualBitCluster(byte idx)
+void ProcVar::I2CSetDualBitCluster(uint8_t idx)
 {
-  byte i;
+  uint8_t i;
   for (i = 0; (i < numI2CClusters_) && (I2CClusters[i] != idx); i++);
   if (I2CClusters[i] == idx) 
     I2CClusterDualBit[i] = true;
@@ -648,14 +648,14 @@ void ProcVar::writeProcVars()
     WriteI2Cs();
 }
 
-bool ProcVar::checkI2CCluster(byte j, char * device, char * msg) {
+bool ProcVar::checkI2CCluster(uint8_t j, char * device, char * msg) {
   if (j>=numI2CClusters_) {
     device[0] = 0;
     return false;
   }
 
   int cluster = I2CClusters[j];
-  sprintf(device,"Device: 0x%02X",byte(cluster));
+  sprintf(device,"Device: 0x%02X",uint8_t(cluster));
   
   yield();
   Wire.beginTransmission(cluster); 
@@ -704,8 +704,8 @@ char * ProcVar::getClustersStatus(char *st) {
 void ProcVar::WriteI2Cs() {
     if(debugging) return;
 
-    byte cluster;
-    byte data;
+    uint8_t cluster;
+    uint8_t data;
     static unsigned long lastUpdate=0;
     const int UPDATEINTERVAL = 200;
     bool haveAGo = false; 
@@ -729,12 +729,12 @@ void ProcVar::WriteI2Cs() {
             data = ProcVar::I2CGetClusterValue(j);
 
             int err;
-            if (Wire.requestFrom(uint8_t(cluster),-1,true) == 1) {
-              byte b = Wire.read();
+            if (Wire.requestFrom(uint8_t(cluster),(uint8_t)1,(uint8_t)1) == 1) {
+              uint8_t b = Wire.read();
               if (b != data) { // then try again to confirm if it was not a read error
                 delay(5); 
 
-                if (Wire.requestFrom(int(cluster),1,true) == 1) {
+                if (Wire.requestFrom(uint8_t(cluster),(uint8_t)1,(uint8_t)1) == 1) {
                   b = Wire.read();
                   if (b != data) {
                     Wire.beginTransmission(int(cluster));
@@ -743,16 +743,16 @@ void ProcVar::WriteI2Cs() {
                     Serial.print("  ---> "); Serial.println(data,HEX);
                     if ((err=Wire.endTransmission(true)) != 0) {
                       Serial.print("  error: "); Serial.println(err);
-                      b = data; // error reading, better do nothing
+                      // keep b mismatched so the retry block below actually retries
                     }
                     else {
-                      //Serial.println("  OK");
+                      b = data; // write succeeded, avoid redundant retry below
                     }
                     delay(5);
                   }
                 }
                 else {
-                  b = data; // error reading, better do nothing
+                  // keep b mismatched: confirmation read failed, still let the retry block below attempt the write
                 }
               }
               if (b != data) {
@@ -775,7 +775,7 @@ void ProcVar::WriteI2Cs() {
                   attempt ++;
                   err = err2;
                 }
-                if (attempt<=2) 
+                if (err == 0)
                   I2CClusterChanged[j] = 0;
               }
             }
@@ -826,7 +826,7 @@ void  ProcVar::acquireDallas()
     }
 
     if (lastDallasRequest==0) {
-        for (byte bus=0; bus<numDallasBuses; bus++) DallasDevs[bus]->requestTemperatures();
+        for (uint8_t bus=0; bus<numDallasBuses; bus++) DallasDevs[bus]->requestTemperatures();
         lastDallasRequest = millis();
     }
     
@@ -836,7 +836,7 @@ void  ProcVar::acquireDallas()
         for (int i = 0; i<numProcVars; i++) {
             if (ProcVars[i]->modeIsDallas()) {
                 DallasStruct *ds = (DallasStruct*) ProcVars[i]->ext_;
-                byte bus = ProcVars[i]->pin();
+                uint8_t bus = ProcVars[i]->pin();
                 if (ProcVars[i]->DallasAddr()) {
                     float x = DallasDevs[bus]->getTempC(ProcVars[i]->DallasAddr());
                     if (debugging && (x==85 || x==NOTaTEMP)) x = 20; //else {;Serial.print("x dallas =  ");Serial.println(x);}
@@ -870,7 +870,7 @@ void  ProcVar::acquireDallas()
                         else {
                           ds->avgReads[ds->avgPos] = x;
                           f = 0;
-                          for (byte p=0;p<DALLASAVERAGESIZE;p++)
+                          for (uint8_t p=0;p<DALLASAVERAGESIZE;p++)
                             f += ds->avgReads[p];
                           f /= DALLASAVERAGESIZE;
                           ds->avgPos = (ds->avgPos+1) % DALLASAVERAGESIZE;
@@ -896,7 +896,7 @@ void  ProcVar::acquireDallas()
                             ds->lastFluctuationMillis = millis();
                             if (ds->fluctuationPos == DALLASFLUCTUATIONNUM) {
                               float t = 0;
-                              for (byte p=1; p<DALLASFLUCTUATIONNUM; p++)
+                              for (uint8_t p=1; p<DALLASFLUCTUATIONNUM; p++)
                                 t += abs(ds->fluctuationVect[p] - ds->fluctuationVect[p-1]);
                               if (t > DALLASFLUCTUATIONTHRESHOLD*DALLASFLUCTUATIONNUM)
                                 ds->fluctuation++;
@@ -915,7 +915,7 @@ void  ProcVar::acquireDallas()
         if (warning)
             lastWarning = millis();
             
-        for (byte bus=0; bus<numDallasBuses; bus++) DallasDevs[bus]->requestTemperatures();
+        for (uint8_t bus=0; bus<numDallasBuses; bus++) DallasDevs[bus]->requestTemperatures();
         lastDallasRequest = millis();
     }
 }
@@ -948,11 +948,11 @@ void ProcVar::DallasScan(char * buf, int bufSize) {
       ((DallasStruct*) ProcVars[i]->ext_) -> foundInScan = false;
 
   say("Scanning for Dallas thermometers");
-  for (byte bus = 0; bus<numDallasBuses; bus++)
+  for (uint8_t bus = 0; bus<numDallasBuses; bus++)
     DallasDevs[bus]->requestTemperatures();
   delay(DALLASREQUESTINTERVAL*2);
 
-  for (byte bus = 0; bus<numDallasBuses; bus++) {
+  for (uint8_t bus = 0; bus<numDallasBuses; bus++) {
     say("");
     if (buf)
       strnncat(buf,"<BR>",bufSize);
@@ -1034,7 +1034,7 @@ void ProcVar::DallasScan(char * buf, int bufSize) {
     }
 }
 
-char * ProcVar::getDallasStatus(char *buf, byte mode, int bufSize) {
+char * ProcVar::getDallasStatus(char *buf, uint8_t mode, int bufSize) {
   char line[200];
   
   switch (mode) {
@@ -1082,7 +1082,7 @@ char * ProcVar::getDallasStatus(char *buf, byte mode, int bufSize) {
 }
 
 
-String ProcVar::getDallasStatus(byte mode, int bufSize) {
+String ProcVar::getDallasStatus(uint8_t mode, int bufSize) {
   char buf[2048];
   getDallasStatus(buf, mode, bufSize);
   return String(buf);
@@ -1090,7 +1090,7 @@ String ProcVar::getDallasStatus(byte mode, int bufSize) {
 
 
 
-unsigned long    ProcVar::persistenceChecksum(byte PersistenceGroup)
+unsigned long    ProcVar::persistenceChecksum(uint8_t PersistenceGroup)
 {
   unsigned long chk = 0;
   int  padding=0;
@@ -1098,7 +1098,7 @@ unsigned long    ProcVar::persistenceChecksum(byte PersistenceGroup)
   for (int i = 0; i<numProcVars; i++) {
     if (ProcVars[i]->persistenceGroup() == PersistenceGroup) {
       const char * pos = ProcVars[i]->tag();
-      while (byte b = (byte)(*pos)) {
+      while (uint8_t b = (uint8_t)(*pos)) {
         unsigned long x = ((unsigned long) b) << padding;
         chk = chk xor x;
         padding = (padding + 1) % 15;
@@ -1111,12 +1111,12 @@ unsigned long    ProcVar::persistenceChecksum(byte PersistenceGroup)
 
 void ProcVar::write_eeStructToEEPROM(int addr, eeStruct v)
 {
-  byte *b;
+  uint8_t *b;
   int addrTemp = addr;
   
   eeStruct t = read_eeStructFromEEPROM(addrTemp);
   if (v.f != t.f) {
-    b = (byte *)&v.li;
+    b = (uint8_t *)&v.li;
 
     for (int i=0; i<4; i++)  {
       EEPROM.write(addr+i,*b);
@@ -1128,9 +1128,9 @@ void ProcVar::write_eeStructToEEPROM(int addr, eeStruct v)
 eeStruct ProcVar::read_eeStructFromEEPROM(int addr)
 {
   eeStruct v;
-  byte *b;
+  uint8_t *b;
   
-   b = (byte *) &v.li;
+   b = (uint8_t *) &v.li;
 
   for (int i=0; i<4; i++) {
     (*b) = EEPROM.read(addr+i);
@@ -1152,7 +1152,7 @@ void ProcVar::forceResetToFactory()
 }
   
 
-void ProcVar::writeToEEPROM(byte persistenceGroup)
+void ProcVar::writeToEEPROM(uint8_t persistenceGroup)
 {
     int pos,maxPos=0;
     eeStruct s;
@@ -1188,7 +1188,7 @@ void ProcVar::writeToEEPROM(byte persistenceGroup)
     EEPROM.commit();
 }
 
-void ProcVar::readFromEEPROM(byte persistenceGroup) {
+void ProcVar::readFromEEPROM(uint8_t persistenceGroup) {
     int pos;
     eeStruct s;
     const char * name = NULL;

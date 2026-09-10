@@ -28,6 +28,7 @@ FMTData_t FMTData = {
   .FMTAltitude = 0.0,
   .FMTScreensaverTime = 120,
   .FMTKeypadPin = 6350,
+  .FMTEffectiveVentingExponent = 1.100f,
   .checksum = 0
 };
 

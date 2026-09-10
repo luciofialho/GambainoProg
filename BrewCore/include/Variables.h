@@ -6,8 +6,6 @@
 
 void configVariables();
 
-void processDerivedVars();
-
 void quickI2CSetZeros();
 
 extern unsigned long int lastPressureReceived;
