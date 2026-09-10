@@ -23,6 +23,7 @@
 #include "PressureControl.h"
 #include "datalog.h"
 #include "IOTK_ESPAsyncServer.h"
+#include <ElegantOTA.h>
 #include "PovotoTasks.h"
 #include <esp_system.h>
 
@@ -152,6 +153,7 @@ void setup() {
 
 
   povotoDataInit();
+  ElegantOTA.onStart(writeCountersDataToNIV);
   //esp_register_shutdown_handler(writeCountersDataToNIV);
 
   setupWiFi();

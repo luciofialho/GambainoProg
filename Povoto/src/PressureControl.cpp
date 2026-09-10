@@ -51,7 +51,18 @@ float beerVolume = 0.0f;
 float beerSG = 0.0;
 float beerABV = 0.0;
 float headSpaceCO2Mols = 0.0f;
+float beerCO2EvolutionGramsPerLiterPerDay = 0.0f;
 float sgPointGenerationTime = 0.0f;
+
+static constexpr unsigned long CO2_EVOLUTION_SAMPLE_MS = 60000UL;
+static constexpr uint16_t CO2_EVOLUTION_HISTORY_SIZE = 71;
+struct CO2EvolutionSample {
+  unsigned long millisStamp;
+  double totalMols;
+};
+static CO2EvolutionSample co2EvolutionHistory[CO2_EVOLUTION_HISTORY_SIZE];
+static uint16_t co2EvolutionStart = 0;
+static uint16_t co2EvolutionCount = 0;
 
 static unsigned long int timeToStartExpansion     = 0;
 static unsigned long int timeToFinishExpansion    = 0;
@@ -261,6 +272,77 @@ static void recomputeHeadspaceCO2MolsFromCurrentState() {
   }
 }
 
+static void resetBeerCO2Evolution() {
+  co2EvolutionStart = 0;
+  co2EvolutionCount = 0;
+  beerCO2EvolutionGramsPerLiterPerDay = 0.0f;
+}
+
+static void recomputeBeerCO2EvolutionFromCurrentState() {
+  const unsigned long now = millis();
+  if (now < 120000UL) {
+    return;
+  }
+
+  const double totalMols = double(CountersData.totalMolsEjected)
+      + double(CountersData.CO2InSolution) + double(headSpaceCO2Mols);
+  if (!isfinite(beerVolume) || beerVolume <= 0.0f || !isfinite(totalMols)) {
+    beerCO2EvolutionGramsPerLiterPerDay = 0.0f;
+    return;
+  }
+
+  if (co2EvolutionCount > 0) {
+    const uint16_t last = (co2EvolutionStart + co2EvolutionCount - 1) % CO2_EVOLUTION_HISTORY_SIZE;
+    if (now - co2EvolutionHistory[last].millisStamp < CO2_EVOLUTION_SAMPLE_MS) {
+      return;
+    }
+  }
+
+  // When full, replace the oldest sample.
+  if (co2EvolutionCount == CO2_EVOLUTION_HISTORY_SIZE) {
+    co2EvolutionStart = (co2EvolutionStart + 1) % CO2_EVOLUTION_HISTORY_SIZE;
+    --co2EvolutionCount;
+  }
+
+  const uint16_t index = (co2EvolutionStart + co2EvolutionCount) % CO2_EVOLUTION_HISTORY_SIZE;
+  co2EvolutionHistory[index] = {now, totalMols};
+  ++co2EvolutionCount;
+
+  if (co2EvolutionCount < 5) {
+    beerCO2EvolutionGramsPerLiterPerDay = 0.0f;
+    return;
+  }
+
+  const uint16_t avgWindow = co2EvolutionCount < 9
+      ? 1 : (co2EvolutionCount / 3 < 10 ? co2EvolutionCount / 3 : 10);
+  const unsigned long firstMillis = co2EvolutionHistory[co2EvolutionStart].millisStamp;
+  double firstMols = 0.0, lastMols = 0.0;
+  double firstTime = 0.0, lastTime = 0.0;
+  for (uint16_t i = 0; i < avgWindow; ++i) {
+    const CO2EvolutionSample &first = co2EvolutionHistory[(co2EvolutionStart + i) % CO2_EVOLUTION_HISTORY_SIZE];
+    const CO2EvolutionSample &last = co2EvolutionHistory[(co2EvolutionStart + co2EvolutionCount - avgWindow + i) % CO2_EVOLUTION_HISTORY_SIZE];
+    firstMols += first.totalMols;
+    lastMols += last.totalMols;
+    // Relative unsigned timestamps preserve elapsed time across millis() rollover.
+    firstTime += first.millisStamp - firstMillis;
+    lastTime += last.millisStamp - firstMillis;
+  }
+  const double deltaMols = (lastMols - firstMols) / avgWindow;
+  const double elapsedMs = (lastTime - firstTime) / avgWindow;
+  if (elapsedMs <= 0.0) {
+    beerCO2EvolutionGramsPerLiterPerDay = 0.0f;
+    return;
+  }
+  // Preserve the signed net change; clamp only when presenting the result.
+  beerCO2EvolutionGramsPerLiterPerDay = deltaMols
+      * CO2MOLAR_MASS * 86400000.0
+      / (double(beerVolume) * elapsedMs);
+}
+
+float getBeerCO2EvolutionGramsPerLiterPerDay() {
+  return fmaxf(0.0f, beerCO2EvolutionGramsPerLiterPerDay);
+}
+
 static void releasePressureReliefHistory() {
   if (pressureReliefHistory) {
     delete[] pressureReliefHistory;
@@ -449,6 +531,7 @@ static void restoreDerivedStateFromCounters() {
 }
 
 void requestDerivedStateRestoreFromCounters() {
+  resetBeerCO2Evolution();
   derivedStateRestorePending = true;
 }
 
@@ -874,8 +957,8 @@ void processPressure(bool afterRelief) {
   }
 
   recomputeDissolvedCO2MolsFromCurrentState();
-
   recomputeHeadspaceCO2MolsFromCurrentState();
+  recomputeBeerCO2EvolutionFromCurrentState();
   
   //float lastTotalCO2MolsProceduced = CountersData.CO2InSolution + headSpaceCO2Mols + CountersData.totalMolsEjected; está sendo usado ou não?
 

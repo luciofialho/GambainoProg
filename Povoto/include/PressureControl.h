@@ -16,6 +16,8 @@ float getVolumeDeterminationCalculatedSoFar();
 void applyDumpWindowHeadspaceRecalc(float headspaceBeforeL, float pressureBeforeBar, float pressureAfterBar);
 void requestDerivedStateRestoreFromCounters();
 float CO2Mass(float mols=-1);
+// g CO2/L/day; presentation clamps negative evolution to zero.
+float getBeerCO2EvolutionGramsPerLiterPerDay();
 float CO2DissolvedMols(float pressureBar, float sg, float temperatureC, float volumeL);
 boolean inPressureNoiseWindow();
 void getReliefsPerHourText(char *out, size_t outSize);
@@ -30,6 +32,9 @@ extern float sgPointGenerationTime;
 extern bool pressureSensorUnstable;
 extern float currentReading;
 extern float headSpaceCO2Mols;
+// Signed rate over up to 71 samples; averages each end from nine samples onward.
+// Zero until five samples are collected; sampling starts after two minutes uptime.
+extern float beerCO2EvolutionGramsPerLiterPerDay;
 extern float adjustedPressureAfterRelief;
 extern float pressureOnReliefExtrap; // extrapolates for relief time window
 extern float pressureAfterRelief;

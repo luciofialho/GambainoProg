@@ -14,11 +14,9 @@
 
 void handleMainMenu(AsyncWebServerRequest *request) {
   char dateTimeBuf[20];
-  char reliefsPerHourText[48];
   char volumeProgressBuf[48];
   NTPFormatedDateTime(dateTimeBuf);
   String uptimeStr = formatedUptime();
-  getReliefsPerHourText(reliefsPerHourText, sizeof(reliefsPerHourText));
 
   String html = "<!DOCTYPE html><html><head>";
   html += "<meta charset='UTF-8'>";
@@ -64,7 +62,7 @@ void handleMainMenu(AsyncWebServerRequest *request) {
   html += "<div class='status-item'><strong>Temperature:</strong> " + String(ControlData.temperature, 1) + " °C</div>";
   html += "<div class='status-item'><strong>Pressure:</strong> " + String(ControlData.pressure, 2) + " bar</div>";
   html += "<div class='status-item'><strong>Volume:</strong> " + String(beerVolume, 1) + " L</div>";
-  html += "<div class='status-item'><strong>SG:</strong> " + String(beerSG, 3) + String(reliefsPerHourText) + "</div>";
+  html += "<div class='status-item'><strong>SG:</strong> " + String(beerSG, 3) + " (gCO2/L/d: " + String(getBeerCO2EvolutionGramsPerLiterPerDay(), 2) + ")</div>";
   html += "<div class='status-item'><strong>Uptime:</strong> " + uptimeStr + "</div>";
   html += "<div class='status-item'><strong>Date/Time:</strong> " + String(dateTimeBuf) + "</div>";
   html += "</div>";
@@ -1040,17 +1038,26 @@ void handleCountersDataPage(AsyncWebServerRequest *request) {
 }
 
 void handleCountersDataUpdate(AsyncWebServerRequest *request) {
+  bool co2StateChanged = false;
   if (request->hasParam("totalReliefCount", true)) {
-    CountersData.totalReliefCount = (uint32_t)request->getParam("totalReliefCount", true)->value().toInt();
+    const uint32_t value = (uint32_t)request->getParam("totalReliefCount", true)->value().toInt();
+    co2StateChanged |= value != CountersData.totalReliefCount;
+    CountersData.totalReliefCount = value;
   }
   if (request->hasParam("totalMolsEjected", true)) {
-    CountersData.totalMolsEjected = request->getParam("totalMolsEjected", true)->value().toFloat();
+    const float value = request->getParam("totalMolsEjected", true)->value().toFloat();
+    co2StateChanged |= value != CountersData.totalMolsEjected;
+    CountersData.totalMolsEjected = value;
   }
   if (request->hasParam("CO2InSolution", true)) {
-    CountersData.CO2InSolution = request->getParam("CO2InSolution", true)->value().toFloat();
+    const float value = request->getParam("CO2InSolution", true)->value().toFloat();
+    co2StateChanged |= value != CountersData.CO2InSolution;
+    CountersData.CO2InSolution = value;
   }
   if (request->hasParam("headSpaceVolume", true)) {
-    CountersData.headSpaceVolume = request->getParam("headSpaceVolume", true)->value().toFloat();
+    const float value = request->getParam("headSpaceVolume", true)->value().toFloat();
+    co2StateChanged |= value != CountersData.headSpaceVolume;
+    CountersData.headSpaceVolume = value;
   }
   if (request->hasParam("correctionPlato", true)) {
     CountersData.correctionPlato = request->getParam("correctionPlato", true)->value().toFloat();
@@ -1066,7 +1073,9 @@ void handleCountersDataUpdate(AsyncWebServerRequest *request) {
   }
 
   writeCountersDataToNIV();
-  requestDerivedStateRestoreFromCounters();
+  if (co2StateChanged) {
+    requestDerivedStateRestoreFromCounters();
+  }
 
   String html = "<!DOCTYPE html><html><head>";
   html += "<meta charset='UTF-8'>";

@@ -59,7 +59,7 @@ static bool buildBrewfatherPayload(char *out, size_t outSize) {
   const float targetTemp = isValidTemp(SetPointData.setPointTemp) ? SetPointData.setPointTemp : NAN;
   const float gravity = (beerSG >= 0.0f && beerSG <= 1.1f) ? beerSG : NAN;
   const float pressure = (ControlData.pressure >= 0.0f && ControlData.pressure <= 3.0f) ? ControlData.pressure : NAN;
-  const float bpm = getReliefsPerHourValue();
+  const float bpm = getBeerCO2EvolutionGramsPerLiterPerDay();
 
   char tempField[24];
   char extTempField[24];
@@ -198,6 +198,7 @@ void doDataLog() {
     GLogAddData("CorrectionPlato");
     GLogAddData("SGAttenuation");
     GLogAddData("HeadSpaceCO2Mols");
+    GLogAddData("gCO2/L/d");
     GLogAddData("ChillTime");
     GLogAddData("HeatTime");
     GLogAddData("taskWindowType");
@@ -232,6 +233,7 @@ void doDataLog() {
     GLogAddData(CountersData.correctionPlato,3);
     GLogAddData(CountersData.SGAttenuation,5);
     GLogAddData(headSpaceCO2Mols,3);
+    GLogAddData(beerCO2EvolutionGramsPerLiterPerDay,3);
     GLogAddData(CountersData.totalChillTime/3600.,2);
     GLogAddData(CountersData.totalHeatTime /3600.,2);
     GLogAddData(taskWindowTypeToText(taskWindowType));
