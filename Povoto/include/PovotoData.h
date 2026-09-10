@@ -101,8 +101,8 @@ extern ControlData_t ControlData;
 // Counters data
 struct CountersData_t {
   uint32_t totalReliefCount;
-  float totalMolsEjected;
-  float CO2InSolution;
+  float totalMolsEjected; // lucio - versao - trocar para double
+  float CO2InSolution; // lucio - versao - trocar para double
   float headSpaceVolume;
   float correctionPlato;
   float SGAttenuation;

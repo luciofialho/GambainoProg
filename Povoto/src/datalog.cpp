@@ -242,7 +242,7 @@ void doDataLog() {
     GLogAddData(pressureReachedTarget,3);
     GLogAddData(pressureReachedTargetMillis);
     GLogAddData(pressureDropFactor,5);
-    GLogAddData(millis());
+    GLogAddData(millis()); // lucio versao - ordenar variaveis
     GLogSend();
   }
 }

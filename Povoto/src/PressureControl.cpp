@@ -50,7 +50,6 @@ float headSpaceVolume = 0.0f;
 float beerVolume = 0.0f;
 float beerSG = 0.0;
 float beerABV = 0.0;
-float dissolvedCO2Mols = 0.0f;
 float headSpaceCO2Mols = 0.0f;
 float sgPointGenerationTime = 0.0f;
 
@@ -165,6 +164,88 @@ static void updateBeerVolumeFromHeadspace() {
   if (beerVolume < 0.0f) {
     beerVolume = 0.0f;
   }
+}
+
+
+
+float CO2DissolvedMols(float pressureBar, float sg, float temperatureC, float volumeL) {
+  if (pressureBar <= 0.0f || volumeL <= 0.0f) {
+    return 0.0f;
+  }
+
+  const float tempK = temperatureC + 273.15f;
+  const float kH_298 = 0.0334f; // mol/(L*atm) at 25C for CO2 in water fonte: Sander, R. (2015). Compilation of Henry's law constants (version 4.0) for water as solvent. Atmospheric Chemistry and Physics, 15(8), 4399-4981. https://doi.org/10.5194/acp-15-4399-2015
+  const float pressureAtm = (pressureBar+Patm) * 0.986923f; // constant is bar --> atm conversion
+
+  float kH = kH_298 * expf(2400.0f * (1.0f / tempK - 1.0f / 298.15f));
+
+  float sgConsidered;
+  if (std::isfinite(sg)) 
+    sgConsidered = sg;
+  else
+    sgConsidered = BatchData.batchOG;
+
+  float sgPoints = (sgConsidered - 1.0f) * 1000.0f;
+  float sgCorrection = 1.0f - (sgPoints * 0.0015f); // Correção linear: cada ponto de SG reduz a solubilidade em 0.15%. Ex: SG 1.050 tem correção de 7.5%, SG 1.100 tem correção de 15%. Fonte: https://www.brewersfriend.com/2012/11/19/co2-solubility-in-beer/
+  if (sgCorrection < 0.5f) sgCorrection = 0.5f;
+  if (sgCorrection > 1.0f) sgCorrection = 1.0f;
+  if (!isfinite(sgCorrection)) {
+    sgCorrection = 1.0f;
+  }
+
+  float molPerL = kH * pressureAtm * sgCorrection;
+  return molPerL * volumeL;
+}
+
+static void recomputeDissolvedCO2MolsFromCurrentState() {
+    static unsigned long lastUpdateMillis = 0;
+
+
+    const unsigned long now = millis();
+
+    // Preserva o CO₂ já inicializado ou restaurado dos contadores.
+    if (!lastUpdateMillis) {
+        lastUpdateMillis = now;
+        return;
+    }
+
+    if (CountersData.totalReliefCount == 0 &&
+        ControlData.pressure <= BatchData.startPressure) {
+      CountersData.CO2InSolution = 0.0f;
+      lastUpdateMillis = now;
+      return;
+    }
+
+    if (!MILLISDIFF(lastUpdateMillis, 30000UL)) 
+      return;
+
+    double dtSeconds = (millis() - lastUpdateMillis) / 1000.0;
+
+    if (dtSeconds<0.0 || dtSeconds > 60.0) // Ignore if the time difference is negative or greater than 1 minute
+      dtSeconds = 30.0;
+
+    lastUpdateMillis = now;
+
+    const bool activeFermentation =
+      SetPointData.mode == MODE_FERMENTING &&
+      reliefsPerHourAvailable &&
+      reliefsPerHourValue > 1.0f;
+
+    const double t50Seconds = activeFermentation
+      ? 300.0
+      : double(CalibrationData.co2TransferTime) * 3600.0;
+
+    const double equilibriumMols = CO2DissolvedMols(ControlData.pressure,beerSG,ControlData.temperature,beerVolume);
+
+    if (t50Seconds > 0.0) {
+        const double alpha =
+            -expm1(-0.6931471805599453 * dtSeconds / t50Seconds);
+
+        CountersData.CO2InSolution +=
+            alpha * (equilibriumMols - CountersData.CO2InSolution);
+    } else {
+        CountersData.CO2InSolution = equilibriumMols;
+    }
 }
 
 static void recomputeHeadspaceCO2MolsFromCurrentState() {
@@ -353,35 +434,6 @@ float RealPlatoToSG(float realPlato) {
     return ApparentPlatoToSG(apparentPlato);
 }
 
-
-float CO2DissolvedMols(float pressureBar, float sg, float temperatureC, float volumeL) {
-  if (pressureBar <= 0.0f || volumeL <= 0.0f) {
-    return 0.0f;
-  }
-
-  const float tempK = temperatureC + 273.15f;
-  const float kH_298 = 0.0334f; // mol/(L*atm) at 25C for CO2 in water fonte: Sander, R. (2015). Compilation of Henry's law constants (version 4.0) for water as solvent. Atmospheric Chemistry and Physics, 15(8), 4399-4981. https://doi.org/10.5194/acp-15-4399-2015
-  const float pressureAtm = (pressureBar+Patm) * 0.986923f; // constant is bar --> atm conversion
-
-  float kH = kH_298 * expf(2400.0f * (1.0f / tempK - 1.0f / 298.15f));
-
-  float sgConsidered;
-  if (std::isfinite(sg)) 
-    sgConsidered = sg;
-  else
-    sgConsidered = BatchData.batchOG;
-
-  float sgPoints = (sgConsidered - 1.0f) * 1000.0f;
-  float sgCorrection = 1.0f - (sgPoints * 0.0015f); // Correção linear: cada ponto de SG reduz a solubilidade em 0.15%. Ex: SG 1.050 tem correção de 7.5%, SG 1.100 tem correção de 15%. Fonte: https://www.brewersfriend.com/2012/11/19/co2-solubility-in-beer/
-  if (sgCorrection < 0.5f) sgCorrection = 0.5f;
-  if (sgCorrection > 1.0f) sgCorrection = 1.0f;
-  if (!isfinite(sgCorrection)) {
-    sgCorrection = 1.0f;
-  }
-
-  float molPerL = kH * pressureAtm * sgCorrection;
-  return molPerL * volumeL;
-}
 
 static void restoreDerivedStateFromCounters() {
   if (CountersData.headSpaceVolume > 0.0f) {
@@ -821,16 +873,12 @@ void processPressure(bool afterRelief) {
 
   }
 
-  if (CountersData.totalReliefCount> 1 || ControlData.pressure > BatchData.startPressure+0.2) 
-    dissolvedCO2Mols = CO2DissolvedMols(ControlData.pressure, beerSG, ControlData.temperature, beerVolume);
-  else
-    dissolvedCO2Mols = 0;
+  recomputeDissolvedCO2MolsFromCurrentState();
 
   recomputeHeadspaceCO2MolsFromCurrentState();
   
   //float lastTotalCO2MolsProceduced = CountersData.CO2InSolution + headSpaceCO2Mols + CountersData.totalMolsEjected; está sendo usado ou não?
 
-  CountersData.CO2InSolution = dissolvedCO2Mols;
   CountersData.headSpaceVolume = headSpaceVolume;
 
 //  float massCO2Produced = CO2Mass(CountersData.totalCO2MolsProduced - lastTotalCO2MolsProceduced);
@@ -1494,7 +1542,7 @@ char *getPressureControlStatus(char *st) {
         strnncat(st, tmp, 2048);
 
     snprintf(tmp, sizeof(tmp), "----<br>Relief count: %lu<br>Ejected CO2 mols: %.3f<br>Dissolved CO2 mols: %.3f<br>",
-             (unsigned long)CountersData.totalReliefCount, CountersData.totalMolsEjected, dissolvedCO2Mols);
+             (unsigned long)CountersData.totalReliefCount, CountersData.totalMolsEjected, CountersData.CO2InSolution);
     strnncat(st, tmp, 2048);
     if (!reliefsPerHourAvailable || reliefsPerHourValue < RELIEF_PER_HOUR_MIN_DISPLAY) {
       if (!reliefsPerHourAvailable) {

@@ -617,7 +617,7 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   // CO2 transfer time
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='form-group'>"
-               "<label for='co2TransferTime'>CO2 transfer time constant (mins):</label>", remaining);
+               "<label for='co2TransferTime'>CO2 equilibrim half-time (hours):</label>", remaining);
   snprintf(buffer, sizeof(buffer),
     "<input type='number' id='co2TransferTime' name='co2TransferTime' value='%d' step='1' min='0'>",
     CalibrationData.co2TransferTime);
