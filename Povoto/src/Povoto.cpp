@@ -172,6 +172,8 @@ void setup() {
   
   server.on("/fmtdata", HTTP_GET, handleFMTDataPage);
   server.on("/fmtdata/update", HTTP_POST, handleFMTDataUpdate);
+  server.on("/userConfig", HTTP_GET, handleUserConfigPage);
+  server.on("/userConfig/update", HTTP_POST, handleUserConfigUpdate);
   
   server.on("/calibration", HTTP_GET, handleCalibrationDataPage);
   server.on("/calibration/refresh-current", HTTP_GET, handleCalibrationCurrentRefresh);

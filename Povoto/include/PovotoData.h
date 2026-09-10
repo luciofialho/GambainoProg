@@ -30,14 +30,22 @@ struct FMTData_t {
   float FMTOnTimeDuringBrew;
   float FMTOFFTimeDuringBrew;
   float FMTAltitude;
-  int   FMTScreensaverTime;
-  int   FMTKeypadPin;   // PIN de 4 dígitos para desbloquear o teclado no display
   float FMTEffectiveVentingExponent;
   uint32_t checksum;
 } __attribute__((packed));
 
 
 extern FMTData_t FMTData;
+
+struct UserConfigurationData_t {
+  int screensaverTime;
+  int keypadPin;
+  int displayBrightness; // 1..10
+  uint32_t checksum;
+} __attribute__((packed));
+extern UserConfigurationData_t UserConfigurationData;
+bool readUserConfigurationDataFromEEPROM();
+void writeUserConfigurationDataToNIV();
 extern float Patm;
 
 // Calibration data

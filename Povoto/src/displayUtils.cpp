@@ -557,17 +557,28 @@ uint8_t rd(uint8_t reg){
   return Wire.available()? Wire.read(): 0xFF;
 }
 
+// Keep all backlight paths on PWM, including sleep and display recovery.
+static bool backlightOn = true;
+static int appliedBacklightDuty = -1;
+static void setDisplayBacklight(bool on) {
+  backlightOn = on;
+  const int level = constrain(UserConfigurationData.displayBrightness, 1, 10);
+  const int duty = on ? (level * 255 + 5) / 10 : 0;
+  analogWrite(TFT_BL, duty);
+  appliedBacklightDuty = duty;
+}
+
 static void runDisplayHardwareReset(unsigned long resetLowMs=10,
                                     unsigned long settleMs=120,
                                     bool leaveScreenSaver=true,
                                     bool redrawMain=true) {
-  digitalWrite(TFT_BL, LOW);
+  setDisplayBacklight(false);
   digitalWrite(TFT_RST, LOW);
   delay(resetLowMs);
   digitalWrite(TFT_RST, HIGH);
   delay(settleMs);
   tft.init();
-  digitalWrite(TFT_BL, HIGH);
+  setDisplayBacklight(true);
 
   if (leaveScreenSaver) {
     screenSaverActive = false;
@@ -584,7 +595,7 @@ void resetDisplayHardware() {
 
 void initTFT() {
   pinMode(TFT_BL, OUTPUT);
-  digitalWrite(TFT_BL, HIGH); // Acende a luz de fundo
+  setDisplayBacklight(true); // Acende a luz de fundo
 
   // IRQ do touch FT é open-drain em muitos módulos; pull-up evita flutuação.
   pinMode(TOUCH_IRQ, INPUT_PULLUP);
@@ -592,6 +603,7 @@ void initTFT() {
 
   Serial.println("Iniciando TFT ST7796 SPI...");
   tft.init();
+  setDisplayBacklight(true);
   TFTWaintingWifiConnection();
 }
 
@@ -632,7 +644,7 @@ bool ftRead(uint8_t reg, uint8_t* buf, size_t len) {
 
 // Tenta acordar o painel sem reinit completo (mais rapido).
 static bool tryWakeDisplaySoft() {
-  digitalWrite(TFT_BL, LOW);
+  setDisplayBacklight(false);
   tft.writecommand(0x11); // Sleep OUT
   delay(120);             // Datasheet: aguarda saida de sleep
   tft.writecommand(0x29); // Display ON
@@ -649,7 +661,7 @@ static bool tryWakeDisplaySoft() {
   }
 #endif
 
-  digitalWrite(TFT_BL, HIGH);
+  setDisplayBacklight(true);
   return true;
 }
 
@@ -668,7 +680,7 @@ void screenSaver(bool enable) {
       Serial.println(">>> KB: fechado por screensaver (CANCEL) <<<");
     }
     tft.fillScreen(TFT_BLACK);
-    digitalWrite(TFT_BL, LOW);      // Desliga backlight (maior economia!)
+    setDisplayBacklight(false);      // Desliga backlight (maior economia!)
     tft.writecommand(0x10);         // Sleep IN (reduz consumo do controlador)
   }
   else {
@@ -1005,7 +1017,7 @@ static void openPinKeyboard(void (*afterUnlock)()) {
   openNumKeyboard("PIN:", NOTaTEMP, 0.0f, 9999.0f, 0, false, NOTaTEMP, true,
                   [](float val) {
                     int entered = (int)val;
-                    if (entered == FMTData.FMTKeypadPin) {
+                    if (entered == UserConfigurationData.keypadPin) {
                       pinUnlocked   = true;
                       pinUnlockedAt = millis();
                       Serial.println(">>> PIN: desbloqueado <<<");
@@ -1290,6 +1302,9 @@ static void handleBatchInfoTouch(uint16_t x, uint16_t y) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void processTouch() {
+  // Apply web changes on the display task, without waking the screensaver.
+  const int duty = backlightOn ? (constrain(UserConfigurationData.displayBrightness, 1, 10) * 255 + 5) / 10 : 0;
+  if (duty != appliedBacklightDuty) setDisplayBacklight(backlightOn);
   uint16_t x, y;
   uint16_t raw_x, raw_y;
 
@@ -1301,7 +1316,7 @@ void processTouch() {
   }
   
   if (!touchFlag) {
-    unsigned long ssTimeout = (unsigned long)FMTData.FMTScreensaverTime * 1000UL;
+    unsigned long ssTimeout = (unsigned long)UserConfigurationData.screensaverTime * 1000UL;
     if (!screenSaverActive && !isVolumeDeterminationActive() && !taskUIActive && (MILLISDIFF(lastClick, ssTimeout))) {
       forceScreenSaver(true);
     }

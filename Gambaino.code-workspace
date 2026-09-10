@@ -32,6 +32,8 @@
     }
   ],
   "settings": {
+    "cmake.cmakePath": "C:/Users/lucio/.platformio/packages/tool-cmake/bin/cmake.exe",
+    "cmake.configureOnOpen": false,
     "files.associations": {
       "random": "cpp",
       "string_view": "cpp",

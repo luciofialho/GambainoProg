@@ -73,6 +73,7 @@ void handleMainMenu(AsyncWebServerRequest *request) {
   html += "<a href='/control' class='menu-button'><span class='icon'>&#128736;</span>Control</a>";
   html += "<a href='/calibration' class='menu-button'><span class='icon'>&#128200;</span>Calibration</a>";
   html += "<a href='/fmtdata' class='menu-button'><span class='icon'>&#9881;</span>Settings</a>";
+  html += "<a href='/userConfig' class='menu-button'><span class='icon'>&#127899;&#65039;</span>User Configuration</a>";
   if (debugging) {
     html += "<a href='/debugparams' class='menu-button'><span class='icon'>&#128295;</span>Debug Params</a>";
   }
@@ -326,24 +327,6 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
   
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='form-group'>"
-               "<label for='FMTScreensaverTime'>Screensaver Time (seconds):</label>", remaining);
-  sprintf(buffer, "<input type='number' id='FMTScreensaverTime' name='FMTScreensaverTime' value='%d' step='1' min='10'>", FMTData.FMTScreensaverTime);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, buffer, remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div>", remaining);
-
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='form-group'>"
-               "<label for='FMTKeypadPin'>Keypad PIN (4 digits):</label>", remaining);
-  sprintf(buffer, "<input type='number' id='FMTKeypadPin' name='FMTKeypadPin' value='%d' step='1' min='0' max='9999'>", FMTData.FMTKeypadPin);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, buffer, remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div>", remaining);
-
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='form-group'>"
                "<label for='FMTEffectiveVentingExponent'>Effective Venting Exponent:</label>", remaining);
   sprintf(buffer, "<input type='number' id='FMTEffectiveVentingExponent' name='FMTEffectiveVentingExponent' value='%.3f' step='0.001'>", FMTData.FMTEffectiveVentingExponent);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -401,14 +384,6 @@ void handleFMTDataUpdate(AsyncWebServerRequest *request) {
   }
   if (request->hasParam("FMTAltitude", true)) {
     FMTData.FMTAltitude = request->getParam("FMTAltitude", true)->value().toFloat();
-  }
-  if (request->hasParam("FMTScreensaverTime", true)) {
-    FMTData.FMTScreensaverTime = request->getParam("FMTScreensaverTime", true)->value().toInt();
-  }
-  if (request->hasParam("FMTKeypadPin", true)) {
-    int pin = request->getParam("FMTKeypadPin", true)->value().toInt();
-    if (pin >= 0 && pin <= 9999)
-      FMTData.FMTKeypadPin = pin;
   }
   if (request->hasParam("FMTEffectiveVentingExponent", true)) {
     FMTData.FMTEffectiveVentingExponent = request->getParam("FMTEffectiveVentingExponent", true)->value().toFloat();
@@ -1442,3 +1417,64 @@ void handleControlReliefOnce(AsyncWebServerRequest *request) {
 
 
 
+
+
+void handleUserConfigPage(AsyncWebServerRequest *request) {
+  String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'>"
+    "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+    "<title>User Configuration</title><style>"
+    "body{font-family:Arial,sans-serif;background:#f7f7ff;padding:20px;}"
+    ".container{max-width:600px;margin:auto;background:white;padding:24px;border-radius:15px;}"
+    "label{display:block;margin-top:20px;}input{box-sizing:border-box;width:100%;padding:10px;}"
+    "button{margin-top:24px;padding:12px 24px;background:#667eea;color:white;border:0;border-radius:8px;}"
+    "</style></head><body><div class='container'><h1>User Configuration</h1>"
+    "<form action='/userConfig/update' method='POST'>"
+    "<label for='screensaverTime'>Screensaver Time (seconds):</label>"
+    "<input type='number' id='screensaverTime' name='screensaverTime' min='10' max='2147483647' step='1' required value='";
+  html += String(UserConfigurationData.screensaverTime);
+  html += "'><label for='keypadPin'>Keypad PIN (4 digits):</label>"
+    "<input type='number' id='keypadPin' name='keypadPin' min='0' max='9999' step='1' required value='";
+  html += String(UserConfigurationData.keypadPin);
+  html += "'><label for='displayBrightness'>Display Brightness: <output id='brightnessValue'>";
+  html += String(UserConfigurationData.displayBrightness);
+  html += "</output> / 10</label><input type='range' id='displayBrightness' name='displayBrightness' "
+    "min='1' max='10' step='1' oninput=\"document.getElementById('brightnessValue').value=this.value\" value='";
+  html += String(UserConfigurationData.displayBrightness);
+  html += "'><button type='submit'>Save</button> <a href='/'>Cancel</a></form></div></body></html>";
+  request->send(200, "text/html", html);
+}
+
+static bool readUserConfigInteger(AsyncWebServerRequest *request, const char *name,
+                                  int minimum, int maximum, int &value) {
+  if (!request->hasParam(name, true)) return true;
+  const String text = request->getParam(name, true)->value();
+  if (text.isEmpty()) return false;
+  // Parse digits with a bound check before multiplication, avoiding overflow.
+  int parsed = 0;
+  for (size_t i = 0; i < text.length(); ++i) {
+    const char c = text[i];
+    if (c < '0' || c > '9' || parsed > (maximum - (c - '0')) / 10) return false;
+    parsed = parsed * 10 + c - '0';
+    if (parsed > maximum) return false;
+  }
+  if (parsed < minimum) return false;
+  value = parsed;
+  return true;
+}
+
+void handleUserConfigUpdate(AsyncWebServerRequest *request) {
+  int screensaverTime = UserConfigurationData.screensaverTime;
+  int keypadPin = UserConfigurationData.keypadPin;
+  int brightness = UserConfigurationData.displayBrightness;
+  if (!readUserConfigInteger(request, "screensaverTime", 10, 2147483647, screensaverTime) ||
+      !readUserConfigInteger(request, "keypadPin", 0, 9999, keypadPin) ||
+      !readUserConfigInteger(request, "displayBrightness", 1, 10, brightness)) {
+    request->send(400, "text/plain", "Invalid settings: screensaver >= 10 seconds, PIN 0-9999, brightness 1-10.");
+    return;
+  }
+  UserConfigurationData.screensaverTime = screensaverTime;
+  UserConfigurationData.keypadPin = keypadPin;
+  UserConfigurationData.displayBrightness = brightness;
+  writeUserConfigurationDataToNIV();
+  request->redirect("/userConfig");
+}

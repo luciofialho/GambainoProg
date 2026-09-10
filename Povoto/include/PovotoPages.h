@@ -1,6 +1,9 @@
 #ifndef POVOTOPAGES_H
 #define POVOTOPAGES_H
 
+void handleUserConfigPage(AsyncWebServerRequest *request);
+void handleUserConfigUpdate(AsyncWebServerRequest *request);
+
 // Web interface handlers
 void handleMainMenu(AsyncWebServerRequest *request);
 

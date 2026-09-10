@@ -1,5 +1,6 @@
 #include <arduino.h>
 #include <math.h>
+#include <stddef.h>
 #include <Preferences.h>
 #include "PovotoCommon.h"
 #include "PovotoData.h"
@@ -26,11 +27,34 @@ FMTData_t FMTData = {
   .FMTOnTimeDuringBrew = 5.0,
   .FMTOFFTimeDuringBrew = 5.0,
   .FMTAltitude = 0.0,
-  .FMTScreensaverTime = 120,
-  .FMTKeypadPin = 6350,
   .FMTEffectiveVentingExponent = 1.100f,
   .checksum = 0
 };
+
+// Separate NVS key (maximum 15 characters).
+#define USERCONFIGDATAKEY "UserConfigData"
+UserConfigurationData_t UserConfigurationData = {120, 6350, 10, 0};
+
+// Original packed layout, retained only to migrate existing installations.
+struct LegacyFMTData_t {
+  byte PovotoNum;
+  float FMTVolume;
+  float FMTReliefVolume;
+  float FMTMinActiveTime;
+  float FMTMaxActiveTime;
+  float FMTMinOffTime;
+  float FMTalpha;
+  float FMTbeta;
+  float FMTHeaterOnTime;
+  float FMTHeaterOffTime;
+  float FMTOnTimeDuringBrew;
+  float FMTOFFTimeDuringBrew;
+  float FMTAltitude;
+  int   FMTScreensaverTime;
+  int   FMTKeypadPin;   // PIN de 4 dígitos para desbloquear o teclado no display
+  float FMTEffectiveVentingExponent;
+  uint32_t checksum;
+} __attribute__((packed));
 
 float Patm = 1.0f;
 
@@ -183,12 +207,45 @@ void writeNIVData(const char *key, void * start, void *end) {
 } 
 
 bool readFMTDataFromEEPROM() {
-  return readNIVData(FMTDATAKEY, &FMTData, ((byte*)&FMTData) + sizeof(FMTData_t) - 1);
+  if (readNIVData(FMTDATAKEY, &FMTData, ((byte*)&FMTData) + sizeof(FMTData_t) - 1)) {
+    return true;
+  }
+  LegacyFMTData_t legacy = {};
+  if (!readNIVData(FMTDATAKEY, &legacy, ((byte*)&legacy) + sizeof(legacy) - 1)) {
+    return false;
+  }
+  memcpy(&FMTData, &legacy, offsetof(LegacyFMTData_t, FMTScreensaverTime));
+  FMTData.FMTEffectiveVentingExponent = legacy.FMTEffectiveVentingExponent;
+  FMTData.checksum = 0;
+  // Save the extracted preferences before replacing the legacy FMT block.
+  if (!readUserConfigurationDataFromEEPROM()) {
+    UserConfigurationData.screensaverTime = legacy.FMTScreensaverTime >= 10 ? legacy.FMTScreensaverTime : 120;
+    UserConfigurationData.keypadPin = legacy.FMTKeypadPin >= 0 && legacy.FMTKeypadPin <= 9999 ? legacy.FMTKeypadPin : 6350;
+    writeUserConfigurationDataToNIV();
+  }
+  writeFMTDataToNIV();
+  return true;
 }
 
 void writeFMTDataToNIV() {
   writeNIVData(FMTDATAKEY, &FMTData, ((byte*)&FMTData) + sizeof(FMTData_t) - 1);
 } 
+
+bool readUserConfigurationDataFromEEPROM() {
+  UserConfigurationData_t saved = {};
+  if (!readNIVData(USERCONFIGDATAKEY, &saved, ((byte*)&saved) + sizeof(saved) - 1) ||
+      saved.screensaverTime < 10 || saved.keypadPin < 0 || saved.keypadPin > 9999 ||
+      saved.displayBrightness < 1 || saved.displayBrightness > 10) {
+    return false;
+  }
+  UserConfigurationData = saved;
+  return true;
+}
+
+void writeUserConfigurationDataToNIV() {
+  writeNIVData(USERCONFIGDATAKEY, &UserConfigurationData,
+      ((byte*)&UserConfigurationData) + sizeof(UserConfigurationData) - 1);
+}
 
 void updatePatmFromFMTAltitude() {
   float altitude = FMTData.FMTAltitude;
@@ -229,6 +286,9 @@ void povotoDataInit() {
 
   if (!readFMTDataFromEEPROM())
     Serial.println("FMT data load failed, using defaults");
+
+  if (!readUserConfigurationDataFromEEPROM())
+    Serial.println("User configuration load failed, using defaults");
 
   if (!readCalibrationDataFromEEPROM())
     Serial.println("Calibration data load failed, using defaults");
