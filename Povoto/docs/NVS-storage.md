@@ -10,6 +10,14 @@ totalMolsEjected and CO2InSolution use getDouble/putDouble (8 bytes).
 
 To add a field, declare it and its default, then add its get/put calls to the
 corresponding read/write functions. Keep keys within the NVS 15-character limit.
+For any field added to `FMTData_t` or `UserConfigurationData_t`, also update
+both `savePovotoSettingsBackup()` and `loadPovotoSettingsBackup()` in
+`PovotoSettingsBackup.cpp`. These routines generate
+and read the `povoto-settings.json` browser download; the file is not kept in
+LittleFS. Import trusts exported values and does not repeat the page
+validations. Fields absent from an older backup retain the current value on the
+device; fields no longer used by the firmware are ignored. The backup JSON
+version is informational and is accepted across versions.
 To remove a field, remove its declaration and get/put calls. Increment
 PVT_NVS_SCHEMA_VERSION (in PovotoData.h) when obsolete keys should be removed.
 Version 0 is reserved for missing/incomplete storage.

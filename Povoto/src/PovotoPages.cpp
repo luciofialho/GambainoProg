@@ -10,6 +10,7 @@
 #include "IOTK_GLog.h"
 #include "PovotoTasks.h"
 #include "PovotoWifi.h"
+#include "PovotoSettingsBackup.h"
 
 // ========== MAIN MENU ==========
 
@@ -198,7 +199,7 @@ void handleDebugParamsUpdate(AsyncWebServerRequest *request) {
 // ========== FMT DATA HANDLERS ==========
 
 void handleFMTDataPage(AsyncWebServerRequest *request) {
-  const size_t BUFFER_SIZE = 6000;
+  const size_t BUFFER_SIZE = 7500;
   char* html = (char*)malloc(BUFFER_SIZE);
   if (!html) {
     request->send(500, "text/plain", "Out of memory");
@@ -224,6 +225,7 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
                 "button:hover { background-color: #45a049; }"
                 ".btn-secondary { background-color: #888; }"
                 ".btn-secondary:hover { background-color: #666; }"
+                ".settings-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:24px; }"
                 "</style>"
                 "</head><body>"
                 "<div class='container'>"
@@ -309,10 +311,16 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
   strncat(html, "</div>", remaining);
 
   remaining = BUFFER_SIZE - strlen(html) - 1;
-    strncat(html, "<p><a href='/wifi/reconfigure'>Reconfigure WiFi network</a></p>"
-                 "<button type='submit'>Save</button> "
+    strncat(html, "<button type='submit'>Apply page changes</button> "
                  "<button type='button' class='btn-secondary' onclick='window.location=\"/\"'>Cancel</button>"
                  "</form>"
+                 "<div class='settings-actions'>"
+                 "<button type='button' class='btn-secondary' onclick='window.location=\"/wifi/reconfigure\"'>Reconfigure WiFi network</button>"
+                 "<button type='button' onclick='window.location=\"/fmtdata/save\"'>Save settings</button>"
+                 "<button type='button' class='btn-secondary' onclick='document.getElementById(\"settingsFile\").click()'>Load settings</button>"
+                 "<input id='settingsFile' type='file' accept='application/json,.json' hidden>"
+                 "</div>"
+                 "<script>document.getElementById('settingsFile').addEventListener('change',async function(){const file=this.files[0];if(!file)return;try{const response=await fetch('/fmtdata/load',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'settings='+encodeURIComponent(await file.text())});const message=await response.text();if(!response.ok){alert(message);return;}alert(message);window.location='/fmtdata';}catch(error){alert('Could not load settings file.');}finally{this.value='';}});</script>"
                  "</div>"
                  "</body></html>", remaining);
   
@@ -410,6 +418,26 @@ void handleFMTDataUpdate(AsyncWebServerRequest *request) {
   html += "</body></html>";
   
   request->send(200, "text/html", html);
+}
+
+void handleFMTDataSave(AsyncWebServerRequest *request) {
+  const String settings = savePovotoSettingsBackup();
+  AsyncWebServerResponse *response = request->beginResponse(
+    200, "application/json; charset=utf-8", settings);
+  response->addHeader("Content-Disposition", "attachment; filename=\"povoto-settings.json\"");
+  request->send(response);
+}
+
+void handleFMTDataLoad(AsyncWebServerRequest *request) {
+  if (!request->hasParam("settings", true)) {
+    request->send(400, "text/plain; charset=utf-8", "No settings file was received.");
+    return;
+  }
+  if (!loadPovotoSettingsBackup(request->getParam("settings", true)->value())) {
+    request->send(400, "text/plain; charset=utf-8", "Invalid Povoto settings file.");
+    return;
+  }
+  request->send(200, "text/plain; charset=utf-8", "Settings loaded and saved to NVS.");
 }
 
 // ========== CALIBRATION DATA HANDLERS ==========

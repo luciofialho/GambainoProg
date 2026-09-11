@@ -190,8 +190,10 @@ void setup() {
   server.on("/", HTTP_GET, handleMainMenu);
   server.on("/config", HTTP_GET, handleMainMenu);
   
-  server.on("/fmtdata", HTTP_GET, handleFMTDataPage);
+  server.on("/fmtdata/save", HTTP_GET, handleFMTDataSave);
+  server.on("/fmtdata/load", HTTP_POST, handleFMTDataLoad);
   server.on("/fmtdata/update", HTTP_POST, handleFMTDataUpdate);
+  server.on("/fmtdata", HTTP_GET, handleFMTDataPage);
   server.on("/userConfig", HTTP_GET, handleUserConfigPage);
   server.on("/userConfig/update", HTTP_POST, handleUserConfigUpdate);
   
