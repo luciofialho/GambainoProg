@@ -16,15 +16,15 @@
 #define TRANSFERTIME (8000 / DEBUGACCELERATION) 
 #define RELIEFTIME (8000 / DEBUGACCELERATION)
 
-#define PRESSURE_MEDIAN_WINDOW 36
-#define CURRENT_MEDIAN_MIN_SAMPLE_MS 25
+#define PRESSURE_MEDIAN_WINDOW 9
+#define CURRENT_MEDIAN_MIN_SAMPLE_MS 20 // defined for 32 samples in INA 219 (17ms)
 #define INSTABILITYTHRESHOLDMA 4.0f
 
 #define INA219_SHUNT_OHMS 10.0f
 
 #define SOLENOID_NOISE_MS 400
 
-#define TRANSFER_CLOSE_PRESSURE_BLOCK_MS 1000
+#define TRANSFER_CLOSE_PRESSURE_BLOCK_MS (2*CURRENT_MEDIAN_MIN_SAMPLE_MS*PRESSURE_MEDIAN_WINDOW) // gives time to fill and renovate the whole vector, avoiding transient pneumatics effects
 
 #define PRESSURE_SAMPLE_MIN_MS 250
 #define PRESSURE_SAMPLES_MAX 3000
@@ -596,6 +596,24 @@ static float readCurrentFromINA219mA() {
   #endif
 }
 
+// Current is obtained from the shunt ADC. Average 32 conversions there
+// (about 17 ms) so each software sample represents a complete shunt cycle.
+static void configureINA219CurrentAveraging() {
+  const uint16_t config = INA219_CONFIG_BVOLTAGERANGE_32V |
+                          INA219_CONFIG_GAIN_8_320MV |
+                          INA219_CONFIG_BADCRES_12BIT |
+                          INA219_CONFIG_SADCRES_12BIT_32S_17MS |
+                          INA219_CONFIG_MODE_SVOLT_CONTINUOUS;
+
+  Wire.beginTransmission(INA219_ADDRESS);
+  Wire.write(INA219_REG_CONFIG);
+  Wire.write(uint8_t(config >> 8));
+  Wire.write(uint8_t(config));
+  if (Wire.endTransmission() != 0) {
+    Serial.println("INA219: unable to configure current averaging");
+  }
+}
+
 
 boolean inPressureNoiseWindow() {
   return !(MILLISDIFF(lastSolenoidToggleMillis,SOLENOID_NOISE_MS));
@@ -734,6 +752,7 @@ void readPressure() {
       Serial.println("Could not find INA219 pressure sensor");
     }
     ina219.setCalibration_32V_2A();
+    configureINA219CurrentAveraging();
     initialized = true;
   }
   
