@@ -628,7 +628,10 @@ void initTFT() {
 
   Serial.println("Iniciando TFT ST7796 SPI...");
   tft.init();
+  tft.setRotation(3);
   setDisplayBacklight(true);
+  drawBmp("/SplashScreen.bmp", 0, 0);
+  delay(3000);
   mainScreen();
   lastClick = millis();
 }

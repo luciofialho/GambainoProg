@@ -40,7 +40,10 @@ char buf[2048];
 
 static volatile bool resetDisplayRequested = false;
 static char datalogBuffer[MAXPACKETSIZE+2];
+static char webStatusBuffer[MAXSTATUSLEN + 1];
 bool soundAlarm = false;
+
+char *getPovotoStatus(char *st);
 
 void handleResetDisplay(AsyncWebServerRequest *request) {
   Serial.println(">>> RESET DISPLAY REQUEST <<<");
@@ -60,6 +63,15 @@ void handleFactoryReset(AsyncWebServerRequest *request) {
     return;
   }
   request->send(200, "text/plain", "Factory defaults restored.");
+}
+
+void handlePovotoStatus(AsyncWebServerRequest *request) {
+  snprintf(webStatusBuffer, sizeof(webStatusBuffer),
+    "Povoto<br>Network: %s<br>Signal strength: %d<br>",
+    WiFi.status() == WL_CONNECTED ? WiFi.SSID().c_str() : "not connected",
+    WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0);
+  getPovotoStatus(webStatusBuffer);
+  request->send(200, "text/html; charset=utf-8", webStatusBuffer);
 }
 
 char * getPovotoStatus(char *st) {
@@ -223,12 +235,20 @@ void setup() {
   server.on("/resetdisplay", HTTP_GET, handleResetDisplay);
   server.on("/net", HTTP_GET, handleReconnectNetwork);
   server.on("/factoryreset", HTTP_POST, handleFactoryReset);
+  server.on("/getstatus", HTTP_GET, handlePovotoStatus);
+  server.on("/restart", HTTP_GET, ESPRestart);
   povotoWiFiRegisterRoutes();
 
   setStatusSource(getPovotoStatus);
   registerPeerSetupRoute();
   ElegantOTA.begin(&server);
   server.begin();
+
+  if (!LittleFS.begin(true)) {
+    Serial.println("Erro ao montar o LittleFS");
+    return;
+  }
+  Serial.println("LittleFS montado com sucesso");
 
   initTFT();
   
@@ -253,12 +273,6 @@ void setup() {
   //uint16_t calData[5];
   //uint8_t calDataOK = 0;
   
-  if (!LittleFS.begin(true)) {
-    Serial.println("Erro ao montar o LittleFS");
-    return;
-  }
-  Serial.println("LittleFS montado com sucesso");
-
   pinMode(TFT_RST,OUTPUT);
   pinMode(PINCHILLER, OUTPUT);
   pinMode(PINLEDCHILLER, OUTPUT);

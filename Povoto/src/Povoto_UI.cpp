@@ -40,6 +40,14 @@ extern TFT_eSPI tft;
 #define CENTER 1
 #define RIGHT  2
 
+static bool screenDataInvalidated = true;
+static char lastScreenDataSignature[384] = "";
+static char lastScreenStaticSignature[128] = "";
+
+void invalidateScreenData() {
+  screenDataInvalidated = true;
+}
+
 static void formatEpochDateShort(uint32_t epoch, char *buf, size_t bufSize) {
   if (!buf || bufSize == 0) return;
   if (epoch == 0) {
@@ -152,12 +160,6 @@ void screenBackground() {
   
   // No painel novo a inversao forcada deixa as cores trocadas.
   tft.invertDisplay(false);
-
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.drawString("Display ST7796 SPI OK!", 20, 50, 2);
-  tft.setTextColor(TFT_GREEN, TFT_BLACK);
-  tft.setCursor(20, 100);
-  tft.print("Hello World!");
   
   drawBmp("/LCars.bmp", 0, 0);  // format: 
 }
@@ -173,21 +175,69 @@ void screenData() {
   if (isBatchInfoActive())
     return;
 
-  tft.setTextColor(TFT_WHITE); 
-  textOut(CENTER,&Swiss_911_Extra_Compressed_Regular12pt7b,86,21, "%04d", BatchData.batchNumber);
+  char reliefsPerHourCompact[24];
+  getReliefsPerHourCompactText(reliefsPerHourCompact, sizeof(reliefsPerHourCompact));
+  char staticSignature[sizeof(lastScreenStaticSignature)];
+  snprintf(staticSignature, sizeof(staticSignature), "%d|%s|%d|%s|%.3f",
+    (int)BatchData.batchNumber, BatchData.batchDate, (int)FMTData.PovotoNum,
+    BatchData.batchName, BatchData.batchOG);
+  const bool drawStatic = screenDataInvalidated ||
+    strcmp(staticSignature, lastScreenStaticSignature) != 0;
+  if (drawStatic) {
+    strncpy(lastScreenStaticSignature, staticSignature, sizeof(lastScreenStaticSignature) - 1);
+    lastScreenStaticSignature[sizeof(lastScreenStaticSignature) - 1] = '\0';
+  }
 
-  char batchDateShortBuf[8];
-  formatBatchDateShort(BatchData.batchDate, batchDateShortBuf, sizeof(batchDateShortBuf));
+  char screenSignature[sizeof(lastScreenDataSignature)];
+  snprintf(screenSignature, sizeof(screenSignature),
+    "%.1f|%.1f|%.1f|%.1f|%.2f|%s|%.0f|%.0f|%.3f|%.2f",
+    ControlData.temperature, SetPointData.setPointTemp, SetPointData.setPointSlowTemp,
+    ControlData.pressure, SetPointData.setPointPressure, reliefsPerHourCompact,
+    CO2Mass(), beerVolume, beerSG, beerABV);
+  const bool drawDynamic = screenDataInvalidated ||
+    strcmp(screenSignature, lastScreenDataSignature) != 0;
+  if (!drawStatic && !drawDynamic) {
+    povotoWiFiDrawStatusIndicator();
+    return;
+  }
+  if (drawDynamic) {
+    strncpy(lastScreenDataSignature, screenSignature, sizeof(lastScreenDataSignature) - 1);
+    lastScreenDataSignature[sizeof(lastScreenDataSignature) - 1] = '\0';
+  }
+  screenDataInvalidated = false;
 
-  tft.setTextColor(TFT_LIGHTGREY,tft.color565(204,102,153));
-  textOut(CENTER,&Swiss_911_Extra_Compressed_Regular10pt7b,168,16, "  %s  ", batchDateShortBuf);
+  if (drawStatic) {
+    // These GFX fonts draw transparently. Restore only the affected parts of
+    // the cached background before replacing rare, configuration-driven text.
+    restoreMainBackgroundRect(35, 0, 105, 42);   // Batch number
+    restoreMainBackgroundRect(115, 0, 110, 35);  // Batch date
+    restoreMainBackgroundRect(0, 70, 135, 120);  // Povoto number
+    restoreMainBackgroundRect(235, 0, 245, 55);  // Batch name
+    restoreMainBackgroundRect(315, 155, 165, 40); // Batch OG label
 
+    tft.setTextColor(TFT_WHITE);
+    textOut(CENTER,&Swiss_911_Extra_Compressed_Regular12pt7b,86,21, "%04d", BatchData.batchNumber);
 
-  tft.setTextColor(TFT_LIGHTGREY);
-  textOut(CENTER, &Swiss_911_Extra_Compressed_Regular72pt7b, 63,150, "%d",FMTData.PovotoNum);
+    char batchDateShortBuf[8];
+    formatBatchDateShort(BatchData.batchDate, batchDateShortBuf, sizeof(batchDateShortBuf));
 
-  tft.setTextColor(tft.color565(238,214,157),0);
-  textOut(CENTER,&Swiss_911_Extra_Compressed_Regular16pt7b,343,27, "   %s   ",BatchData.batchName);
+    tft.setTextColor(TFT_LIGHTGREY,tft.color565(204,102,153));
+    textOut(CENTER,&Swiss_911_Extra_Compressed_Regular10pt7b,168,16, "  %s  ", batchDateShortBuf);
+
+    tft.setTextColor(TFT_LIGHTGREY);
+    textOut(CENTER, &Swiss_911_Extra_Compressed_Regular72pt7b, 63,150, "%d",FMTData.PovotoNum);
+
+    tft.setTextColor(tft.color565(238,214,157),0);
+    textOut(CENTER,&Swiss_911_Extra_Compressed_Regular16pt7b,343,27, "   %s   ",BatchData.batchName);
+    tft.setTextColor(0);
+    textOut(LEFT,&Swiss_911_Extra_Compressed_Regular12pt7b,320,176, "SG   [ OG=%.3f ]", BatchData.batchOG);
+  }
+
+  if (!drawDynamic) {
+    povotoWiFiDrawStatusIndicator();
+    return;
+  }
+
   tft.setTextColor(TFT_WHITE); 
 
   // TEMPERATURE  
@@ -234,8 +284,6 @@ void screenData() {
     textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,245, "   n/a");
 
   // CO2 MASS COUNT
-  char reliefsPerHourCompact[24];
-  getReliefsPerHourCompactText(reliefsPerHourCompact, sizeof(reliefsPerHourCompact));
   tft.setTextColor(0, tft.color565(185,208,170));
   textOut(LEFT,&Swiss_911_Extra_Compressed_Regular12pt7b,320,273, "g CO2%s ", reliefsPerHourCompact);
   tft.setTextColor(TFT_YELLOW,0);
@@ -247,8 +295,6 @@ void screenData() {
   textOut(CENTER,&Swiss_911_Extra_Compressed_Regular12pt7b,170,204, "liters");
 
   // SPECIFIC GRAVITY
-  tft.setTextColor(0);
-  textOut(LEFT,&Swiss_911_Extra_Compressed_Regular12pt7b,320,176, "SG   [ OG=%.3f ]", BatchData.batchOG);
   tft.setTextColor(TFT_YELLOW,0);
   textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,176, " %.3f", beerSG);
 
@@ -268,6 +314,7 @@ void mainScreen() {
   const unsigned long t0 = millis();
   screenBackground();
   const unsigned long t1 = millis();
+  invalidateScreenData();
   screenData();
   const unsigned long t2 = millis();
   if (UI_PERF_LOG) {

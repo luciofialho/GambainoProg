@@ -5,6 +5,7 @@ extern TFT_eSPI tft;
 
 void mainScreen();
 void screenData();
+void invalidateScreenData();
 
 
 
