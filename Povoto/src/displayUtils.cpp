@@ -632,6 +632,11 @@ void initTFT() {
   setDisplayBacklight(true);
   drawBmp("/SplashScreen.bmp", 0, 0);
   delay(3000);
+  pinMode(PINBUZZER, OUTPUT);
+  tone(PINBUZZER, 1200, 60);
+  delay(70);
+  noTone(PINBUZZER);
+  digitalWrite(PINBUZZER, LOW);
   mainScreen();
   lastClick = millis();
 }

@@ -1624,8 +1624,10 @@ char *getPressureControlStatus(char *st) {
           readCurrentFromINA219mA());
         strnncat(st, tmp, 2048);
 
-    snprintf(tmp, sizeof(tmp), "----<br>Relief count: %lu<br>Ejected CO2 mols: %.3f<br>Dissolved CO2 mols: %.3f<br>",
-             (unsigned long)CountersData.totalReliefCount, CountersData.totalMolsEjected, CountersData.CO2InSolution);
+    snprintf(tmp, sizeof(tmp), "----<br>Relief count: %lu<br>Ejected CO2 mols: %.3f<br>Dissolved CO2 mols: %.3f (if in equilibrium: %.3f)<br>",
+             (unsigned long)CountersData.totalReliefCount, CountersData.totalMolsEjected,
+             CountersData.CO2InSolution,
+             CO2DissolvedMols(ControlData.pressure, beerSG, ControlData.temperature, beerVolume));
     strnncat(st, tmp, 2048);
     if (!reliefsPerHourAvailable || reliefsPerHourValue < RELIEF_PER_HOUR_MIN_DISPLAY) {
       if (!reliefsPerHourAvailable) {

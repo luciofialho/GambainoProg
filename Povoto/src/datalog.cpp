@@ -194,6 +194,7 @@ void doDataLog() {
     GLogAddData("ReliefCount");
     GLogAddData("CO2MolsEjected");
     GLogAddData("CO2InSolution");
+    GLogAddData("EqlCO2Sol");
     GLogAddData("HeadSpaceVolume");
     GLogAddData("CorrectionPlato");
     GLogAddData("SGAttenuation");
@@ -229,6 +230,7 @@ void doDataLog() {
     GLogAddData(CountersData.totalReliefCount,0);
     GLogAddData(CountersData.totalMolsEjected,3);
     GLogAddData(CountersData.CO2InSolution,3);
+    GLogAddData(CO2DissolvedMols(ControlData.pressure, beerSG, ControlData.temperature, beerVolume),3);
     GLogAddData(CountersData.headSpaceVolume,3);
     GLogAddData(CountersData.correctionPlato,3);
     GLogAddData(CountersData.SGAttenuation,5);

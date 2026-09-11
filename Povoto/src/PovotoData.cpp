@@ -25,7 +25,7 @@ FMTData_t FMTData = {
   .co2TransferTime = 34,
   .nucleationWindow = 5,
   .heater = {true, 0.5f, 2.0f},
-  .coolingCycle = {{30.0f, 15.0f}, {20.0f, 10.0f}, {3.0f, 3.0f}},
+  .coolingCycle = {{30.0f, 15.0f}, {20.0f, 10.0f}, {5.0f, 8.0f}},
   .checksum = 0
 };
 

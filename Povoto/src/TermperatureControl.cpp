@@ -194,21 +194,18 @@ void temperatureControl() {
     interruptedHeating = false;
   }
   else {
-    float minTarget = SetPointData.setPointTemp;
+    float minTarget = SetPointData.setPointTemp > 6 ? SetPointData.setPointTemp - FMTOFFSET : SetPointData.setPointTemp;
     float maxTarget = SetPointData.setPointTemp + FMTOFFSET;
-    if ((mode==FMTCHILL) && millis()-lastModeChange > 3*60000L && ControlData.temperature > 8) /*** constantes ****/
+    if ((mode==FMTCHILL) && millis()-lastModeChange > 5*60000L && ControlData.temperature > 8) /*** constantes ****/
       minTarget += 0.1; // reduce histeresis 
-    if (ControlData.temperature < 6) {
-      minTarget -= FMTOFFSET; 
-      //maxTarget += FMTOFFSET;
-    }
-    else {
-      if (SetPointData.setPointSlowTemp != NOTaTEMP && ControlData.temperature < SetPointData.setPointSlowTemp)
-        maxTarget += FMTOFFSET; // accept twice the offset to postpone action, due to long term target
-      if (SetPointData.setPointSlowTemp != NOTaTEMP && ControlData.temperature > SetPointData.setPointSlowTemp)
-        minTarget -= FMTOFFSET;
-    }
 
+
+    // in slow temperature target transictions, accept twice the offset to postpone action
+    if (SetPointData.setPointSlowTemp != NOTaTEMP && ControlData.temperature < SetPointData.setPointSlowTemp)
+      maxTarget += FMTOFFSET; 
+    if (SetPointData.setPointSlowTemp != NOTaTEMP && ControlData.temperature > SetPointData.setPointSlowTemp)
+      minTarget -= FMTOFFSET;
+    
     switch (mode) {
       case FMTIDLE:
         if (ControlData.temperature > maxTarget  || (ControlData.temperature>minTarget && interruptedCooling)) {
@@ -350,6 +347,15 @@ void temperatureControl() {
 }
 
 char *getTemperatureControlStatus(char *st) {
+  const float chillerOnMinutes = coolingCycleMinutes(
+    ControlData.temperature,
+    FMTData.coolingCycle[0].onMinutes, FMTData.coolingCycle[1].onMinutes,
+    FMTData.coolingCycle[2].onMinutes);
+  const float chillerOffMinutes = coolingCycleMinutes(
+    ControlData.temperature,
+    FMTData.coolingCycle[0].offMinutes, FMTData.coolingCycle[1].offMinutes,
+    FMTData.coolingCycle[2].offMinutes);
+
   char buf[2048];  
     sprintf(buf, "<br>-------TEMPERATURE CONTROL<br>Dallas sensor: %s<br>Temperature: %.2f C<br>Environment Temp: %.2f C<br>Target: %.2f C<br>Mode: %s<br>Chill: %s<br>Heat: %s<br>Total chill time: %ld s<br>Total heat time: %ld s<br>", 
           (dallasTemperature == NOTaTEMP || dallasTemperature == 85) ? "NOT DETECTED" : "OK",
@@ -362,6 +368,12 @@ char *getTemperatureControlStatus(char *st) {
       CountersData.totalChillTime,
       CountersData.totalHeatTime);
   strnncat(st,buf,2048);
+
+  snprintf(buf, sizeof(buf),
+           "Calculated cycle times at %.2f C: Chiller on: %.2f min; Chiller off: %.2f min; Heater on: %.2f min; Heater off: %.2f min<br>",
+           ControlData.temperature, chillerOnMinutes, chillerOffMinutes,
+           FMTData.heater.onMinutes, FMTData.heater.offMinutes);
+  strnncat(st, buf, 2048);
 
   //ionclua todas as variáveis declaradas no // FMT control variables
   sprintf(buf, "Last Target: %.2f C<br>Last Target Change: %lu<br>Last Mode Change: %lu (%ld sec. ago)<br>Next Mode Change: %lu (in %ld sec.)<br>Interrupted Cooling: %s<br>",
