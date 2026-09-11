@@ -46,6 +46,7 @@ void openNumKeyboard(const char* title, float initVal, float minVal, float maxVa
 uint16_t read16(fs::File &f);
 uint32_t read32(fs::File &f);
 void drawBmp(const char *filename, int16_t x, int16_t y);
+bool restoreMainBackgroundRect(int16_t x, int16_t y, int16_t w, int16_t h);
 
 // Função de leitura de registrador I2C
 uint8_t rd(uint8_t reg);

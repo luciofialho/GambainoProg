@@ -11,6 +11,7 @@
 #include "GambainoCommon.h"
 #include "Povoto_UI.h"
 #include "PressureControl.h"
+#include "PovotoWifi.h"
 #include "Swiss_911_Extra_Compressed_Regular7pt7b.h"
 #include "Swiss_911_Extra_Compressed_Regular8pt7b.h"
 #include "Swiss_911_Extra_Compressed_Regular9pt7b.h"
@@ -165,6 +166,8 @@ void screenBackground() {
 void screenData() {
   if (DisplayMode != 0)
     return;
+  if (povotoWiFiConfigurationActive())
+    return;
   if (isTaskUIActive())
     return;
   if (isBatchInfoActive())
@@ -254,6 +257,8 @@ void screenData() {
   textOut(LEFT,&Swiss_911_Extra_Compressed_Regular12pt7b,320,204, "%% ABV");
   tft.setTextColor(TFT_YELLOW,0);
   textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,204, " %.2f", beerABV);
+
+  povotoWiFiDrawStatusIndicator();
 }
 
 void mainScreen() {

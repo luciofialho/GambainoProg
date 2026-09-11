@@ -9,10 +9,15 @@
 #include "GambainoCommon.h"
 #include "IOTK_GLog.h"
 #include "PovotoTasks.h"
+#include "PovotoWifi.h"
 
 // ========== MAIN MENU ==========
 
 void handleMainMenu(AsyncWebServerRequest *request) {
+  if (povotoWiFiConfigurationActive()) {
+    request->redirect("/wifi");
+    return;
+  }
   char dateTimeBuf[20];
   char volumeProgressBuf[48];
   NTPFormatedDateTime(dateTimeBuf);
@@ -304,7 +309,8 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
   strncat(html, "</div>", remaining);
 
   remaining = BUFFER_SIZE - strlen(html) - 1;
-    strncat(html, "<button type='submit'>Save</button> "
+    strncat(html, "<p><a href='/wifi/reconfigure'>Reconfigure WiFi network</a></p>"
+                 "<button type='submit'>Save</button> "
                  "<button type='button' class='btn-secondary' onclick='window.location=\"/\"'>Cancel</button>"
                  "</form>"
                  "</div>"

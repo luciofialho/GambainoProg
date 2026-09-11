@@ -366,6 +366,7 @@ bool resetPovotoDataToFactoryDefaults() {
   saved = clearPovotoNamespace("pvt_setpoint") && saved;
   saved = clearPovotoNamespace("pvt_calib") && saved; // Retired namespace.
   saved = clearPovotoNamespace("pvt_counters") && saved;
+  saved = clearPovotoNamespace("pvt_wifi") && saved;
 
   saved = writeFMTDataToNIV() && saved;
   saved = writeUserConfigurationDataToNIV() && saved;

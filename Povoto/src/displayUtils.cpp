@@ -8,6 +8,7 @@
 #include "PressureControl.h"
 #include "PovotoTasks.h"
 #include "TemperatureControl.h"
+#include "PovotoWifi.h"
 #include "Swiss_911_Extra_Compressed_Regular10pt7b.h"
 #include "Swiss_911_Extra_Compressed_Regular12pt7b.h"
 #include "Swiss_911_Extra_Compressed_Regular16pt7b.h"
@@ -548,6 +549,30 @@ void drawBmp(const char *filename, int16_t x, int16_t y) {
   bmpFS.close();
 }
 
+bool restoreMainBackgroundRect(int16_t x, int16_t y, int16_t w, int16_t h) {
+#if defined(ARDUINO_ARCH_ESP32) && UI_BMP_USE_PSRAM && UI_BMP_CACHE_PSRAM
+  if (!gBmpCacheBuf || x < 0 || y < 0 || w <= 0 || h <= 0 ||
+      x + w > gBmpCacheW || y + h > gBmpCacheH) {
+    return false;
+  }
+
+  const bool oldSwapBytes = tft.getSwapBytes();
+  tft.setSwapBytes(true);
+  for (int16_t row = 0; row < h; ++row) {
+    const uint16_t *pixels = gBmpCacheBuf + (size_t)(y + row) * gBmpCacheW + x;
+    tft.pushImage(x, y + row, w, 1, (uint16_t *)pixels);
+  }
+  tft.setSwapBytes(oldSwapBytes);
+  return true;
+#else
+  (void)x;
+  (void)y;
+  (void)w;
+  (void)h;
+  return false;
+#endif
+}
+
 
 uint8_t rd(uint8_t reg){
   Wire.beginTransmission(FT_ADDR);
@@ -604,7 +629,8 @@ void initTFT() {
   Serial.println("Iniciando TFT ST7796 SPI...");
   tft.init();
   setDisplayBacklight(true);
-  TFTWaintingWifiConnection();
+  mainScreen();
+  lastClick = millis();
 }
 
 void setTouchControllerReady(bool ready) {
@@ -1359,7 +1385,10 @@ void processTouch() {
     if (ftRead(0x02, &status, 1)) {
 
       uint8_t touches = status & 0x0F;  // 0..5
-      if (touches == 0 || touches > 5) return;
+      if (touches == 0 || touches > 5) {
+        povotoWiFiNotifyTouchReleased();
+        return;
+      }
 
       // Cada ponto tem 6 bytes a partir de 0x03
       uint8_t buf[6 * 5];
@@ -1396,6 +1425,14 @@ void processTouch() {
         if (kbActive) {
           if (i == 0) handleKeyboardTouch(x, y);
           continue;
+        }
+
+        if (povotoWiFiHandleTouch(x, y)) {
+          return;
+        }
+
+        if (povotoWiFiHandleStatusTouch(x, y)) {
+          return;
         }
 
         // === BATCH INFO SCREEN: consome o toque quando está ativa ===

@@ -12,6 +12,7 @@
 #include <user_setup.h>
 #include "PovotoData.h"
 #include "PovotoPages.h"
+#include "PovotoWifi.h"
 
 #include "IOTK_NTP.h"
 #include "IOTK_Dallas.h"
@@ -49,9 +50,8 @@ void handleResetDisplay(AsyncWebServerRequest *request) {
 
 void handleReconnectNetwork(AsyncWebServerRequest *request) {
   Serial.println(">>> RECONNECTNETWORK REQUEST <<<");
+  povotoWiFiReconnect();
   responseConfirmation(request, "Reconnecting to WiFi...", "/control");
-  delay(1000);  // let the response flush before dropping WiFi
-  reconnectNetwork();
 }
 
 void handleFactoryReset(AsyncWebServerRequest *request) {
@@ -164,7 +164,7 @@ void setup() {
   ElegantOTA.onStart(writeCountersDataToNIV);
   //esp_register_shutdown_handler(writeCountersDataToNIV);
 
-  setupWiFi();
+  povotoWiFiInit();
   loadPeers();
   registerOwnPeer(PEERTYPE_POVOTO, FMTData.PovotoNum);
 
@@ -223,9 +223,12 @@ void setup() {
   server.on("/resetdisplay", HTTP_GET, handleResetDisplay);
   server.on("/net", HTTP_GET, handleReconnectNetwork);
   server.on("/factoryreset", HTTP_POST, handleFactoryReset);
+  povotoWiFiRegisterRoutes();
 
   setStatusSource(getPovotoStatus);
   registerPeerSetupRoute();
+  ElegantOTA.begin(&server);
+  server.begin();
 
   initTFT();
   
@@ -290,16 +293,13 @@ void setup() {
 }
 
 void loop() {
-  verifyWiFiConnection();
-  checkDebugMode();
+  povotoWiFiProcess();
   checkTaskExpiration();
   updateTaskUIIfActive();
   handle_IOTK();
   { // controla sinalização de conexão do wifi
     static bool first = true;
-    if (WiFi.status() != WL_CONNECTED)  {
-      if (!isTempKeyboardActive())
-        TFTWaintingWifiConnection();
+    if (povotoWiFiDrawTft()) {
       first = true;
     }
     else {

@@ -20,13 +20,18 @@ namespaces are cleared and rewritten using those RAM values. The new version
 is persisted in pvt_settings/schemaVersion only after all writes succeed.
 Equal versions cause no clear/rewrite. Failed rewrites are retried next boot.
 Power loss may leave some fields at defaults; this operation is not atomic.
-The old povoto namespace, Peers and Wi-Fi are not cleared.
+The old povoto namespace and Peers are not cleared. Wi-Fi credentials are
+stored separately in `pvt_wifi` (`ssid` and `password`) and are not touched by
+schema rewrites.
 Write functions return bool so the rewrite can detect storage failures.
 
 The previous type/version-wrapped records are not migrated. Incompatible or
 missing records use defaults. Group blobs are checked for size and valid times.
 Namespaces remain pvt_settings, pvt_user, pvt_batch, pvt_setpoint
-and pvt_counters.
+and pvt_counters. The local Wi-Fi configuration uses pvt_wifi.
+
+`POST /factoryreset` clears every Povoto namespace, including pvt_wifi, then
+persists the factory defaults for the data namespaces.
 
 Run structural checks with: python tests/check_storage_schema.py
 
