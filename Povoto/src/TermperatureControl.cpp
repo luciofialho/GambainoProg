@@ -357,16 +357,18 @@ char *getTemperatureControlStatus(char *st) {
     FMTData.coolingCycle[2].offMinutes);
 
   char buf[2048];  
-    sprintf(buf, "<br>-------TEMPERATURE CONTROL<br>Dallas sensor: %s<br>Temperature: %.2f C<br>Environment Temp: %.2f C<br>Target: %.2f C<br>Mode: %s<br>Chill: %s<br>Heat: %s<br>Total chill time: %ld s<br>Total heat time: %ld s<br>", 
+    sprintf(buf, "<br>-------TEMPERATURE CONTROL<br>Dallas sensor: %s<br>Temperature: %.2f C<br>Environment Temp: %.2f C<br>Target temp: %.2f C<br>Mode: %s<br>Chill: %s<br>Interrupted cooling: %s<br>Heat: %s<br>Interrupted heating: %s<br>Total chill time: %ld s<br>Total heat time: %ld s<br>",
           (dallasTemperature == NOTaTEMP || dallasTemperature == 85) ? "NOT DETECTED" : "OK",
           ControlData.temperature,
           environmentTemp,
           SetPointData.setPointTemp,
           getTemperatureModeLabel(),
           chillControl ? "ON" : "OFF",
-      heatControl ? "ON" : "OFF",
-      CountersData.totalChillTime,
-      CountersData.totalHeatTime);
+          interruptedCooling ? "YES" : "NO",
+          heatControl ? "ON" : "OFF",
+          interruptedHeating ? "YES" : "NO",
+          CountersData.totalChillTime,
+          CountersData.totalHeatTime);
   strnncat(st,buf,2048);
 
   snprintf(buf, sizeof(buf),
@@ -376,12 +378,11 @@ char *getTemperatureControlStatus(char *st) {
   strnncat(st, buf, 2048);
 
   //ionclua todas as variáveis declaradas no // FMT control variables
-  sprintf(buf, "Last Target: %.2f C<br>Last Target Change: %lu<br>Last Mode Change: %lu (%ld sec. ago)<br>Next Mode Change: %lu (in %ld sec.)<br>Interrupted Cooling: %s<br>",
+  sprintf(buf, "Last Target: %.2f C<br>Last Target Change: %lu<br>Last Mode Change: %lu (%ld sec. ago)<br>Next Mode Change: %lu (in %ld sec.)<br>",
           lastTarget,
           lastTargetChange, 
           lastModeChange, (long int) (millis() - lastModeChange)/1000,
-          nextModeChange, (long int) (nextModeChange- millis())/1000,
-          interruptedCooling ? "YES" : "NO");
+          nextModeChange, (long int) (nextModeChange- millis())/1000);
   strnncat(st,buf,2048);
   return st;
 }

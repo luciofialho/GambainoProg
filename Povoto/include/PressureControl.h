@@ -24,6 +24,7 @@ void getReliefsPerHourText(char *out, size_t outSize);
 void getReliefsPerHourCompactText(char *out, size_t outSize);
 float getReliefsPerHourValue();
 float SGToApparentPlato(float sg);
+float SGToRealPlato(float sg);
 
 extern float beerVolume;
 extern float beerSG;

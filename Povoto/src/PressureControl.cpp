@@ -1606,50 +1606,63 @@ void pressureControl() {
   }
 }
 
-char tmp[160];
+char tmp[384];
 char *getPressureControlStatus(char *st) {
 
   int16_t rawShuntRegister = 0;
   st[0] = '\0';
 
-  snprintf(tmp, sizeof(tmp), "---------PRESSURE CONTROL:<br>");
+  snprintf(tmp, sizeof(tmp), "<br>---------PRESSURE CONTROL:<br>");
     strnncat(st, tmp, 2048);
   if (pressureSensorConnected) {
-    snprintf(tmp, sizeof(tmp), "Atmospheric pressure: %.3f bar<br>Filtered current reading: %.2f mA<br>Calculated pressure: %.3f bar<br>",
-             Patm, currentReading, ControlData.pressure);
-    strnncat(st, tmp, 2048);
-    snprintf(tmp, sizeof(tmp), "Shunt voltage: %.2f mV<br>",  ina219.getShuntVoltage_mV());
-        strnncat(st, tmp, 2048);
-    snprintf(tmp, sizeof(tmp), "Momentary current: %.2f mA<br>",
-          readCurrentFromINA219mA());
-        strnncat(st, tmp, 2048);
+    const float equilibriumCO2Mols = CO2DissolvedMols(
+      ControlData.pressure, beerSG, ControlData.temperature, beerVolume);
+    const double totalCO2Mols = CountersData.totalMolsEjected
+      + CountersData.CO2InSolution + headSpaceCO2Mols;
 
-    snprintf(tmp, sizeof(tmp), "----<br>Relief count: %lu<br>Ejected CO2 mols: %.3f<br>Dissolved CO2 mols: %.3f (if in equilibrium: %.3f)<br>",
-             (unsigned long)CountersData.totalReliefCount, CountersData.totalMolsEjected,
-             CountersData.CO2InSolution,
-             CO2DissolvedMols(ControlData.pressure, beerSG, ControlData.temperature, beerVolume));
+    snprintf(tmp, sizeof(tmp),
+             "Measured pressure: %.3f bar<br>Target pressure: %.3f bar<br>Atmospheric pressure: %.3f bar<br>",
+             ControlData.pressure, SetPointData.setPointPressure, Patm);
+    strnncat(st, tmp, 2048);
+    snprintf(tmp, sizeof(tmp),
+             "INA: Filtered current reading: %.2f mA Shunt voltage: %.2f mV Momentary current: %.2f mA<br>",
+             currentReading, ina219.getShuntVoltage_mV(), readCurrentFromINA219mA());
+    strnncat(st, tmp, 2048);
+
+    strnncat(st, "-------------------------------------------------------------------------------------------<br>", 2048);
+    snprintf(tmp, sizeof(tmp),
+             "<br>CO2 moles accounting:<br>&nbsp;&nbsp;&nbsp;&nbsp;Headspace: %.3f<br>&nbsp;&nbsp;&nbsp;&nbsp;Dissolved: %.3f (if in equilibrium: %.3f)<br>&nbsp;&nbsp;&nbsp;&nbsp;Ejected: %.3f<br>&nbsp;&nbsp;&nbsp;&nbsp;Total: %.3f (%.2f g)<br>",
+             headSpaceCO2Mols, CountersData.CO2InSolution, equilibriumCO2Mols,
+             CountersData.totalMolsEjected, totalCO2Mols, CO2Mass());
+    strnncat(st, tmp, 2048);
+
+    strnncat(st, "<br>Expansions:<br>", 2048);
+    snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;Relief count: %lu<br>",
+             (unsigned long)CountersData.totalReliefCount);
     strnncat(st, tmp, 2048);
     if (!reliefsPerHourAvailable || reliefsPerHourValue < RELIEF_PER_HOUR_MIN_DISPLAY) {
       if (!reliefsPerHourAvailable) {
-        snprintf(tmp, sizeof(tmp), "Reliefs/hour: N/A (need %u reliefs, have %u)<br>", (unsigned)RELIEFS_WINDOW_SIZE, reliefMillisCount);
+        snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;Reliefs/hour: N/A (need %u reliefs, have %u)<br>", (unsigned)RELIEFS_WINDOW_SIZE, reliefMillisCount);
       } else {
-        snprintf(tmp, sizeof(tmp), "Reliefs/hour: N/A (< %.2f/h)<br>", RELIEF_PER_HOUR_MIN_DISPLAY);
+        snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;Reliefs/hour: N/A (< %.2f/h)<br>", RELIEF_PER_HOUR_MIN_DISPLAY);
       }
     } else {
-      snprintf(tmp, sizeof(tmp), "Reliefs/hour: %.2f<br>", reliefsPerHourValue);
+      snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;Reliefs/hour: %.2f<br>", reliefsPerHourValue);
     }
     strnncat(st, tmp, 2048);
-    snprintf(tmp, sizeof(tmp), "Pressure drop factor (%%): %.3f<br>Headspace volume: %.2f L<br>Beer volume: %.2f L<br>",
-             pressureDropFactor * 100, headSpaceVolume, beerVolume);
-        strnncat(st, tmp, 2048);
+    snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;gCO2/L/d: %.2f<br>",
+             getBeerCO2EvolutionGramsPerLiterPerDay());
+    strnncat(st, tmp, 2048);
 
-    snprintf(tmp, sizeof(tmp), "----<br>Beer OG: %.4f<br>Beer SG: %.4f<br>Beer ABV: %.2f%%<br>", BatchData.batchOG, beerSG, beerABV);
-        strnncat(st, tmp, 2048);
+    snprintf(tmp, sizeof(tmp),
+             "<br>Volumes:<br>&nbsp;&nbsp;&nbsp;&nbsp;Headspace volume: %.2f L<br>&nbsp;&nbsp;&nbsp;&nbsp;Beer volume: %.2f L<br>&nbsp;&nbsp;&nbsp;&nbsp;Expansion pressure drop factor (%%): %.3f<br>",
+             headSpaceVolume, beerVolume, pressureDropFactor * 100);
+    strnncat(st, tmp, 2048);
 
-
-    
-    snprintf(tmp, sizeof(tmp), "Headspace CO2 mols: %.3f<br>Total CO2 mols: %.3f<br>Total CO2 mass: %.2f g<br>",
-             headSpaceCO2Mols, CountersData.totalMolsEjected + CountersData.CO2InSolution + headSpaceCO2Mols, CO2Mass());
+    snprintf(tmp, sizeof(tmp),
+             "<br>Gravity:<br>&nbsp;&nbsp;&nbsp;&nbsp;OG: %.4f (extract: %.3fP)<br>&nbsp;&nbsp;&nbsp;&nbsp;SG: %.4f (apparent extract: %.3fP)<br>&nbsp;&nbsp;&nbsp;&nbsp;ABV: %.2f%%<br>",
+             BatchData.batchOG, SGToApparentPlato(BatchData.batchOG),
+             beerSG, SGToApparentPlato(beerSG), beerABV);
     strnncat(st, tmp, 2048);
   } else {
     snprintf(tmp, sizeof(tmp), "INA219 Pressure Sensor: DISCONNECTED<br>Atmospheric pressure: %.3f bar<br>", Patm);
