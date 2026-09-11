@@ -54,6 +54,14 @@ void handleReconnectNetwork(AsyncWebServerRequest *request) {
   reconnectNetwork();
 }
 
+void handleFactoryReset(AsyncWebServerRequest *request) {
+  if (!resetPovotoDataToFactoryDefaults()) {
+    request->send(500, "text/plain", "Factory reset could not be saved to NVS.");
+    return;
+  }
+  request->send(200, "text/plain", "Factory defaults restored.");
+}
+
 char * getPovotoStatus(char *st) {
   char smallBuf[100] = "Implementar";
   NTPFormatedDateTime(smallBuf);
@@ -214,6 +222,7 @@ void setup() {
   
   server.on("/resetdisplay", HTTP_GET, handleResetDisplay);
   server.on("/net", HTTP_GET, handleReconnectNetwork);
+  server.on("/factoryreset", HTTP_POST, handleFactoryReset);
 
   setStatusSource(getPovotoStatus);
   registerPeerSetupRoute();

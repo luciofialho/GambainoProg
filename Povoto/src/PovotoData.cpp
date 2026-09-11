@@ -1,80 +1,40 @@
 #include <arduino.h>
 #include <math.h>
-#include <stddef.h>
 #include <Preferences.h>
 #include "PovotoCommon.h"
 #include "PovotoData.h"
 #include "PressureControl.h"
 
-Preferences preferences;
-
 // FMT data
-#define FMTDATAKEY "FMTData"  
-
-
 
 FMTData_t FMTData = {
+  .nvsSchemaVersion = 0, // Missing version must trigger the first rewrite.
   .PovotoNum = 0,
   .FMTVolume = 120.0,
-  .FMTReliefVolume = 2.1,
-  .FMTMinActiveTime = 10,
-  .FMTMaxActiveTime = 25,
-  .FMTMinOffTime = 8,
-  .FMTalpha = 12.5,
-  .FMTbeta = 9.04,
-  .FMTHeaterOnTime = 0.5,
-  .FMTHeaterOffTime = 2,
+  .FMTReliefVolume = 2.0,
   .FMTOnTimeDuringBrew = 5.0,
   .FMTOFFTimeDuringBrew = 5.0,
   .FMTAltitude = 0.0,
-  .FMTEffectiveVentingExponent = 1.100f,
-  .checksum = 0
-};
-
-// Separate NVS key (maximum 15 characters).
-#define USERCONFIGDATAKEY "UserConfigData"
-UserConfigurationData_t UserConfigurationData = {120, 6350, 10, 0};
-
-// Original packed layout, retained only to migrate existing installations.
-struct LegacyFMTData_t {
-  byte PovotoNum;
-  float FMTVolume;
-  float FMTReliefVolume;
-  float FMTMinActiveTime;
-  float FMTMaxActiveTime;
-  float FMTMinOffTime;
-  float FMTalpha;
-  float FMTbeta;
-  float FMTHeaterOnTime;
-  float FMTHeaterOffTime;
-  float FMTOnTimeDuringBrew;
-  float FMTOFFTimeDuringBrew;
-  float FMTAltitude;
-  int   FMTScreensaverTime;
-  int   FMTKeypadPin;   // PIN de 4 dígitos para desbloquear o teclado no display
-  float FMTEffectiveVentingExponent;
-  uint32_t checksum;
-} __attribute__((packed));
-
-float Patm = 1.0f;
-
-// Calibration data
-#define CALIBRATIONDATAKEY "CalibrationData" 
-
-CalibrationData_t CalibrationData = {
+  .FMTEffectiveVentingExponent = 1.2900f,
   .pressure0Current = 4.5,
   .pressure1Bar = 0.5,
   .pressure1Current = 8.5,
-  .pressure2Bar = 1.0,
-  .pressure2Current = 12.5,
+  .pressure2Bar = 0.0,
+  .pressure2Current = 0.0,
   .maximumPressure = 2.3f,
-  .co2TransferTime = 180,
+  .co2TransferTime = 34,
   .nucleationWindow = 5,
+  .heater = {true, 0.5f, 2.0f},
+  .coolingCycle = {{30.0f, 15.0f}, {20.0f, 10.0f}, {3.0f, 3.0f}},
   .checksum = 0
 };
 
+UserConfigurationData_t UserConfigurationData = {120, 6350, 10, 0};
+
+float Patm = 1.0f;
+
+
 // batch data
-#define BATCHDATAKEY "BatchData"
 
 BatchData_t BatchData = {
   .batchName = {'n','a','m','e','l','e','s','s',0},
@@ -88,7 +48,6 @@ BatchData_t BatchData = {
 };
 
 // set points
-#define SETPOINTDATAKEY "SetPointData" 
 
 SetPointData_t SetPointData = {
   .mode = 0,
@@ -101,7 +60,6 @@ SetPointData_t SetPointData = {
 };
 
 // control data
-#define CONTROLDATAKEY "ControlData"
 
 ControlData_t ControlData = {
   .temperature = 0.0,
@@ -117,12 +75,11 @@ ControlData_t ControlData = {
 };
 
 // counters data
-#define COUNTERSDATAKEY "CountersData"
 
 CountersData_t CountersData = {
   .totalReliefCount = 0,
-  .totalMolsEjected = 0.0f,
-  .CO2InSolution = 0.0f,
+  .totalMolsEjected = 0.0,
+  .CO2InSolution = 0.0,
   .headSpaceVolume = 0.0f,
   .correctionPlato = 0.0f,
   .SGAttenuation = 0.0f,
@@ -131,121 +88,8 @@ CountersData_t CountersData = {
   .checksum = 0
 };
 
-
-
 // =============
 
-
-bool readNIVData(const char *key, void * start, void *end) {
-  // read NIV data from IOTK NVS, returns true if successful and ckecksum ok
-
-  preferences.begin("povoto", true);
-  size_t dataSize = (char*)end - (char*)start + 1;
-  
-  uint8_t* tempBuffer = (uint8_t*)malloc(dataSize);
-  if (!tempBuffer) {
-    preferences.end();
-    return false;
-  }
-  
-  size_t bytesRead = preferences.getBytes(key, tempBuffer, dataSize);
-  preferences.end();
-    
-  if (bytesRead != dataSize) {
-    free(tempBuffer);
-    return false;
-  }
-    
-  // Calculate checksum of the data (excluding the last 4 bytes which should be the stored checksum)
-  uint32_t calculatedChecksum = 0;
-  for (size_t i = 0; i < dataSize - sizeof(uint32_t); i++) {
-    calculatedChecksum += tempBuffer[i] * (i + 1);
-  }
-    
-  // Get stored checksum from the end of the buffer
-  uint32_t storedChecksum = *((uint32_t*)(&tempBuffer[dataSize - sizeof(uint32_t)]));
-    
-  if (calculatedChecksum == storedChecksum) {
-    memcpy(start, tempBuffer, dataSize);
-    free(tempBuffer);
-    return true;
-  }
-  
-  free(tempBuffer);
-  return false;
-}
-
-void writeNIVData(const char *key, void * start, void *end) {
-  // write NIV data to IOTK NVS
-
-    
-  size_t dataSize = (char*)end - (char*)start + 1;
-  uint8_t* dataPtr = (uint8_t*)start;
-  
-  // Calculate checksum of the data (excluding the last 4 bytes)
-  uint32_t calculatedChecksum = 0;
-  for (size_t i = 0; i < dataSize - sizeof(uint32_t); i++) {
-    calculatedChecksum += dataPtr[i] * (i + 1);
-  }
-    
-  uint32_t *checksumInMemory = (uint32_t*)((uint8_t*)start + dataSize - sizeof(uint32_t));
-  
-  Serial.printf("writeNIVData: key=%s, start=%p, end=%p, dataSize=%d, checksum=%08X\n", 
-                key, start, end, dataSize, calculatedChecksum);
-  
-  if (*checksumInMemory == calculatedChecksum) {
-    Serial.println("Checksum unchanged, skipping write");
-    return;
-  }
-  else {
-    *checksumInMemory = calculatedChecksum;
-    preferences.begin("povoto", false);
-    preferences.putBytes(key, start, dataSize);
-    preferences.end();
-    Serial.println("Data written to NVS");
-  }
-} 
-
-bool readFMTDataFromEEPROM() {
-  if (readNIVData(FMTDATAKEY, &FMTData, ((byte*)&FMTData) + sizeof(FMTData_t) - 1)) {
-    return true;
-  }
-  LegacyFMTData_t legacy = {};
-  if (!readNIVData(FMTDATAKEY, &legacy, ((byte*)&legacy) + sizeof(legacy) - 1)) {
-    return false;
-  }
-  memcpy(&FMTData, &legacy, offsetof(LegacyFMTData_t, FMTScreensaverTime));
-  FMTData.FMTEffectiveVentingExponent = legacy.FMTEffectiveVentingExponent;
-  FMTData.checksum = 0;
-  // Save the extracted preferences before replacing the legacy FMT block.
-  if (!readUserConfigurationDataFromEEPROM()) {
-    UserConfigurationData.screensaverTime = legacy.FMTScreensaverTime >= 10 ? legacy.FMTScreensaverTime : 120;
-    UserConfigurationData.keypadPin = legacy.FMTKeypadPin >= 0 && legacy.FMTKeypadPin <= 9999 ? legacy.FMTKeypadPin : 6350;
-    writeUserConfigurationDataToNIV();
-  }
-  writeFMTDataToNIV();
-  return true;
-}
-
-void writeFMTDataToNIV() {
-  writeNIVData(FMTDATAKEY, &FMTData, ((byte*)&FMTData) + sizeof(FMTData_t) - 1);
-} 
-
-bool readUserConfigurationDataFromEEPROM() {
-  UserConfigurationData_t saved = {};
-  if (!readNIVData(USERCONFIGDATAKEY, &saved, ((byte*)&saved) + sizeof(saved) - 1) ||
-      saved.screensaverTime < 10 || saved.keypadPin < 0 || saved.keypadPin > 9999 ||
-      saved.displayBrightness < 1 || saved.displayBrightness > 10) {
-    return false;
-  }
-  UserConfigurationData = saved;
-  return true;
-}
-
-void writeUserConfigurationDataToNIV() {
-  writeNIVData(USERCONFIGDATAKEY, &UserConfigurationData,
-      ((byte*)&UserConfigurationData) + sizeof(UserConfigurationData) - 1);
-}
 
 void updatePatmFromFMTAltitude() {
   float altitude = FMTData.FMTAltitude;
@@ -256,32 +100,318 @@ void updatePatmFromFMTAltitude() {
   Patm = 1.01325f * powf(1.0f - (2.25577e-5f * altitude), 5.25588f);
 }
 
+// Direct per-field NVS access. Schema changes trigger a startup rewrite.
+static bool validCycleMinutes(float value) {
+  return isfinite(value) && value >= 0.01f && value <= 1440.0f;
+}
+
+static const FMTData_t defaultFMTData = FMTData;
+bool readFMTDataFromEEPROM() {
+  FMTData = defaultFMTData;
+  Preferences store;
+  if (!store.begin("pvt_settings", true)) return false;
+  FMTData.pressure0Current = store.getFloat("p0Current", defaultFMTData.pressure0Current);
+  if (!isfinite(FMTData.pressure0Current)) FMTData.pressure0Current = defaultFMTData.pressure0Current;
+  FMTData.pressure1Bar = store.getFloat("p1Bar", defaultFMTData.pressure1Bar);
+  if (!isfinite(FMTData.pressure1Bar)) FMTData.pressure1Bar = defaultFMTData.pressure1Bar;
+  FMTData.pressure1Current = store.getFloat("p1Current", defaultFMTData.pressure1Current);
+  if (!isfinite(FMTData.pressure1Current)) FMTData.pressure1Current = defaultFMTData.pressure1Current;
+  FMTData.pressure2Bar = store.getFloat("p2Bar", defaultFMTData.pressure2Bar);
+  if (!isfinite(FMTData.pressure2Bar)) FMTData.pressure2Bar = defaultFMTData.pressure2Bar;
+  FMTData.pressure2Current = store.getFloat("p2Current", defaultFMTData.pressure2Current);
+  if (!isfinite(FMTData.pressure2Current)) FMTData.pressure2Current = defaultFMTData.pressure2Current;
+  FMTData.maximumPressure = store.getFloat("maxPressure", defaultFMTData.maximumPressure);
+  if (!isfinite(FMTData.maximumPressure)) FMTData.maximumPressure = defaultFMTData.maximumPressure;
+  FMTData.co2TransferTime = store.getInt("co2TransferTime", defaultFMTData.co2TransferTime);
+  FMTData.nucleationWindow = store.getInt("nucleation", defaultFMTData.nucleationWindow);
+  FMTData.nvsSchemaVersion = store.getUInt("schemaVersion", 0);
+  FMTData.PovotoNum = store.getUChar("number", defaultFMTData.PovotoNum);
+  FMTData.FMTVolume = store.getFloat("volume", defaultFMTData.FMTVolume);
+  if (!isfinite(FMTData.FMTVolume)) FMTData.FMTVolume = defaultFMTData.FMTVolume;
+  FMTData.FMTReliefVolume = store.getFloat("reliefVolume", defaultFMTData.FMTReliefVolume);
+  if (!isfinite(FMTData.FMTReliefVolume)) FMTData.FMTReliefVolume = defaultFMTData.FMTReliefVolume;
+  FMTData.FMTOnTimeDuringBrew = store.getFloat("brewOn", defaultFMTData.FMTOnTimeDuringBrew);
+  if (!isfinite(FMTData.FMTOnTimeDuringBrew)) FMTData.FMTOnTimeDuringBrew = defaultFMTData.FMTOnTimeDuringBrew;
+  FMTData.FMTOFFTimeDuringBrew = store.getFloat("brewOff", defaultFMTData.FMTOFFTimeDuringBrew);
+  if (!isfinite(FMTData.FMTOFFTimeDuringBrew)) FMTData.FMTOFFTimeDuringBrew = defaultFMTData.FMTOFFTimeDuringBrew;
+  FMTData.FMTAltitude = store.getFloat("altitude", defaultFMTData.FMTAltitude);
+  if (!isfinite(FMTData.FMTAltitude)) FMTData.FMTAltitude = defaultFMTData.FMTAltitude;
+  FMTData.FMTEffectiveVentingExponent = store.getFloat("ventExponent", defaultFMTData.FMTEffectiveVentingExponent);
+  if (!isfinite(FMTData.FMTEffectiveVentingExponent)) FMTData.FMTEffectiveVentingExponent = defaultFMTData.FMTEffectiveVentingExponent;
+  if (store.getBytesLength("cooling") == sizeof(FMTData.coolingCycle))
+    store.getBytes("cooling", &FMTData.coolingCycle, sizeof(FMTData.coolingCycle));
+  for (const auto &point : FMTData.coolingCycle) {
+    if (!validCycleMinutes(point.onMinutes) || !validCycleMinutes(point.offMinutes)) {
+      memcpy(FMTData.coolingCycle, defaultFMTData.coolingCycle, sizeof(FMTData.coolingCycle));
+      break;
+    }
+  }
+  uint8_t heaterBytes[sizeof(FMTData.heater)];
+  if (store.getBytesLength("heater") == sizeof(heaterBytes) &&
+      store.getBytes("heater", heaterBytes, sizeof(heaterBytes)) == sizeof(heaterBytes) &&
+      heaterBytes[0] <= 1) {
+    memcpy(&FMTData.heater, heaterBytes, sizeof(heaterBytes));
+    if (!validCycleMinutes(FMTData.heater.onMinutes) ||
+        !validCycleMinutes(FMTData.heater.offMinutes))
+      FMTData.heater = defaultFMTData.heater;
+  }
+  store.end();
+  return true;
+}
+
+bool writeFMTDataToNIV() {
+  Preferences store;
+  if (!store.begin("pvt_settings", false)) {
+    Serial.println("NVS: cannot open pvt_settings");
+    return false;
+  }
+  bool saved = true;
+  saved = (store.putUChar("number", FMTData.PovotoNum) == sizeof(FMTData.PovotoNum)) && saved;
+  saved = (store.putFloat("volume", FMTData.FMTVolume) == sizeof(FMTData.FMTVolume)) && saved;
+  saved = (store.putFloat("reliefVolume", FMTData.FMTReliefVolume) == sizeof(FMTData.FMTReliefVolume)) && saved;
+  saved = (store.putFloat("brewOn", FMTData.FMTOnTimeDuringBrew) == sizeof(FMTData.FMTOnTimeDuringBrew)) && saved;
+  saved = (store.putFloat("brewOff", FMTData.FMTOFFTimeDuringBrew) == sizeof(FMTData.FMTOFFTimeDuringBrew)) && saved;
+  saved = (store.putFloat("altitude", FMTData.FMTAltitude) == sizeof(FMTData.FMTAltitude)) && saved;
+  saved = (store.putFloat("ventExponent", FMTData.FMTEffectiveVentingExponent) == sizeof(FMTData.FMTEffectiveVentingExponent)) && saved;
+  saved = (store.putBytes("cooling", &FMTData.coolingCycle, sizeof(FMTData.coolingCycle)) == sizeof(FMTData.coolingCycle)) && saved;
+  saved = (store.putBytes("heater", &FMTData.heater, sizeof(FMTData.heater)) == sizeof(FMTData.heater)) && saved;
+  saved = (store.putFloat("p0Current", FMTData.pressure0Current) == sizeof(FMTData.pressure0Current)) && saved;
+  saved = (store.putFloat("p1Bar", FMTData.pressure1Bar) == sizeof(FMTData.pressure1Bar)) && saved;
+  saved = (store.putFloat("p1Current", FMTData.pressure1Current) == sizeof(FMTData.pressure1Current)) && saved;
+  saved = (store.putFloat("p2Bar", FMTData.pressure2Bar) == sizeof(FMTData.pressure2Bar)) && saved;
+  saved = (store.putFloat("p2Current", FMTData.pressure2Current) == sizeof(FMTData.pressure2Current)) && saved;
+  saved = (store.putFloat("maxPressure", FMTData.maximumPressure) == sizeof(FMTData.maximumPressure)) && saved;
+  saved = (store.putInt("co2TransferTime", FMTData.co2TransferTime) == sizeof(FMTData.co2TransferTime)) && saved;
+  saved = (store.putInt("nucleation", FMTData.nucleationWindow) == sizeof(FMTData.nucleationWindow)) && saved;
+  // Write the completion marker only after all settings were saved.
+  if (saved)
+    saved = store.putUInt("schemaVersion", FMTData.nvsSchemaVersion) == sizeof(FMTData.nvsSchemaVersion);
+  store.end();
+  if (!saved) Serial.println("NVS: FMTData save incomplete");
+  return saved;
+}
+
+static const UserConfigurationData_t defaultUserConfigurationData = UserConfigurationData;
+bool readUserConfigurationDataFromEEPROM() {
+  UserConfigurationData = defaultUserConfigurationData;
+  Preferences store;
+  if (!store.begin("pvt_user", true)) return false;
+  UserConfigurationData.screensaverTime = store.getInt("screensaver", defaultUserConfigurationData.screensaverTime);
+  UserConfigurationData.keypadPin = store.getInt("keypadPin", defaultUserConfigurationData.keypadPin);
+  UserConfigurationData.displayBrightness = store.getInt("brightness", defaultUserConfigurationData.displayBrightness);
+  if (UserConfigurationData.screensaverTime < 10) UserConfigurationData.screensaverTime = defaultUserConfigurationData.screensaverTime;
+  if (UserConfigurationData.keypadPin < 0 || UserConfigurationData.keypadPin > 9999) UserConfigurationData.keypadPin = defaultUserConfigurationData.keypadPin;
+  if (UserConfigurationData.displayBrightness < 1 || UserConfigurationData.displayBrightness > 10) UserConfigurationData.displayBrightness = defaultUserConfigurationData.displayBrightness;
+  store.end();
+  return true;
+}
+
+bool writeUserConfigurationDataToNIV() {
+  Preferences store;
+  if (!store.begin("pvt_user", false)) {
+    Serial.println("NVS: cannot open pvt_user");
+    return false;
+  }
+  bool saved = true;
+  saved = (store.putInt("screensaver", UserConfigurationData.screensaverTime) == sizeof(UserConfigurationData.screensaverTime)) && saved;
+  saved = (store.putInt("keypadPin", UserConfigurationData.keypadPin) == sizeof(UserConfigurationData.keypadPin)) && saved;
+  saved = (store.putInt("brightness", UserConfigurationData.displayBrightness) == sizeof(UserConfigurationData.displayBrightness)) && saved;
+  store.end();
+  if (!saved) Serial.println("NVS: UserConfigurationData save incomplete");
+  return saved;
+}
+
+static const BatchData_t defaultBatchData = BatchData;
 bool readBatchDataFromEEPROM() {
-  return readNIVData(BATCHDATAKEY, &BatchData, ((byte*)&BatchData) + sizeof(BatchData_t) - 1);
+  BatchData = defaultBatchData;
+  Preferences store;
+  if (!store.begin("pvt_batch", true)) return false;
+  store.getString("name", String(defaultBatchData.batchName)).toCharArray(BatchData.batchName, sizeof(BatchData.batchName));
+  BatchData.batchNumber = store.getUShort("number", defaultBatchData.batchNumber);
+  store.getString("date", String(defaultBatchData.batchDate)).toCharArray(BatchData.batchDate, sizeof(BatchData.batchDate));
+  BatchData.batchOG = store.getFloat("og", defaultBatchData.batchOG);
+  if (!isfinite(BatchData.batchOG)) BatchData.batchOG = defaultBatchData.batchOG;
+  BatchData.addedPlato = store.getFloat("addedPlato", defaultBatchData.addedPlato);
+  if (!isfinite(BatchData.addedPlato)) BatchData.addedPlato = defaultBatchData.addedPlato;
+  BatchData.startPressure = store.getFloat("startPressure", defaultBatchData.startPressure);
+  if (!isfinite(BatchData.startPressure)) BatchData.startPressure = defaultBatchData.startPressure;
+  BatchData.startTemperature = store.getFloat("startTemp", defaultBatchData.startTemperature);
+  if (!isfinite(BatchData.startTemperature)) BatchData.startTemperature = defaultBatchData.startTemperature;
+  store.end();
+  return true;
 }
 
-void writeBatchDataToNIV() {
-  writeNIVData(BATCHDATAKEY, &BatchData, ((byte*)&BatchData) + sizeof(BatchData_t) - 1);
+bool writeBatchDataToNIV() {
+  Preferences store;
+  if (!store.begin("pvt_batch", false)) {
+    Serial.println("NVS: cannot open pvt_batch");
+    return false;
+  }
+  bool saved = true;
+  saved = (store.putString("name", BatchData.batchName) == strlen(BatchData.batchName)) && saved;
+  saved = (store.putUShort("number", BatchData.batchNumber) == sizeof(BatchData.batchNumber)) && saved;
+  saved = (store.putString("date", BatchData.batchDate) == strlen(BatchData.batchDate)) && saved;
+  saved = (store.putFloat("og", BatchData.batchOG) == sizeof(BatchData.batchOG)) && saved;
+  saved = (store.putFloat("addedPlato", BatchData.addedPlato) == sizeof(BatchData.addedPlato)) && saved;
+  saved = (store.putFloat("startPressure", BatchData.startPressure) == sizeof(BatchData.startPressure)) && saved;
+  saved = (store.putFloat("startTemp", BatchData.startTemperature) == sizeof(BatchData.startTemperature)) && saved;
+  store.end();
+  if (!saved) Serial.println("NVS: BatchData save incomplete");
+  return saved;
 }
 
+static const SetPointData_t defaultSetPointData = SetPointData;
 bool readSetPointDataFromEEPROM() {
-  return readNIVData(SETPOINTDATAKEY, &SetPointData, ((byte*)&SetPointData) + sizeof(SetPointData_t) - 1);
+  SetPointData = defaultSetPointData;
+  Preferences store;
+  if (!store.begin("pvt_setpoint", true)) return false;
+  SetPointData.mode = store.getUChar("mode", defaultSetPointData.mode);
+  SetPointData.setPointTemp = store.getFloat("temperature", defaultSetPointData.setPointTemp);
+  if (!isfinite(SetPointData.setPointTemp)) SetPointData.setPointTemp = defaultSetPointData.setPointTemp;
+  SetPointData.setPointSlowTemp = store.getFloat("slowTemp", defaultSetPointData.setPointSlowTemp);
+  if (!isfinite(SetPointData.setPointSlowTemp)) SetPointData.setPointSlowTemp = defaultSetPointData.setPointSlowTemp;
+  SetPointData.setPointPressure = store.getFloat("pressure", defaultSetPointData.setPointPressure);
+  if (!isfinite(SetPointData.setPointPressure)) SetPointData.setPointPressure = defaultSetPointData.setPointPressure;
+  SetPointData.setPointTempSetEpoch = store.getUInt("tempEpoch", defaultSetPointData.setPointTempSetEpoch);
+  SetPointData.setPointPressureSetEpoch = store.getUInt("pressureEpoch", defaultSetPointData.setPointPressureSetEpoch);
+  if (SetPointData.mode > MODE_CONDITIONING) SetPointData.mode = defaultSetPointData.mode;
+  store.end();
+  return true;
 }
 
-void writeSetPointDataToNIV() {
-  writeNIVData(SETPOINTDATAKEY, &SetPointData, ((byte*)&SetPointData) + sizeof(SetPointData_t) - 1);
+bool writeSetPointDataToNIV() {
+  Preferences store;
+  if (!store.begin("pvt_setpoint", false)) {
+    Serial.println("NVS: cannot open pvt_setpoint");
+    return false;
+  }
+  bool saved = true;
+  saved = (store.putUChar("mode", SetPointData.mode) == sizeof(SetPointData.mode)) && saved;
+  saved = (store.putFloat("temperature", SetPointData.setPointTemp) == sizeof(SetPointData.setPointTemp)) && saved;
+  saved = (store.putFloat("slowTemp", SetPointData.setPointSlowTemp) == sizeof(SetPointData.setPointSlowTemp)) && saved;
+  saved = (store.putFloat("pressure", SetPointData.setPointPressure) == sizeof(SetPointData.setPointPressure)) && saved;
+  saved = (store.putUInt("tempEpoch", SetPointData.setPointTempSetEpoch) == sizeof(SetPointData.setPointTempSetEpoch)) && saved;
+  saved = (store.putUInt("pressureEpoch", SetPointData.setPointPressureSetEpoch) == sizeof(SetPointData.setPointPressureSetEpoch)) && saved;
+  store.end();
+  if (!saved) Serial.println("NVS: SetPointData save incomplete");
+  return saved;
 }
 
-bool readCalibrationDataFromEEPROM() {
-  return readNIVData(CALIBRATIONDATAKEY, &CalibrationData, ((byte*)&CalibrationData) + sizeof(CalibrationData_t) - 1);
+static const CountersData_t defaultCountersData = CountersData;
+bool readCountersDataFromEEPROM() {
+  CountersData = defaultCountersData;
+  Preferences store;
+  if (!store.begin("pvt_counters", true)) return false;
+  CountersData.totalReliefCount = store.getUInt("reliefCount", defaultCountersData.totalReliefCount);
+  CountersData.totalMolsEjected = store.getDouble("molsEjected", defaultCountersData.totalMolsEjected);
+  if (!isfinite(CountersData.totalMolsEjected)) CountersData.totalMolsEjected = defaultCountersData.totalMolsEjected;
+  CountersData.CO2InSolution = store.getDouble("co2Solution", defaultCountersData.CO2InSolution);
+  if (!isfinite(CountersData.CO2InSolution)) CountersData.CO2InSolution = defaultCountersData.CO2InSolution;
+  CountersData.headSpaceVolume = store.getFloat("headSpace", defaultCountersData.headSpaceVolume);
+  if (!isfinite(CountersData.headSpaceVolume)) CountersData.headSpaceVolume = defaultCountersData.headSpaceVolume;
+  CountersData.correctionPlato = store.getFloat("correctPlato", defaultCountersData.correctionPlato);
+  if (!isfinite(CountersData.correctionPlato)) CountersData.correctionPlato = defaultCountersData.correctionPlato;
+  CountersData.SGAttenuation = store.getFloat("sgAttenuation", defaultCountersData.SGAttenuation);
+  if (!isfinite(CountersData.SGAttenuation)) CountersData.SGAttenuation = defaultCountersData.SGAttenuation;
+  CountersData.totalChillTime = store.getInt("chillTime", defaultCountersData.totalChillTime);
+  CountersData.totalHeatTime = store.getInt("heatTime", defaultCountersData.totalHeatTime);
+  store.end();
+  return true;
 }
 
-void writeCalibrationDataToNIV() {
-  writeNIVData(CALIBRATIONDATAKEY, &CalibrationData, ((byte*)&CalibrationData) + sizeof(CalibrationData_t) - 1);
+bool writeCountersDataToNIV() {
+  Preferences store;
+  if (!store.begin("pvt_counters", false)) {
+    Serial.println("NVS: cannot open pvt_counters");
+    return false;
+  }
+  bool saved = true;
+  saved = (store.putUInt("reliefCount", CountersData.totalReliefCount) == sizeof(CountersData.totalReliefCount)) && saved;
+  saved = (store.putDouble("molsEjected", CountersData.totalMolsEjected) == sizeof(CountersData.totalMolsEjected)) && saved;
+  saved = (store.putDouble("co2Solution", CountersData.CO2InSolution) == sizeof(CountersData.CO2InSolution)) && saved;
+  saved = (store.putFloat("headSpace", CountersData.headSpaceVolume) == sizeof(CountersData.headSpaceVolume)) && saved;
+  saved = (store.putFloat("correctPlato", CountersData.correctionPlato) == sizeof(CountersData.correctionPlato)) && saved;
+  saved = (store.putFloat("sgAttenuation", CountersData.SGAttenuation) == sizeof(CountersData.SGAttenuation)) && saved;
+  saved = (store.putInt("chillTime", CountersData.totalChillTime) == sizeof(CountersData.totalChillTime)) && saved;
+  saved = (store.putInt("heatTime", CountersData.totalHeatTime) == sizeof(CountersData.totalHeatTime)) && saved;
+  store.end();
+  if (!saved) Serial.println("NVS: CountersData save incomplete");
+  return saved;
+}
+
+static bool clearPovotoNamespace(const char *name) {
+  Preferences store;
+  if (!store.begin(name, false)) {
+    Serial.printf("NVS: cannot open %s for clearing\n", name);
+    return false;
+  }
+  const bool cleared = store.clear();
+  store.end();
+  if (!cleared) Serial.printf("NVS: failed to clear %s\n", name);
+  return cleared;
+}
+
+bool resetPovotoDataToFactoryDefaults() {
+  // Keep all in-memory data and all active Povoto namespaces in sync.
+  FMTData = defaultFMTData;
+  FMTData.nvsSchemaVersion = PVT_NVS_SCHEMA_VERSION;
+  UserConfigurationData = defaultUserConfigurationData;
+  BatchData = defaultBatchData;
+  SetPointData = defaultSetPointData;
+  CountersData = defaultCountersData;
+
+  bool saved = clearPovotoNamespace("pvt_settings");
+  saved = clearPovotoNamespace("pvt_user") && saved;
+  saved = clearPovotoNamespace("pvt_batch") && saved;
+  saved = clearPovotoNamespace("pvt_setpoint") && saved;
+  saved = clearPovotoNamespace("pvt_calib") && saved; // Retired namespace.
+  saved = clearPovotoNamespace("pvt_counters") && saved;
+
+  saved = writeFMTDataToNIV() && saved;
+  saved = writeUserConfigurationDataToNIV() && saved;
+  saved = writeBatchDataToNIV() && saved;
+  saved = writeSetPointDataToNIV() && saved;
+  saved = writeCountersDataToNIV() && saved;
+  updatePatmFromFMTAltitude();
+  requestDerivedStateRestoreFromCounters();
+
+  if (saved) Serial.println("NVS: factory defaults restored");
+  else Serial.println("NVS: factory reset incomplete");
+  return saved;
+}
+
+// All data must already be loaded in RAM. Peers, Wi-Fi and other namespaces
+// are outside this operation. Interrupted rewrites may lose unsaved values.
+static void rewriteNVSIfSchemaChanged() {
+  if (FMTData.nvsSchemaVersion == PVT_NVS_SCHEMA_VERSION) return;
+  Serial.printf("NVS: rewriting schema %lu -> %lu\n",
+    (unsigned long)FMTData.nvsSchemaVersion, (unsigned long)PVT_NVS_SCHEMA_VERSION);
+  FMTData.nvsSchemaVersion = 0; // Keep retrying until the entire rewrite succeeds.
+  bool saved = clearPovotoNamespace("pvt_settings");
+  saved = clearPovotoNamespace("pvt_user") && saved;
+  saved = clearPovotoNamespace("pvt_batch") && saved;
+  saved = clearPovotoNamespace("pvt_setpoint") && saved;
+  saved = clearPovotoNamespace("pvt_calib") && saved; // Retired namespace.
+  saved = clearPovotoNamespace("pvt_counters") && saved;
+
+  saved = writeFMTDataToNIV() && saved;
+  saved = writeUserConfigurationDataToNIV() && saved;
+  saved = writeBatchDataToNIV() && saved;
+  saved = writeSetPointDataToNIV() && saved;
+  saved = writeCountersDataToNIV() && saved;
+  if (saved) {
+    FMTData.nvsSchemaVersion = PVT_NVS_SCHEMA_VERSION;
+    saved = writeFMTDataToNIV();
+  }
+  if (!saved) {
+    FMTData.nvsSchemaVersion = 0;
+    Serial.println("NVS: schema rewrite incomplete; retry on next boot");
+  } else {
+    Serial.println("NVS: schema rewrite complete");
+  }
 }
 
 void povotoDataInit() {
-  preferences.begin("povoto", false); 
 
 
   if (!readFMTDataFromEEPROM())
@@ -290,8 +420,6 @@ void povotoDataInit() {
   if (!readUserConfigurationDataFromEEPROM())
     Serial.println("User configuration load failed, using defaults");
 
-  if (!readCalibrationDataFromEEPROM())
-    Serial.println("Calibration data load failed, using defaults");
 
   if (!readBatchDataFromEEPROM())
     Serial.println("Batch data load failed, using defaults");
@@ -304,28 +432,21 @@ void povotoDataInit() {
   else
     requestDerivedStateRestoreFromCounters();
 
+  rewriteNVSIfSchemaChanged();
   updatePatmFromFMTAltitude();
 }
 
 void resetCountersForNewBatch() {
   //zera totalbubblecount 
   CountersData.totalReliefCount = 0;
-  CountersData.totalMolsEjected = 0.0f;
-  CountersData.CO2InSolution = 0.0f;
+  CountersData.totalMolsEjected = 0.0;
+  CountersData.CO2InSolution = 0.0;
   CountersData.headSpaceVolume = 0.0f;
   CountersData.SGAttenuation = 0.0f;
   CountersData.totalChillTime = 0;
   CountersData.totalHeatTime = 0;
 
   writeCountersDataToNIV();
-}
-
-bool readCountersDataFromEEPROM() {
-  return readNIVData(COUNTERSDATAKEY, &CountersData, ((byte*)&CountersData) + sizeof(CountersData_t) - 1);
-}
-
-void writeCountersDataToNIV() {
-  writeNIVData(COUNTERSDATAKEY, &CountersData, ((byte*)&CountersData) + sizeof(CountersData_t) - 1);
 }
 
 void maybePersistCountersData() {

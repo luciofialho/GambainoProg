@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <math.h>
 #include <PovotoCommon.h>
 #include <PovotoData.h>
 #include <IOTK.h>
@@ -64,42 +65,44 @@ char *getTemperatureModeLabel() {
 }
 
 
+// Quadratic interpolation in log(T), through 20, 10 and 0.5 C.
+// The displayed 0 C row is anchored at 0.5 C for a continuous lower clamp.
+static float coolingCycleMinutes(float temperature, float at20, float at10, float at0) {
+  if (!isfinite(temperature) || temperature <= 0.5f) return at0;
+  if (temperature >= 20.0f) return at20;
+  const double x = log(double(temperature));
+  const double x0 = log(0.5);
+  const double x10 = log(10.0);
+  const double x20 = log(20.0);
+  const double minutes =
+    at0 * (x - x10) * (x - x20) / ((x0 - x10) * (x0 - x20)) +
+    at10 * (x - x0) * (x - x20) / ((x10 - x0) * (x10 - x20)) +
+    at20 * (x - x0) * (x - x10) / ((x20 - x0) * (x20 - x10));
+  // Arbitrary table values can overshoot between anchors. Keep durations
+  // positive and within the same range accepted by the settings page.
+  return float(fmax(0.01, fmin(1440.0, minutes)));
+}
+
 long int fermenterOnOffCycle(float temperature, byte targetMode) {
   long timeUnit = debugging ? 1000L : 60000L; 
 
   if (SetPointData.mode==MODE_BREWING_TRANSFERING) // brewing/transfering mode
     return 5*timeUnit;
   else if (SetPointData.mode==MODE_FERMENTING || SetPointData.mode==MODE_CONDITIONING) { // fermenting mode
-    long int onTime, offTime;
-
-
-    long int minOnTime = FMTData.FMTMinActiveTime * timeUnit;
-    long int maxOnTime = FMTData.FMTMaxActiveTime * timeUnit;
-    long int minOffTime = FMTData.FMTMinOffTime * timeUnit;
-
-    onTime = long((12.5*log(temperature)-9.04) * timeUnit); // Todo3: simplificar modelo de tempo
-    if (targetMode == FMTCHILL) {
-      Serial.print("FMT: Calculated on time: "); Serial.print(onTime); Serial.print("ms for temperature: "); Serial.println(temperature);
-    }
-
-    if (onTime>maxOnTime)
-      onTime = maxOnTime;
-    else if (onTime<minOnTime)
-      onTime = minOnTime;
-
-    if (onTime > 10*timeUnit)
-      offTime = 10*timeUnit;
-    else
-      offTime = minOffTime;
-
+    const long onTime = lround(coolingCycleMinutes(temperature,
+      FMTData.coolingCycle[0].onMinutes, FMTData.coolingCycle[1].onMinutes,
+      FMTData.coolingCycle[2].onMinutes) * timeUnit);
+    const long offTime = lround(coolingCycleMinutes(temperature,
+      FMTData.coolingCycle[0].offMinutes, FMTData.coolingCycle[1].offMinutes,
+      FMTData.coolingCycle[2].offMinutes) * timeUnit);
     if (targetMode == FMTCHILL)
       return onTime;
 
     if (targetMode == FMTHEAT)
-      return long(FMTData.FMTHeaterOnTime * timeUnit);
+      return long(FMTData.heater.onMinutes * timeUnit);
 
     if (mode == FMTHEAT)
-      return long(FMTData.FMTHeaterOffTime * timeUnit);
+      return long(FMTData.heater.offMinutes * timeUnit);
 
     return offTime;
   }
@@ -213,7 +216,7 @@ void temperatureControl() {
             newMode = FMTCHILL;
           }
         }
-        else if (ControlData.temperature < minTarget - 2*FMTOFFSET) { // Lucio: melhorar isso
+        else if (FMTData.heater.enabled && ControlData.temperature < minTarget - 2*FMTOFFSET) { // Lucio: melhorar isso
           if (lastModeChange==0 || (!millisOverflowWindow && MILLISPAST(nextModeChange))) // anti boucing Constante
             newMode = FMTHEAT; 
         }
@@ -243,6 +246,11 @@ void temperatureControl() {
     }
   }
     
+  if (!FMTData.heater.enabled) {
+    if (newMode == FMTHEAT) newMode = FMTIDLE;
+    interruptedHeating = false;
+  }
+
   if (newMode != mode) {
     ;Serial.print(millis()); Serial.print(": Mode change from "); Serial.print(mode==FMTIDLE ? "IDLE" : (mode==FMTCHILL ? "CHILL" : "HEAT")); Serial.print(" to "); Serial.println(newMode==FMTIDLE ? "IDLE" : (newMode==FMTCHILL ? "CHILL" : "HEAT"));
     if (newMode == FMTCHILL || newMode == FMTHEAT) {
@@ -310,6 +318,13 @@ void temperatureControl() {
     heatControl = false;
   else if (SetPointData.mode == MODE_OFF)
     heatControl = false; 
+
+  if (!FMTData.heater.enabled) {
+    heatControl = false;
+    // Disable immediately, even during the pressure-noise window.
+    digitalWrite(PINHEATER, LOW);
+    digitalWrite(PINLEDHEATER, LOW);
+  }
 
   updateCountersTimes(chillControl, heatControl);
 

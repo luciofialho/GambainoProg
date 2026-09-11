@@ -222,7 +222,7 @@ static void recomputeDissolvedCO2MolsFromCurrentState() {
 
     if (CountersData.totalReliefCount == 0 &&
         ControlData.pressure <= BatchData.startPressure) {
-      CountersData.CO2InSolution = 0.0f;
+      CountersData.CO2InSolution = 0.0;
       lastUpdateMillis = now;
       return;
     }
@@ -244,7 +244,7 @@ static void recomputeDissolvedCO2MolsFromCurrentState() {
 
     const double t50Seconds = activeFermentation
       ? 300.0
-      : double(CalibrationData.co2TransferTime) * 3600.0;
+      : double(FMTData.co2TransferTime) * 3600.0;
 
     const double equilibriumMols = CO2DissolvedMols(ControlData.pressure,beerSG,ControlData.temperature,beerVolume);
 
@@ -284,8 +284,8 @@ static void recomputeBeerCO2EvolutionFromCurrentState() {
     return;
   }
 
-  const double totalMols = double(CountersData.totalMolsEjected)
-      + double(CountersData.CO2InSolution) + double(headSpaceCO2Mols);
+  const double totalMols = CountersData.totalMolsEjected
+      + CountersData.CO2InSolution + double(headSpaceCO2Mols);
   if (!isfinite(beerVolume) || beerVolume <= 0.0f || !isfinite(totalMols)) {
     beerCO2EvolutionGramsPerLiterPerDay = 0.0f;
     return;
@@ -675,16 +675,16 @@ static void resetCurrentMedianFilter() {
 
 float convertCurrentToPressure(float current) {
   float pressure = 0.0f;
-  if (current <= CalibrationData.pressure0Current) {
+  if (current <= FMTData.pressure0Current) {
     pressure = 0.0f;
   }
-  else if (CalibrationData.pressure2Current != 0.0f) { // quadratic interpolation using Lagrange polynomials
-    const float x0 = CalibrationData.pressure0Current;
+  else if (FMTData.pressure2Bar != 0.0f && FMTData.pressure2Current != 0.0f) { // quadratic interpolation using Lagrange polynomials
+    const float x0 = FMTData.pressure0Current;
     const float y0 = 0.0f;
-    const float x1 = CalibrationData.pressure1Current;
-    const float y1 = CalibrationData.pressure1Bar;
-    const float x2 = CalibrationData.pressure2Current;
-    const float y2 = CalibrationData.pressure2Bar;
+    const float x1 = FMTData.pressure1Current;
+    const float y1 = FMTData.pressure1Bar;
+    const float x2 = FMTData.pressure2Current;
+    const float y2 = FMTData.pressure2Bar;
 
     const float d0 = (x0 - x1) * (x0 - x2);
     const float d1 = (x1 - x0) * (x1 - x2);
@@ -697,18 +697,18 @@ float convertCurrentToPressure(float current) {
       pressure = y0 * l0 + y1 * l1 + y2 * l2;
     }
     else {
-      const float denom = CalibrationData.pressure2Current - CalibrationData.pressure1Current;
+      const float denom = FMTData.pressure2Current - FMTData.pressure1Current;
       if (fabsf(denom) > 0.000001f) {
-        float ratio = (current - CalibrationData.pressure1Current) / denom;
-        pressure = CalibrationData.pressure1Bar + ratio * (CalibrationData.pressure2Bar - CalibrationData.pressure1Bar);
+        float ratio = (current - FMTData.pressure1Current) / denom;
+        pressure = FMTData.pressure1Bar + ratio * (FMTData.pressure2Bar - FMTData.pressure1Bar);
       }
     }
   }
   else { // linear interpolation
-    const float denom = CalibrationData.pressure1Current - CalibrationData.pressure0Current;
+    const float denom = FMTData.pressure1Current - FMTData.pressure0Current;
     if (fabsf(denom) > 0.000001f) {
-      float ratio = (current - CalibrationData.pressure0Current) / denom;
-      pressure = ratio * CalibrationData.pressure1Bar;
+      float ratio = (current - FMTData.pressure0Current) / denom;
+      pressure = ratio * FMTData.pressure1Bar;
     }
   }
 
@@ -854,7 +854,7 @@ void calculateFermentationState() {
   const float initialExtractMassG =
     initialBeerMassG * OE / 100.0f;
 
-  const float producedCO2Mols =
+  const double producedCO2Mols =
     CountersData.totalMolsEjected
     + CountersData.CO2InSolution
     + headSpaceCO2Mols;
@@ -1575,7 +1575,7 @@ void pressureControl() {
              (taskWindowType == 0 || MILLISDIFF(taskWindowEndTime, 0))) {
     pressureRelief(false);
   }
-  else if (ControlData.pressure > CalibrationData.maximumPressure) {
+  else if (ControlData.pressure > FMTData.maximumPressure) {
     soundAlarm = true;
     pressureRelief(false);
   }

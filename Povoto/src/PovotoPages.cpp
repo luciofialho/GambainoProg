@@ -107,11 +107,11 @@ void handleDebugParamsPage(AsyncWebServerRequest *request) {
                 "<meta name='viewport' content='width=device-width, initial-scale=1.0'>"
                 "<title>Debug Params</title>"
                 "<style>"
-                "body { font-family: Arial, sans-serif; margin: 20px; background-color: #f0f0f0; }"
+                "body { font-family: Arial, sans-serif; margin: 20px; background-color: #f0f0f0; color: #333; }"
                 "h1 { color: #333; }"
                 ".container { background-color: white; padding: 20px; border-radius: 8px; max-width: 600px; margin: 0 auto; }"
                 ".form-group { margin-bottom: 15px; }"
-                "label { display: block; margin-bottom: 5px; font-weight: bold; color: #555; }"
+                "label { display: block; margin-bottom: 5px; font-weight: bold; color: #333; }"
                 "input[type='number'] { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }"
                 "button { background-color: #4CAF50; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 10px; }"
                 "button:hover { background-color: #45a049; }"
@@ -193,7 +193,7 @@ void handleDebugParamsUpdate(AsyncWebServerRequest *request) {
 // ========== FMT DATA HANDLERS ==========
 
 void handleFMTDataPage(AsyncWebServerRequest *request) {
-  const size_t BUFFER_SIZE = 5000;
+  const size_t BUFFER_SIZE = 6000;
   char* html = (char*)malloc(BUFFER_SIZE);
   if (!html) {
     request->send(500, "text/plain", "Out of memory");
@@ -208,11 +208,12 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
                 "<meta name='viewport' content='width=device-width, initial-scale=1.0'>"
                 "<title>SettingsConfiguration</title>"
                 "<style>"
-                "body { font-family: Arial, sans-serif; margin: 20px; background-color: #f0f0f0; }"
+                "body { font-family: Arial, sans-serif; margin: 20px; background-color: #f0f0f0; color: #333; }"
                 "h1 { color: #333; }"
                 ".container { background-color: white; padding: 20px; border-radius: 8px; max-width: 600px; margin: 0 auto; }"
                 ".form-group { margin-bottom: 15px; }"
-                "label { display: block; margin-bottom: 5px; font-weight: bold; color: #555; }"
+                "label { display: block; margin-bottom: 5px; font-weight: bold; color: #333; }"
+                ".heater-time label { text-align: center; }"
                 "input[type='number'], input[type='text'] { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }"
                 "button { background-color: #4CAF50; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 10px; }"
                 "button:hover { background-color: #45a049; }"
@@ -252,70 +253,38 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
   strncat(html, "</div>", remaining);
   
   remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='form-group'>"
-               "<label for='FMTMinActiveTime'>Min Chiller on Time (min):</label>", remaining);
-  sprintf(buffer, "<input type='number' id='FMTMinActiveTime' name='FMTMinActiveTime' value='%.1f' step='0.1'>", FMTData.FMTMinActiveTime);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, buffer, remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div>", remaining);
-  
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='form-group'>"
-               "<label for='FMTMaxActiveTime'>Max Chiller on Time (min):</label>", remaining);
-  sprintf(buffer, "<input type='number' id='FMTMaxActiveTime' name='FMTMaxActiveTime' value='%.1f' step='0.1'>", FMTData.FMTMaxActiveTime);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, buffer, remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div>", remaining);
-  
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='form-group'>"
-               "<label for='FMTMinOffTime'>Min Chiller off Time (min):</label>", remaining);
-  sprintf(buffer, "<input type='number' id='FMTMinOffTime' name='FMTMinOffTime' value='%.1f' step='0.1'>", FMTData.FMTMinOffTime);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, buffer, remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div>", remaining);
-  
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='form-group'>"
-               "<label for='FMTalpha'>Alpha (on time (min) = alpha *log(temperature)-beta):</label>", remaining);
-  sprintf(buffer, "<input type='number' id='FMTalpha' name='FMTalpha' value='%.2f' step='0.01'>", FMTData.FMTalpha);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, buffer, remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div>", remaining);
-  
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='form-group'>"
-               "<label for='FMTbeta'>Beta:</label>", remaining);
-  sprintf(buffer, "<input type='number' id='FMTbeta' name='FMTbeta' value='%.2f' step='0.01'>", FMTData.FMTbeta);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, buffer, remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div>", remaining);
+  strncat(html, "<h2>Cooling cycle</h2><table style='width:100%;table-layout:fixed'>"
+    "<thead><tr><th>Temperature (&deg;C)</th><th>On time (min)</th><th>Rest time (min)</th></tr></thead><tbody>", remaining);
+  const char* temperatures[] = {"&gt;20", "10", "&lt;0.5"};
+  for (int i = 0; i < 3; ++i) {
+    snprintf(buffer, sizeof(buffer), "<tr><th scope='row'>%s</th><td>", temperatures[i]);
+    strncat(html, buffer, BUFFER_SIZE - strlen(html) - 1);
+    snprintf(buffer, sizeof(buffer),
+      "<input type='number' aria-label='On time at %s C' name='coolingOn%d' value='%.2f' min='0.01' max='1440' step='0.01' required></td><td>",
+      temperatures[i], i, FMTData.coolingCycle[i].onMinutes);
+    strncat(html, buffer, BUFFER_SIZE - strlen(html) - 1);
+    snprintf(buffer, sizeof(buffer),
+      "<input type='number' aria-label='Rest time at %s C' name='coolingOff%d' value='%.2f' min='0.01' max='1440' step='0.01' required></td></tr>",
+      temperatures[i], i, FMTData.coolingCycle[i].offMinutes);
+    strncat(html, buffer, BUFFER_SIZE - strlen(html) - 1);
+  }
+  strncat(html, "</tbody></table>", BUFFER_SIZE - strlen(html) - 1);
+  strncat(html, "<h2>Heating</h2><input type='hidden' name='heaterConfig' value='1'>"
+    "<table style='width:100%;table-layout:fixed'><tbody><tr><td style='text-align:center'>"
+    "<label><input type='checkbox' name='enableHeater' value='1'",
+    BUFFER_SIZE - strlen(html) - 1);
+  if (FMTData.heater.enabled) strncat(html, " checked", BUFFER_SIZE - strlen(html) - 1);
+  strncat(html, "> Enable heater</label></td><td class='heater-time'><label for='FMTHeaterOnTime'>On time (min)</label>",
+    BUFFER_SIZE - strlen(html) - 1);
+  snprintf(buffer, sizeof(buffer), "<input type='number' id='FMTHeaterOnTime' name='FMTHeaterOnTime' value='%.2f' min='0.01' max='1440' step='0.01' required>",
+    FMTData.heater.onMinutes);
+  strncat(html, buffer, BUFFER_SIZE - strlen(html) - 1);
+  strncat(html, "</td><td class='heater-time'><label for='FMTHeaterOffTime'>Rest time (min)</label>", BUFFER_SIZE - strlen(html) - 1);
+  snprintf(buffer, sizeof(buffer), "<input type='number' id='FMTHeaterOffTime' name='FMTHeaterOffTime' value='%.2f' min='0.01' max='1440' step='0.01' required>",
+    FMTData.heater.offMinutes);
+  strncat(html, buffer, BUFFER_SIZE - strlen(html) - 1);
+  strncat(html, "</td></tr></tbody></table><script>document.querySelector(\"input[name='enableHeater']\").onchange=function(){document.querySelectorAll('.heater-time').forEach(function(e){e.hidden=!this.checked;e.querySelector('input').disabled=!this.checked;},this);};document.querySelector(\"input[name='enableHeater']\").dispatchEvent(new Event('change'));</script>", BUFFER_SIZE - strlen(html) - 1);
 
-
-  
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='form-group'>"
-               "<label for='FMTHeaterOnTime'>Heater On Time (min):</label>", remaining);
-  sprintf(buffer, "<input type='number' id='FMTHeaterOnTime' name='FMTHeaterOnTime' value='%.1f' step='0.1'>", FMTData.FMTHeaterOnTime);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, buffer, remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div>", remaining);
-  
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='form-group'>"
-               "<label for='FMTHeaterOffTime'>Heater Off Time (min):</label>", remaining);
-  sprintf(buffer, "<input type='number' id='FMTHeaterOffTime' name='FMTHeaterOffTime' value='%.1f' step='0.1'>", FMTData.FMTHeaterOffTime);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, buffer, remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div>", remaining);
-  
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='form-group'>"
                "<label for='FMTAltitude'>Altitude (m):</label>", remaining);
@@ -327,7 +296,7 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
   
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='form-group'>"
-               "<label for='FMTEffectiveVentingExponent'>Effective Venting Exponent:</label>", remaining);
+               "<label for='FMTEffectiveVentingExponent' title='Effective polytropic exponent used to correct the temporary pressure drop caused by gas cooling during venting. Use 1.00 for isothermal venting and approximately 1.29 for adiabatic CO2 venting.'>Effective Venting Exponent:</label>", remaining);
   sprintf(buffer, "<input type='number' id='FMTEffectiveVentingExponent' name='FMTEffectiveVentingExponent' value='%.3f' step='0.001'>", FMTData.FMTEffectiveVentingExponent);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
@@ -345,7 +314,51 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
   free(html);
 }
 
+static bool readCoolingMinutes(AsyncWebServerRequest *request, const char *name, float &value) {
+  if (!request->hasParam(name, true)) return true;
+  const String text = request->getParam(name, true)->value();
+  char *end = nullptr;
+  const float parsed = strtof(text.c_str(), &end);
+  if (end == text.c_str() || *end != '\0' || !isfinite(parsed) ||
+      parsed < 0.01f || parsed > 1440.0f) return false;
+  value = parsed;
+  return true;
+}
+
 void handleFMTDataUpdate(AsyncWebServerRequest *request) {
+  CoolingCyclePoint_t cooling[3];
+  for (int i = 0; i < 3; ++i) {
+    char name[20];
+    float onMinutes = FMTData.coolingCycle[i].onMinutes;
+    float offMinutes = FMTData.coolingCycle[i].offMinutes;
+    snprintf(name, sizeof(name), "coolingOn%d", i);
+    bool valid = readCoolingMinutes(request, name, onMinutes);
+    snprintf(name, sizeof(name), "coolingOff%d", i);
+    valid = readCoolingMinutes(request, name, offMinutes) && valid;
+    if (!valid) {
+      request->send(400, "text/plain", "Cooling times must be between 0.01 and 1440 minutes.");
+      return;
+    }
+    cooling[i] = {onMinutes, offMinutes};
+  }
+  if (!(cooling[0].onMinutes > cooling[1].onMinutes + 1.0f && cooling[1].onMinutes > cooling[2].onMinutes + 1.0f) ||
+      !(cooling[0].offMinutes > cooling[1].offMinutes + 1.0f && cooling[1].offMinutes > cooling[2].offMinutes + 1.0f)) {
+    request->send(400, "text/plain", "Cooling times must decrease by more than 1 minute at each temperature step.");
+    return;
+  }
+  float heaterOn = FMTData.heater.onMinutes;
+  float heaterOff = FMTData.heater.offMinutes;
+  if (!readCoolingMinutes(request, "FMTHeaterOnTime", heaterOn) ||
+      !readCoolingMinutes(request, "FMTHeaterOffTime", heaterOff)) {
+    request->send(400, "text/plain", "Heater times must be between 0.01 and 1440 minutes.");
+    return;
+  }
+  if (request->hasParam("heaterConfig", true))
+    FMTData.heater.enabled = request->hasParam("enableHeater", true) &&
+      request->getParam("enableHeater", true)->value() == "1";
+  FMTData.heater.onMinutes = heaterOn;
+  FMTData.heater.offMinutes = heaterOff;
+  memcpy(FMTData.coolingCycle, cooling, sizeof(cooling));
   if (request->hasParam("PovotoNum", true)) {
     FMTData.PovotoNum = request->getParam("PovotoNum", true)->value().toInt();
   }
@@ -353,28 +366,13 @@ void handleFMTDataUpdate(AsyncWebServerRequest *request) {
     FMTData.FMTVolume = request->getParam("FMTVolume", true)->value().toFloat();
   }
   if (request->hasParam("FMTReliefVolume", true)) {
-    FMTData.FMTReliefVolume = request->getParam("FMTReliefVolume", true)->value().toFloat();
-  }
-  if (request->hasParam("FMTMinActiveTime", true)) {
-    FMTData.FMTMinActiveTime = request->getParam("FMTMinActiveTime", true)->value().toFloat();
-  }
-  if (request->hasParam("FMTMaxActiveTime", true)) {
-    FMTData.FMTMaxActiveTime = request->getParam("FMTMaxActiveTime", true)->value().toFloat();
-  }
-  if (request->hasParam("FMTMinOffTime", true)) {
-    FMTData.FMTMinOffTime = request->getParam("FMTMinOffTime", true)->value().toFloat();
-  }
-  if (request->hasParam("FMTalpha", true)) {
-    FMTData.FMTalpha = request->getParam("FMTalpha", true)->value().toFloat();
-  }
-  if (request->hasParam("FMTbeta", true)) {
-    FMTData.FMTbeta = request->getParam("FMTbeta", true)->value().toFloat();
-  }
-  if (request->hasParam("FMTHeaterOnTime", true)) {
-    FMTData.FMTHeaterOnTime = request->getParam("FMTHeaterOnTime", true)->value().toFloat();
-  }
-  if (request->hasParam("FMTHeaterOffTime", true)) {
-    FMTData.FMTHeaterOffTime = request->getParam("FMTHeaterOffTime", true)->value().toFloat();
+    const float relief = request->getParam("FMTReliefVolume", true)->value().toFloat();
+    const float volume = request->hasParam("FMTVolume", true) ? request->getParam("FMTVolume", true)->value().toFloat() : FMTData.FMTVolume;
+    if (!(relief > 0.0f && relief < 0.1f * volume)) {
+      request->send(400, "text/plain", "Relief volume must be greater than zero and less than 10% of FMT total volume.");
+      return;
+    }
+    FMTData.FMTReliefVolume = relief;
   }
   if (request->hasParam("FMTOnTimeDuringBrew", true)) {
     FMTData.FMTOnTimeDuringBrew = request->getParam("FMTOnTimeDuringBrew", true)->value().toFloat();
@@ -386,7 +384,12 @@ void handleFMTDataUpdate(AsyncWebServerRequest *request) {
     FMTData.FMTAltitude = request->getParam("FMTAltitude", true)->value().toFloat();
   }
   if (request->hasParam("FMTEffectiveVentingExponent", true)) {
-    FMTData.FMTEffectiveVentingExponent = request->getParam("FMTEffectiveVentingExponent", true)->value().toFloat();
+    const float exponent = request->getParam("FMTEffectiveVentingExponent", true)->value().toFloat();
+    if (exponent < 1.0f || exponent > 1.30f) {
+      request->send(400, "text/plain", "Effective venting exponent must be between 1.00 and 1.30.");
+      return;
+    }
+    FMTData.FMTEffectiveVentingExponent = exponent;
   }
   writeFMTDataToNIV();
   updatePatmFromFMTAltitude();
@@ -471,6 +474,8 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, ".input-row { display: flex; gap: 8px; align-items: center; }", remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, ".point-row { display: grid; grid-template-columns: 80px 1fr 1.35fr; gap: 12px; align-items: end; } .point-row > .form-group { margin-bottom: 15px; } .point-caption { font-weight: bold; padding-bottom: 24px; }", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, ".input-row input { flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }", remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "input[type='number']:not(.input-row input) { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }", remaining);
@@ -500,7 +505,7 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   // Corrente medida atual / media 30s
   char buffer[300];
   snprintf(buffer, sizeof(buffer),
-    "<div class='current-row'><div class='current-badge'>&#128268; Actual current reading%s: <b>%.2f mA</b></div><a class='btn-refresh' href='/calibration/refresh-current'>Atualizar (media 30s)</a></div>",
+    "<div class='current-row'><div class='current-badge'>&#128268; Actual current reading%s: <b>%.2f mA</b></div><a class='btn-refresh' href='/calibration/refresh-current'>Update</a></div>",
     usingAverageCurrent ? " (30s avg)" : "",
     pageCurrentReading);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -509,27 +514,33 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<form action='/calibration/update' method='POST'>", remaining);
 
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<h2>Pressure sensor</h2>", remaining);
+
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<div class='point-row'><div class='point-caption'>Point A</div><div class='form-group'><label>Pressure (bar):</label><input type='number' value='0.00' disabled></div>", remaining);
+
   // Pressure 0 Current
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='form-group'>"
-               "<label for='pressure0Current'>Pressure 0 Current - 0 bar (mA):</label>"
+               "<label for='pressure0Current'>Current (mA):</label>"
                "<div class='input-row'>", remaining);
   snprintf(buffer, sizeof(buffer),
     "<input type='number' id='pressure0Current' name='pressure0Current' value='%.2f' step='0.01'>"
     "<button type='button' class='btn-use' onclick=\"document.getElementById('pressure0Current').value='%.2f'\">Use actual</button>",
-    CalibrationData.pressure0Current, pageCurrentReading);
+    FMTData.pressure0Current, pageCurrentReading);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div></div>", remaining);
+  strncat(html, "</div></div></div>", remaining);
 
-  // Pressure 1 Bar
+  // Pressure 1 (point B)
   remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='form-group'>"
-               "<label for='pressure1Bar'>Pressure 1 Bar:</label>", remaining);
+  strncat(html, "<div class='point-row'><div class='point-caption'>Point B</div><div class='form-group'>"
+               "<label for='pressure1Bar'>Pressure (bar):</label>", remaining);
   snprintf(buffer, sizeof(buffer),
     "<input type='number' id='pressure1Bar' name='pressure1Bar' value='%.2f' step='0.01'>",
-    CalibrationData.pressure1Bar);
+    FMTData.pressure1Bar);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -538,24 +549,37 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   // Pressure 1 Current
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='form-group'>"
-               "<label for='pressure1Current'>Pressure 1 Current (mA):</label>"
+               "<label for='pressure1Current'>Current (mA):</label>"
                "<div class='input-row'>", remaining);
   snprintf(buffer, sizeof(buffer),
     "<input type='number' id='pressure1Current' name='pressure1Current' value='%.2f' step='0.01'>"
     "<button type='button' class='btn-use' onclick=\"document.getElementById('pressure1Current').value='%.2f'\">Use actual</button>",
-    CalibrationData.pressure1Current, pageCurrentReading);
+    FMTData.pressure1Current, pageCurrentReading);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div></div>", remaining);
+  strncat(html, "</div></div></div>", remaining);
+
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<label><input type='checkbox' name='threePoint' value='1' onclick=\"document.getElementById('thirdPointFields').hidden=!this.checked; if(!this.checked){document.getElementById('pressure2Bar').value='0';document.getElementById('pressure2Current').value='0';}\"", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, FMTData.pressure2Bar != 0.0f ? " checked" : "", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "> Three point quadratic curve</label><div id='thirdPointFields'", remaining);
+  if (FMTData.pressure2Bar == 0.0f) {
+    remaining = BUFFER_SIZE - strlen(html) - 1;
+    strncat(html, " hidden", remaining);
+  }
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, ">", remaining);
 
   // Pressure 2 Bar
   remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='form-group'>"
-               "<label for='pressure2Bar'>Pressure 2 Bar:</label>", remaining);
+  strncat(html, "<div class='point-row'><div class='point-caption'>Point C</div><div class='form-group'>"
+               "<label for='pressure2Bar'>Pressure (bar):</label>", remaining);
   snprintf(buffer, sizeof(buffer),
     "<input type='number' id='pressure2Bar' name='pressure2Bar' value='%.2f' step='0.01'>",
-    CalibrationData.pressure2Bar);
+    FMTData.pressure2Bar);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -564,16 +588,23 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   // Pressure 2 Current
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='form-group'>"
-               "<label for='pressure2Current'>Pressure 2 Current (mA):</label>"
+               "<label for='pressure2Current'>Current (mA):</label>"
                "<div class='input-row'>", remaining);
   snprintf(buffer, sizeof(buffer),
     "<input type='number' id='pressure2Current' name='pressure2Current' value='%.2f' step='0.01'>"
     "<button type='button' class='btn-use' onclick=\"document.getElementById('pressure2Current').value='%.2f'\">Use actual</button>",
-    CalibrationData.pressure2Current, pageCurrentReading);
+    FMTData.pressure2Current, pageCurrentReading);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div></div>", remaining);
+  strncat(html, "</div></div></div>", remaining);
+
+  // End of fields controlled by the three-point checkbox.
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "</div>", remaining);
+
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<h2>Dissolved CO2 dynamics</h2>", remaining);
 
   // Maximum security pressure
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -581,7 +612,7 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
                "<label for='maximumPressure'>Maximum security pressure (bar):</label>", remaining);
   snprintf(buffer, sizeof(buffer),
     "<input type='number' id='maximumPressure' name='maximumPressure' value='%.2f' step='0.01' min='0'>",
-    CalibrationData.maximumPressure);
+    FMTData.maximumPressure);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -593,7 +624,7 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
                "<label for='co2TransferTime'>CO2 equilibrim half-time (hours):</label>", remaining);
   snprintf(buffer, sizeof(buffer),
     "<input type='number' id='co2TransferTime' name='co2TransferTime' value='%d' step='1' min='0'>",
-    CalibrationData.co2TransferTime);
+    FMTData.co2TransferTime);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -605,7 +636,7 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
                "<label for='nucleationWindow'>Nucleation window (min):</label>", remaining);
   snprintf(buffer, sizeof(buffer),
     "<input type='number' id='nucleationWindow' name='nucleationWindow' value='%d' step='1' min='0'>",
-    CalibrationData.nucleationWindow);
+    FMTData.nucleationWindow);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -623,32 +654,47 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
 }
 
 void handleCalibrationDataUpdate(AsyncWebServerRequest *request) {
+  const float p1 = request->hasParam("pressure1Bar", true) ? request->getParam("pressure1Bar", true)->value().toFloat() : FMTData.pressure1Bar;
+  const float p2 = request->hasParam("pressure2Bar", true) ? request->getParam("pressure2Bar", true)->value().toFloat() : FMTData.pressure2Bar;
+  const float c0 = request->hasParam("pressure0Current", true) ? request->getParam("pressure0Current", true)->value().toFloat() : FMTData.pressure0Current;
+  const float c1 = request->hasParam("pressure1Current", true) ? request->getParam("pressure1Current", true)->value().toFloat() : FMTData.pressure1Current;
+  const float c2 = request->hasParam("pressure2Current", true) ? request->getParam("pressure2Current", true)->value().toFloat() : FMTData.pressure2Current;
+  const float maxP = request->hasParam("maximumPressure", true) ? request->getParam("maximumPressure", true)->value().toFloat() : FMTData.maximumPressure;
+  const bool threePoint = request->hasParam("threePoint", true);
+  if (!(p1 > 0.5f && p1 < maxP) || (threePoint && p2 != 0.0f && !(p2 > p1 + 0.5f && p2 < maxP)) || !(c1 > c0) || (threePoint && p2 != 0.0f && !(c2 > c1)) || !(maxP > 2.0f && maxP < 3.0f)) {
+    request->send(400, "text/plain", "Invalid calibration values. Check pressure, current and maximum pressure limits.");
+    return;
+  }
   if (request->hasParam("pressure0Current", true)) {
-    CalibrationData.pressure0Current = request->getParam("pressure0Current", true)->value().toFloat();
+    FMTData.pressure0Current = request->getParam("pressure0Current", true)->value().toFloat();
   }
   if (request->hasParam("pressure1Bar", true)) {
-    CalibrationData.pressure1Bar = request->getParam("pressure1Bar", true)->value().toFloat();
+    FMTData.pressure1Bar = request->getParam("pressure1Bar", true)->value().toFloat();
   }
   if (request->hasParam("pressure1Current", true)) {
-    CalibrationData.pressure1Current = request->getParam("pressure1Current", true)->value().toFloat();
+    FMTData.pressure1Current = request->getParam("pressure1Current", true)->value().toFloat();
   }
   if (request->hasParam("pressure2Bar", true)) {
-    CalibrationData.pressure2Bar = request->getParam("pressure2Bar", true)->value().toFloat();
+    FMTData.pressure2Bar = request->getParam("pressure2Bar", true)->value().toFloat();
   }
   if (request->hasParam("pressure2Current", true)) {
-    CalibrationData.pressure2Current = request->getParam("pressure2Current", true)->value().toFloat();
+    FMTData.pressure2Current = request->getParam("pressure2Current", true)->value().toFloat();
+  }
+  if (!request->hasParam("threePoint", true)) {
+    FMTData.pressure2Bar = 0.0f;
+    FMTData.pressure2Current = 0.0f;
   }
   if (request->hasParam("maximumPressure", true)) {
-    CalibrationData.maximumPressure = request->getParam("maximumPressure", true)->value().toFloat();
+    FMTData.maximumPressure = request->getParam("maximumPressure", true)->value().toFloat();
   }
   if (request->hasParam("co2TransferTime", true)) {
-    CalibrationData.co2TransferTime = request->getParam("co2TransferTime", true)->value().toInt();
+    FMTData.co2TransferTime = request->getParam("co2TransferTime", true)->value().toInt();
   }
   if (request->hasParam("nucleationWindow", true)) {
-    CalibrationData.nucleationWindow = request->getParam("nucleationWindow", true)->value().toInt();
+    FMTData.nucleationWindow = request->getParam("nucleationWindow", true)->value().toInt();
   }
   
-  writeCalibrationDataToNIV();
+  writeFMTDataToNIV();
   
   String html = "<!DOCTYPE html><html><head>";
   html += "<meta charset='UTF-8'>";

@@ -15,22 +15,40 @@
 #define TOSTR(x) XSTR(x)
 
 
+struct CoolingCyclePoint_t {
+  float onMinutes;
+  float offMinutes;
+} __attribute__((packed));
+
+struct HeaterCycle_t {
+  bool enabled;
+  float onMinutes;
+  float offMinutes;
+} __attribute__((packed));
+
+// Increment to clear/rewrite the active Povoto namespaces after loading them.
+constexpr uint32_t PVT_NVS_SCHEMA_VERSION = 2;
+
 // FMT data struct
 struct FMTData_t {
+  uint32_t nvsSchemaVersion;
   byte PovotoNum;
   float FMTVolume;
   float FMTReliefVolume;
-  float FMTMinActiveTime;
-  float FMTMaxActiveTime;
-  float FMTMinOffTime;
-  float FMTalpha;
-  float FMTbeta;
-  float FMTHeaterOnTime;
-  float FMTHeaterOffTime;
   float FMTOnTimeDuringBrew;
   float FMTOFFTimeDuringBrew;
   float FMTAltitude;
   float FMTEffectiveVentingExponent;
+  float pressure0Current;
+  float pressure1Bar;
+  float pressure1Current;
+  float pressure2Bar;
+  float pressure2Current;
+  float maximumPressure;
+  int   co2TransferTime;
+  int   nucleationWindow;
+  HeaterCycle_t heater;
+  CoolingCyclePoint_t coolingCycle[3]; // Fixed rows: 20, 10 and 0 degrees C.
   uint32_t checksum;
 } __attribute__((packed));
 
@@ -45,23 +63,9 @@ struct UserConfigurationData_t {
 } __attribute__((packed));
 extern UserConfigurationData_t UserConfigurationData;
 bool readUserConfigurationDataFromEEPROM();
-void writeUserConfigurationDataToNIV();
+bool writeUserConfigurationDataToNIV();
 extern float Patm;
 
-// Calibration data
-struct CalibrationData_t {
-  float pressure0Current;
-  float pressure1Bar;
-  float pressure1Current;
-  float pressure2Bar;
-  float pressure2Current;
-  float maximumPressure;
-  int   co2TransferTime;
-  int   nucleationWindow;
-  uint32_t checksum;
-} __attribute__((packed));
-
-extern CalibrationData_t CalibrationData;
 
 // Batch data
 struct BatchData_t {
@@ -109,8 +113,8 @@ extern ControlData_t ControlData;
 // Counters data
 struct CountersData_t {
   uint32_t totalReliefCount;
-  float totalMolsEjected; // lucio - versao - trocar para double
-  float CO2InSolution; // lucio - versao - trocar para double
+  double totalMolsEjected;
+  double CO2InSolution;
   float headSpaceVolume;
   float correctionPlato;
   float SGAttenuation;
@@ -123,24 +127,23 @@ extern CountersData_t CountersData;
 
 // Function prototypes
 void povotoDataInit();
+bool resetPovotoDataToFactoryDefaults();
 
 bool readFMTDataFromEEPROM();
-void writeFMTDataToNIV();
+bool writeFMTDataToNIV();
 
-bool readCalibrationDataFromEEPROM();
-void writeCalibrationDataToNIV();
 
 bool readBatchDataFromEEPROM();
-void writeBatchDataToNIV();
+bool writeBatchDataToNIV();
 
 bool readSetPointDataFromEEPROM();
-void writeSetPointDataToNIV();
+bool writeSetPointDataToNIV();
 
 void updatePatmFromFMTAltitude();
 
 void resetCountersForNewBatch();
 bool readCountersDataFromEEPROM();
-void writeCountersDataToNIV();
+bool writeCountersDataToNIV();
 void maybePersistCountersData();
 void updateCountersTimes(bool chillOn, bool heatOn);
 

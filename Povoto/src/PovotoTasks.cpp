@@ -42,19 +42,19 @@ void endDumpTask() {
 }
 
 void endGasTask() {
-  endTask(CalibrationData.nucleationWindow);
+  endTask(FMTData.nucleationWindow);
 }
 
 void endLiquidTask() {
-  endTask(CalibrationData.nucleationWindow);
+  endTask(FMTData.nucleationWindow);
 }
 
 void endDryHoppingTask() {
-  endTask(CalibrationData.nucleationWindow);
+  endTask(FMTData.nucleationWindow);
 }
 
 void endDynamicHoppingTask() {
-  endTask(CalibrationData.nucleationWindow);
+  endTask(FMTData.nucleationWindow);
 }
 
 void checkTaskExpiration() {
