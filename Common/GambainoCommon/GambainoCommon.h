@@ -115,6 +115,7 @@ typedef void (*EspNowPacketHandler)(char packetType, const char *payload);
 void setExtraEspNowHandler(EspNowPacketHandler handler);
 esp_err_t sendEspNow(const uint8_t *mac, uint8_t channel, bool encrypt, uint8_t packetType, const char *payload);
 bool     processEspNowData(const uint8_t *data, int len, EspNowPacketHandler handler);
+bool     processEspNowData(const uint8_t *data, int len, const uint8_t *senderMac, EspNowPacketHandler handler);
 void     getEspNowStats(uint32_t *chunks, uint32_t *drops, uint32_t *resets);
 
 void sendSerial2(const char packetType, const char *fmt, ...); 

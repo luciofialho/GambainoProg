@@ -4,6 +4,7 @@
 #include "PovotoCommon.h"
 #include "GambainoCommon.h"
 #include "PovotoTasks.h"
+#include "datalog.h"
 #include <Adafruit_INA219.h>
 #include <Arduino.h>
 #include <IOTK.h>
@@ -46,7 +47,6 @@ float currentReading = 0.0; // Corrente em mA
 
 
 averageFloatVector lnPressureDropAvg(15);
-float headSpaceVolume = 0.0f;
 float beerVolume = 0.0f;
 float beerSG = 0.0;
 float beerABV = 0.0;
@@ -68,6 +68,8 @@ static unsigned long int timeToStartExpansion     = 0;
 static unsigned long int timeToFinishExpansion    = 0;
 static unsigned long int timeToRegisterPressure = 0; // after a relief event
 static unsigned long int noPressureReadUntil = 0;
+static unsigned long reliefValveOpenedMillis = 0;
+static float currentOnReliefMeasured = 0.0f;
 
 float  adjustedPressureAfterRelief;
 
@@ -229,7 +231,7 @@ float volumeEstimationFromPressureDrop(float dropFactor) {
 }
 
 static void updateBeerVolumeFromHeadspace() {
-  beerVolume = FMTData.FMTVolume - headSpaceVolume;
+  beerVolume = FMTData.FMTVolume - CountersData.headSpaceVolume;
   if (beerVolume < 0.0f) {
     beerVolume = 0.0f;
   }
@@ -319,8 +321,8 @@ static void recomputeDissolvedCO2MolsFromCurrentState() {
 
 static void recomputeHeadspaceCO2MolsFromCurrentState() {
   if (CountersData.totalReliefCount > 1) {
-    headSpaceCO2Mols = ControlData.pressure    * headSpaceVolume / (CONST_R * kelvin(ControlData.temperature))
-                     - BatchData.startPressure * headSpaceVolume / (CONST_R * kelvin(BatchData.startTemperature));
+    headSpaceCO2Mols = ControlData.pressure    * CountersData.headSpaceVolume / (CONST_R * kelvin(ControlData.temperature))
+                     - BatchData.startPressure * CountersData.headSpaceVolume / (CONST_R * kelvin(BatchData.startTemperature));
     if (headSpaceCO2Mols < 0.0f) {
       headSpaceCO2Mols = 0.0f;
     }
@@ -577,12 +579,11 @@ float RealPlatoToSG(float realPlato) {
 
 static void restoreDerivedStateFromCounters() {
   if (CountersData.headSpaceVolume > 0.0f) {
-    headSpaceVolume = CountersData.headSpaceVolume;
     updateBeerVolumeFromHeadspace();
     recomputeHeadspaceCO2MolsFromCurrentState();
   }
   else {
-    headSpaceVolume = 0.0f;
+    CountersData.headSpaceVolume = 0.0f;
     beerVolume = 0.0f;
     headSpaceCO2Mols = 0.0f;
   }
@@ -616,12 +617,12 @@ void applyDumpWindowHeadspaceRecalc(float headspaceBeforeL, float pressureBefore
   }
 
   if (headAfter > headspaceBeforeL) {
-    headSpaceVolume = headAfter; 
+    CountersData.headSpaceVolume = headAfter;
     updateBeerVolumeFromHeadspace();
     lnPressureDropAvg.clear();
     // Keep the internal factor coherent with the recalculated headspace.
-    if ((headSpaceVolume + FMTData.FMTReliefVolume) > 0.0f) {
-      pressureDropFactor = headSpaceVolume / (headSpaceVolume + FMTData.FMTReliefVolume); // Lucio: rever
+    if ((CountersData.headSpaceVolume + FMTData.FMTReliefVolume) > 0.0f) {
+      pressureDropFactor = CountersData.headSpaceVolume / (CountersData.headSpaceVolume + FMTData.FMTReliefVolume); // Lucio: rever
       pressureDropFactor = fmaxf(0.001f, fminf(pressureDropFactor, 0.999f));
       lnPressureDropAvg.add(logf(pressureDropFactor));
     }
@@ -630,14 +631,12 @@ void applyDumpWindowHeadspaceRecalc(float headspaceBeforeL, float pressureBefore
 
   recomputeHeadspaceCO2MolsFromCurrentState();
 
-  CountersData.headSpaceVolume = headSpaceVolume;
-
-  const float impliedHeadspaceDeltaL = headSpaceVolume - headspaceBeforeL;
+  const float impliedHeadspaceDeltaL = CountersData.headSpaceVolume - headspaceBeforeL;
   Serial.printf("[DUMP] Headspace recalculated: H_before=%.3f L, P1=%.3f bar, P2=%.3f bar, H_after=%.3f L, dH=%.3f L, Beer=%.3f L\n",
                 headspaceBeforeL,
                 pressureBeforeBar,
                 pressureAfterBar,
-                headSpaceVolume,
+                CountersData.headSpaceVolume,
                 impliedHeadspaceDeltaL,
                 beerVolume);
 }
@@ -803,7 +802,7 @@ void readPressure() {
   // Try to initialize the INA219 if it hasn't been done yet
   static bool initialized = false;
   if (!initialized) {
-    pressureSensorConnected = ina219.begin() || debugging;
+    pressureSensorConnected = ina219.begin();
     if (pressureSensorConnected) {
       Serial.println("INA219 pressure sensor initialized successfully");
     } else {
@@ -814,18 +813,22 @@ void readPressure() {
     initialized = true;
   }
   
-  if (pressureSensorConnected && !inPressureNoiseWindow() && MILLISDIFF(noPressureReadUntil, 0)) {
-    if (!debugging) {
-      // Lê e filtra a corrente do INA219 antes de converter para pressão
+  if (!inPressureNoiseWindow() && MILLISDIFF(noPressureReadUntil, 0)) {
+    if (pressureSensorConnected) {
+      // Read and filter the INA current even in debugging mode. Debug pressure
+      // simulation is only used when this reading is zero or the INA is absent.
       if (currentWindowCount == 0 || MILLISDIFF(lastCurrentMedianSampleMillis, CURRENT_MEDIAN_MIN_SAMPLE_MS)) {
         currentReading = medianFilter(readCurrentFromINA219mA());
         lastCurrentMedianSampleMillis = millis();
       }
 
-      float pressure = convertCurrentToPressure(currentReading);
-      ControlData.pressure = pressure;
+      if (!(debugging && currentReading == 0.0f)) {
+        ControlData.pressure = convertCurrentToPressure(currentReading);
+        return;
+      }
     }
-    else { //is debugging
+
+    if (debugging && (!pressureSensorConnected || currentReading == 0.0f)) {
       static unsigned long lastPressureIncrease = 0;
       if (sgPointGenerationTime != 0 && !inTheMiddleOfRelief() && beerSG > 1.010f) {
         if (MILLISDIFF(lastPressureIncrease,1000*sgPointGenerationTime))  {
@@ -834,12 +837,12 @@ void readPressure() {
         } 
       }
     }
-  }
-  else if (!pressureSensorConnected) {
+    else if (!pressureSensorConnected) {
     // Se não tem sensor, zera a pressão - Lucio urgente - precisar alertar
     ControlData.pressure = 0.0;
     currentReading = 0.0;
-  }  
+    }
+  }
 }  
 
 static void showVolumeStatus(const char *line1, const char *line2, const char *line3) {
@@ -985,6 +988,11 @@ void calculateFermentationState() {
 }
 
 void processPressure(bool afterRelief) {
+  const float reliefPressureReachedTarget = pressureReachedTarget;
+  const unsigned long reliefPressureReachedTargetMillis = pressureReachedTargetMillis;
+  float instantPressureDropFactor = NAN;
+  float ejectedMols = 0.0f;
+
   if (afterRelief && debugging) {
     if (volumeDeterminationActive && pressureSamples) 
       ControlData.pressure = ControlData.pressure * 0.984f + random(-5,5) * 0.0005; 
@@ -995,16 +1003,16 @@ void processPressure(bool afterRelief) {
   updateReliefsPerHour(afterRelief);
   
   if  (afterRelief) {
-    static float lastPressureDrop = 0;
-
     pressureAfterRelief = ControlData.pressure;
     pressureAfterReliefMillis = millis();
+    // These belong to the relief being completed. Preserve them for its log
+    // before clearing the live values used to detect the next relief cycle.
     pressureReachedTarget = 0;
     pressureReachedTargetMillis = 0;
     adjustedPressureAfterRelief = (pressureOnReliefMeas+Patm) * powf(((pressureAfterRelief+Patm) / (pressureOnReliefMeas+Patm)), (1.0f / FMTData.FMTEffectiveVentingExponent)) - Patm;
        // Todo: tentar fazer esse expoente ser determinado dinamicamente ou entao apurar o fator de queda de pressao ao na ejeçao (talvez so sirva para fermentacao  estavel e intensa)
 
-    float instantPressureDropFactor = 1.0f;
+    instantPressureDropFactor = 1.0f;
     if (pressureOnReliefExtrap > 0.01f) {
       instantPressureDropFactor = (adjustedPressureAfterRelief / pressureOnReliefExtrap); 
     }
@@ -1015,7 +1023,9 @@ void processPressure(bool afterRelief) {
     pressureDropFactor = expf(lnPressureDropAvg.value());
     pressureDropFactor = fmaxf(0.001f, fminf(pressureDropFactor, 0.999f));
 
-    headSpaceVolume = volumeEstimationFromPressureDrop(pressureDropFactor); 
+    // The calculated headspace is persisted immediately because all CO2
+    // calculations below use this same value to derive beer volume and moles.
+    CountersData.headSpaceVolume = volumeEstimationFromPressureDrop(pressureDropFactor);
     updateBeerVolumeFromHeadspace();
     
     if (pendingReliefIndex >= 0) {
@@ -1026,7 +1036,7 @@ void processPressure(bool afterRelief) {
     pendingReliefIndex = -1;
 
     //float ejectedMols = adjustedPressureAfterRelief * FMTData.FMTReliefVolume / (CONST_R * kelvin(ControlData.temperature));
-    float ejectedMols = (pressureOnReliefExtrap - adjustedPressureAfterRelief) * headSpaceVolume / (CONST_R * kelvin(ControlData.temperature)); // removes the apparent pressure drop caused by polytropic cooling.
+    ejectedMols = (pressureOnReliefExtrap - adjustedPressureAfterRelief) * CountersData.headSpaceVolume / (CONST_R * kelvin(ControlData.temperature)); // removes the apparent pressure drop caused by polytropic cooling.
     CountersData.totalMolsEjected += ejectedMols;
     
     CountersData.totalReliefCount += 1;    
@@ -1038,8 +1048,6 @@ void processPressure(bool afterRelief) {
   recomputeBeerCO2EvolutionFromCurrentState();
   
   //float lastTotalCO2MolsProceduced = CountersData.CO2InSolution + headSpaceCO2Mols + CountersData.totalMolsEjected; está sendo usado ou não?
-
-  CountersData.headSpaceVolume = headSpaceVolume;
 
 //  float massCO2Produced = CO2Mass(CountersData.totalCO2MolsProduced - lastTotalCO2MolsProceduced);
 
@@ -1095,6 +1103,49 @@ void processPressure(bool afterRelief) {
       volumeRecordIndex = -1;
     }
   }
+
+  if (afterRelief) {
+    const float dissolvedCO2MolsAtEquilibrium =
+        CO2DissolvedMols(ControlData.pressure, beerSG, ControlData.temperature, beerVolume);
+    const double totalCO2Mols = CountersData.totalMolsEjected +
+                                CountersData.CO2InSolution + headSpaceCO2Mols;
+    ReliefLogData reliefLog = {
+      (int)FMTData.PovotoNum,
+      reliefValveOpenedMillis,
+      reliefPressureReachedTargetMillis,
+      pressureAfterReliefMillis,
+      volumeDeterminationActive,
+      ControlData.temperature,
+      SetPointData.setPointPressure,
+      Patm,
+      FMTData.FMTReliefVolume,
+      FMTData.FMTEffectiveVentingExponent,
+      pressureOnReliefMeas,
+      currentOnReliefMeasured,
+      reliefPressureReachedTarget,
+      pressureOnReliefExtrap,
+      pressureAfterRelief,
+      currentReading,
+      adjustedPressureAfterRelief,
+      instantPressureDropFactor,
+      pressureDropFactor,
+      CountersData.headSpaceVolume,
+      beerVolume,
+      ejectedMols,
+      CountersData.totalMolsEjected,
+      headSpaceCO2Mols,
+      CountersData.CO2InSolution,
+      dissolvedCO2MolsAtEquilibrium,
+      totalCO2Mols,
+      beerSG,
+      SGToRealPlato(beerSG),
+      beerABV,
+      CountersData.totalReliefCount,
+      reliefsPerHourValue,
+      beerCO2EvolutionGramsPerLiterPerDay
+    };
+    doReliefDataLog(reliefLog);
+  }
 }
 
 bool processReliefCycle() {
@@ -1108,7 +1159,9 @@ bool processReliefCycle() {
       else {
         //;Serial.printf("[PRESSURE] %lu / %lu: Abrindo transfer valve. Pressure=%.2f bar\n", millis(), timeToStartExpansion, ControlData.pressure);
         pressureOnReliefMeas = ControlData.pressure;
+        currentOnReliefMeasured = currentReading;
         ReliefStartPressureTime = millis();
+        reliefValveOpenedMillis = ReliefStartPressureTime;
         digitalWrite(PINVENTINGLED, LOW);
         digitalWrite(PINTRANSFERVALVE, HIGH);
         markSolenoidToggle();
@@ -1731,7 +1784,7 @@ char *getPressureControlStatus(char *st) {
 
     snprintf(tmp, sizeof(tmp),
              "<br>Volumes:<br>&nbsp;&nbsp;&nbsp;&nbsp;Headspace volume: %.2f L<br>&nbsp;&nbsp;&nbsp;&nbsp;Beer volume: %.2f L<br>&nbsp;&nbsp;&nbsp;&nbsp;Expansion pressure drop factor (%%): %.3f<br>",
-             headSpaceVolume, beerVolume, pressureDropFactor * 100);
+             CountersData.headSpaceVolume, beerVolume, pressureDropFactor * 100);
     strnncat(st, tmp, 2048);
 
     snprintf(tmp, sizeof(tmp),

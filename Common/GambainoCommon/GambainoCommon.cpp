@@ -396,7 +396,7 @@ static void gambainoEspNowRecvCb(const uint8_t *mac, const uint8_t *data, int le
   if (!data || len < 7) return;
   if (mac) memcpy(peerRecvSenderMac_, mac, 6);
   else     memset(peerRecvSenderMac_, 0, 6);
-  processEspNowData(data, len, [](char type, const char *payload) {
+  processEspNowData(data, len, peerRecvSenderMac_, [](char type, const char *payload) {
     if (type == PEERBROADCASTPACKET || type == PEERREPLYPACKET) {
       Serial.printf("[gambainoEspNowRecvCb] peer pkt type='%c'(0x%02X) from %02X:%02X:%02X:%02X:%02X:%02X\n",
                     (type >= 32 ? type : '?'), (uint8_t)type,
@@ -784,11 +784,18 @@ void formatMacAddress(const uint8_t mac[6], char *out, size_t outSize) {
 static uint32_t espnowChunksRcv_  = 0;
 static uint32_t espnowDrops_      = 0;
 static uint32_t espnowResetCount_ = 0;
-static char     espnowBuf_[MAXPACKETSIZE + 1];
-static uint16_t espnowExpTotal_   = 0;
-static uint16_t espnowNextSeq_    = 0;
-static uint16_t espnowOffset_     = 0;
-static uint8_t  espnowPktType_    = (uint8_t)NOPACKET;
+#define ESPNOW_REASSEMBLY_SLOTS 2
+struct EspNowReassembly {
+  bool active;
+  uint8_t senderMac[6];
+  char buffer[MAXPACKETSIZE + 1];
+  uint16_t expectedTotal;
+  uint16_t nextSeq;
+  uint16_t offset;
+  uint8_t packetType;
+  unsigned long lastChunkMillis;
+};
+static EspNowReassembly espnowReassembly_[ESPNOW_REASSEMBLY_SLOTS] = {};
 
 static const char *espNowErrToString(esp_err_t err) {
   switch (err) {
@@ -893,69 +900,92 @@ esp_err_t sendEspNow(const uint8_t *mac, uint8_t channel, bool encrypt, uint8_t 
   return lastErr;
 }
 
+static void resetEspNowReassembly(EspNowReassembly &entry) {
+  entry.active = false;
+  entry.expectedTotal = 0;
+  entry.nextSeq = 0;
+  entry.offset = 0;
+  entry.packetType = (uint8_t)NOPACKET;
+  entry.lastChunkMillis = 0;
+}
+
 bool processEspNowData(const uint8_t *data, int len, EspNowPacketHandler handler) {
+  return processEspNowData(data, len, nullptr, handler);
+}
+
+bool processEspNowData(const uint8_t *data, int len, const uint8_t *senderMac,
+                       EspNowPacketHandler handler) {
   // header: packetType(1) + seq(2) + total(2) + chunkLen(2) = 7 bytes
-  if (len < 7) return false;
+  if (!data || len < 7) return false;
 
   const uint8_t *p = data;
-  uint8_t  packetType;
+  uint8_t packetType;
   uint16_t seq, total, chunkLen;
-  memcpy(&packetType, p,     sizeof(packetType));
-  memcpy(&seq,        p + 1, sizeof(seq));
-  memcpy(&total,      p + 3, sizeof(total));
-  memcpy(&chunkLen,   p + 5, sizeof(chunkLen));
+  memcpy(&packetType, p, sizeof(packetType));
+  memcpy(&seq, p + 1, sizeof(seq));
+  memcpy(&total, p + 3, sizeof(total));
+  memcpy(&chunkLen, p + 5, sizeof(chunkLen));
+  if (total == 0 || chunkLen > ESPNOW_MAX_CHUNK || (int)(7 + chunkLen) > len) return false;
 
-  if (chunkLen > ESPNOW_MAX_CHUNK || (int)(7 + chunkLen) > len) return false;
+  uint8_t zeroMac[6] = {};
+  const uint8_t *source = senderMac ? senderMac : zeroMac;
+  EspNowReassembly *entry = nullptr;
+  EspNowReassembly *oldest = &espnowReassembly_[0];
+  for (int i = 0; i < ESPNOW_REASSEMBLY_SLOTS; i++) {
+    EspNowReassembly &candidate = espnowReassembly_[i];
+    if (candidate.active && memcmp(candidate.senderMac, source, 6) == 0) {
+      entry = &candidate;
+      break;
+    }
+    if (!candidate.active) oldest = &candidate;
+    else if (candidate.lastChunkMillis < oldest->lastChunkMillis) oldest = &candidate;
+  }
 
-  espnowChunksRcv_++;
-
-  if (seq == 0) {
-    if (espnowExpTotal_ > 0 && espnowNextSeq_ > 0) {
+  if (!entry) {
+    if (seq != 0) {
+      espnowDrops_++;
+      return false;
+    }
+    entry = oldest;
+    if (entry->active) {
       espnowDrops_++;
       espnowResetCount_++;
-      Serial.printf("ESP-NOW drop: incomplete reset (had %u/%u chunks)\n", espnowNextSeq_, espnowExpTotal_);
     }
-    espnowExpTotal_  = total;
-    espnowNextSeq_   = 0;
-    espnowOffset_    = 0;
-    espnowPktType_   = packetType;
+    resetEspNowReassembly(*entry);
+    entry->active = true;
+    memcpy(entry->senderMac, source, 6);
   }
 
-  if (total == 0 || packetType != espnowPktType_ || seq != espnowNextSeq_) {
+  espnowChunksRcv_++;
+  if (seq == 0) {
+    if (entry->nextSeq > 0) {
+      espnowDrops_++;
+      espnowResetCount_++;
+    }
+    entry->expectedTotal = total;
+    entry->nextSeq = 0;
+    entry->offset = 0;
+    entry->packetType = packetType;
+  }
+
+  if (packetType != entry->packetType || total != entry->expectedTotal || seq != entry->nextSeq ||
+      entry->offset + chunkLen >= MAXPACKETSIZE) {
     espnowDrops_++;
-    Serial.printf("ESP-NOW drop: type=%u seq=%u expected=%u total=%u\n", packetType, seq, espnowNextSeq_, total);
-    espnowExpTotal_  = 0;
-    espnowNextSeq_   = 0;
-    espnowOffset_    = 0;
-    espnowPktType_   = (uint8_t)NOPACKET;
     espnowResetCount_++;
+    resetEspNowReassembly(*entry);
     return false;
   }
 
-  if (espnowOffset_ + chunkLen >= MAXPACKETSIZE) {
-    espnowDrops_++;
-    Serial.println("ESP-NOW drop: buffer overflow");
-    espnowExpTotal_  = 0;
-    espnowNextSeq_   = 0;
-    espnowOffset_    = 0;
-    espnowPktType_   = (uint8_t)NOPACKET;
-    espnowResetCount_++;
-    return false;
-  }
+  memcpy(entry->buffer + entry->offset, p + 7, chunkLen);
+  entry->offset += chunkLen;
+  entry->nextSeq++;
+  entry->lastChunkMillis = millis();
 
-  memcpy(espnowBuf_ + espnowOffset_, p + 7, chunkLen);
-  espnowOffset_ += chunkLen;
-  espnowNextSeq_++;
-
-  if (espnowNextSeq_ >= espnowExpTotal_) {
-    espnowBuf_[espnowOffset_] = '\0';
-    if (handler) handler((char)espnowPktType_, espnowBuf_);
-    espnowExpTotal_  = 0;
-    espnowNextSeq_   = 0;
-    espnowOffset_    = 0;
-    espnowPktType_   = (uint8_t)NOPACKET;
+  if (entry->nextSeq >= entry->expectedTotal) {
+    entry->buffer[entry->offset] = '\0';
+    if (handler) handler((char)entry->packetType, entry->buffer);
+    resetEspNowReassembly(*entry);
     return true;
   }
-
   return false;
 }

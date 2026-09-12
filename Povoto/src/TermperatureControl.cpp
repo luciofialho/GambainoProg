@@ -373,9 +373,14 @@ char *getTemperatureControlStatus(char *st) {
     FMTData.coolingCycle[0].offMinutes, FMTData.coolingCycle[1].offMinutes,
     FMTData.coolingCycle[2].offMinutes);
 
+  const char *dallasPowerMode = Dallas.isParasitePowerMode()
+      ? "parasitic"
+      : "non-parasitic";
+
   char buf[2048];  
-    sprintf(buf, "<br>-------TEMPERATURE CONTROL<br>Dallas sensor: %s<br>Temperature: %.2f C<br>Environment Temp: %.2f C<br>Target temp: %.2f C<br>Mode: %s<br>Chill: %s<br>Interrupted cooling: %s<br>Heat: %s<br>Interrupted heating: %s<br>Total chill time: %ld s<br>Total heat time: %ld s<br>",
+    sprintf(buf, "<br>-------TEMPERATURE CONTROL<br>Dallas sensor: %s<br>Dallas power mode: %s<br>Temperature: %.2f C<br>Environment Temp: %.2f C<br>Target temp: %.2f C<br>Mode: %s<br>Chill: %s<br>Interrupted cooling: %s<br>Heat: %s<br>Interrupted heating: %s<br>Total chill time: %ld s<br>Total heat time: %ld s<br>",
           (dallasTemperature == NOTaTEMP || dallasTemperature == 85) ? "NOT DETECTED" : "OK",
+          dallasPowerMode,
           ControlData.temperature,
           environmentTemp,
           SetPointData.setPointTemp,

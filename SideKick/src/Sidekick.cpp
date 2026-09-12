@@ -79,7 +79,7 @@ char serial2Buffer[MAXPACKETSIZE+1];  // Buffer global para recepção Serial2
 // The ESP-NOW callback runs on Core 0; loop() runs on Core 1.
 // We use a simple lock-free ring buffer so the callback only copies bytes
 // and the main loop does all processing safely.
-#define ESPNOW_QUEUE_SLOTS  8
+#define ESPNOW_QUEUE_SLOTS  16
 #define ESPNOW_MAX_FRAME   250
 struct EspNowFrame {
   uint8_t data[ESPNOW_MAX_FRAME];
@@ -89,25 +89,29 @@ struct EspNowFrame {
 static EspNowFrame        espnowQueue[ESPNOW_QUEUE_SLOTS];
 static volatile int       espnowQHead = 0;  // written by callback (Core 0)
 static volatile int       espnowQTail = 0;  // read    by loop()  (Core 1)
+static volatile uint32_t  espnowQueueDrops = 0;
+
+static volatile bool reconnectNetworkRequested = false;
+static volatile unsigned long resetBrewCoreUntil = 0;
 
 static void handleResetBrewCore(AsyncWebServerRequest *request) {
   digitalWrite(RESETBREWCOREPIN, HIGH);
-  delay(500);
-  digitalWrite(RESETBREWCOREPIN, LOW);
+  resetBrewCoreUntil = millis() + 500UL;
   responseConfirmation(request, "BrewCore reset pulse sent", "/getstatus");
 }
 
 static void handleReconnectNetwork(AsyncWebServerRequest *request) {
   Serial.println(">>> RECONNECTNETWORK REQUEST <<<");
   responseConfirmation(request, "Reconnecting to WiFi...", "/getstatus");
-  delay(1000);  // let the response flush before dropping WiFi
-  reconnectNetwork();
+  reconnectNetworkRequested = true;
 }
 
 static void handlePacket(char type, const char *payload) {
   switch (type) {
     case LOGPACKET: {
-      char last = payload[strlen(payload) - 1];
+      const size_t length = strlen(payload);
+      if (length == 0) break;
+      char last = payload[length - 1];
       if (last == '}' || last == ',') {
         cashLogRequest((char*)payload);
       } else {
@@ -116,7 +120,9 @@ static void handlePacket(char type, const char *payload) {
     } break;
 
     case BREWFATHERLOGPACKET: {
-      char last = payload[strlen(payload) - 1];
+      const size_t length = strlen(payload);
+      if (length == 0) break;
+      char last = payload[length - 1];
       if (last == '}') {
         cashBrewfatherLogRequest((char*)payload);
       } else {
@@ -155,7 +161,10 @@ static void handlePacketWithMac(char type, const char *payload, const uint8_t *s
 
 static void onEspNowRecv(const uint8_t *mac, const uint8_t *data, int len) {
   int next = (espnowQHead + 1) % ESPNOW_QUEUE_SLOTS;
-  if (next == espnowQTail) return;  // queue full — drop frame
+  if (next == espnowQTail) {
+    espnowQueueDrops++;
+    return;
+  }
   if (len > ESPNOW_MAX_FRAME) len = ESPNOW_MAX_FRAME;
   memcpy(espnowQueue[espnowQHead].data, data, len);
   espnowQueue[espnowQHead].len = len;
@@ -213,6 +222,9 @@ char *getSideKickStatus(char *st) {
            (unsigned long)espDrops,
            (unsigned long)espResets);
   strcat(st, buf2);
+  snprintf(buf2, sizeof(buf2), "ESP-NOW queue drops: %lu<br>",
+           (unsigned long)espnowQueueDrops);
+  strcat(st, buf2);
 
   getPeerStatus(st, MAXSTATUSLEN);
 
@@ -227,6 +239,8 @@ void setup() {
 
   // WiFi Setup
   setupWiFi();
+  // Keep the in-RAM log cache while the network is unavailable.
+  setRestartOnWiFiFailure(false);
   loadPeers();
   registerOwnPeer(PEERTYPE_SIDEKICK);
 
@@ -239,16 +253,20 @@ void setup() {
   digitalWrite(RESETBREWCOREPIN, LOW); 
 
 
-  xTaskCreatePinnedToCore(
+  BaseType_t taskCreated = xTaskCreatePinnedToCore(
     logSendTask,           // Função da task
     "LogSend",             // Nome da task (para debug)
-    8192,                  // Stack size (16KB)
+    8192,                  // Stack size in bytes
     NULL,                  // Parâmetros (não usado)
     1,                     // Prioridade (1 = baixa)
     &logSendTaskHandle,    // Handle da task
     1                      // Core 1 – TLS handshake é CPU-intensivo; Core 0 fica livre para IDLE/WiFi stack
   );
-  Serial.println("Log send task created on core 0");
+  if (taskCreated == pdPASS) {
+    Serial.println("Log send task created on core 1");
+  } else {
+    Serial.println("Failed to create log send task");
+  }
 
   // I2C (comentado - display não está sendo usado)
   // Wire.begin(I2C_SDA, I2C_SCL);
@@ -288,6 +306,14 @@ void setup() {
 void loop() {
   static unsigned long lastSerial2Read = 0;
 
+  if (resetBrewCoreUntil && (long)(millis() - resetBrewCoreUntil) >= 0) {
+    digitalWrite(RESETBREWCOREPIN, LOW);
+    resetBrewCoreUntil = 0;
+  }
+  if (reconnectNetworkRequested) {
+    reconnectNetworkRequested = false;
+    reconnectNetwork();
+  }
 
   verifyWiFiConnection();
   checkDebugMode();
@@ -296,10 +322,14 @@ void loop() {
   // reads Serial2 
   if (MILLISDIFF(lastSerial2Read, 10)) {
     lastSerial2Read = millis();
-    if (char type = readSerial2(serial2Buffer, sizeof(serial2Buffer))) {
-      Serial.printf("[Serial2] type='%c'(0x%02X) len=%d\n",
-        (type >= 32 ? type : '?'), (uint8_t)type, (int)strlen(serial2Buffer));
-      handlePacket(type, serial2Buffer);
+    // readSerial2 has a bounded per-call budget. Drain enough calls for a
+    // MAXPACKETSIZE frame before its 100 ms assembly timeout.
+    for (int pass = 0; pass < 20 && Serial2.available(); pass++) {
+      if (char type = readSerial2(serial2Buffer, sizeof(serial2Buffer))) {
+        Serial.printf("[Serial2] type='%c'(0x%02X) len=%d\n",
+          (type >= 32 ? type : '?'), (uint8_t)type, (int)strlen(serial2Buffer));
+        handlePacket(type, serial2Buffer);
+      }
     }
   }
 
@@ -309,7 +339,7 @@ void loop() {
     // Store sender MAC in a static so the non-capturing lambda can access it
     static uint8_t espnowCurrentSenderMac_[6];
     memcpy(espnowCurrentSenderMac_, frame.senderMac, 6);
-    processEspNowData(frame.data, frame.len, [](char type, const char *payload) {
+    processEspNowData(frame.data, frame.len, frame.senderMac, [](char type, const char *payload) {
       handlePacketWithMac(type, payload, espnowCurrentSenderMac_);
     });
     espnowQTail = (espnowQTail + 1) % ESPNOW_QUEUE_SLOTS;

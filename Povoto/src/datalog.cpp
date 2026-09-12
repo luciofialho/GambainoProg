@@ -247,3 +247,98 @@ void doDataLog() {
     GLogSend();
   }
 }
+
+void doReliefDataLog(const ReliefLogData &data) {
+  if (!datalogFolderNameInUse[0] || BatchData.batchNumber == 0) {
+    return;
+  }
+
+  static bool headerWritten = false;
+  static int lastBatchNum = -1;
+  const int batchNum = (int)BatchData.batchNumber;
+  if (batchNum != lastBatchNum) {
+    lastBatchNum = batchNum;
+    headerWritten = false;
+  }
+
+  char batchStr[4];
+  snprintf(batchStr, sizeof(batchStr), "%03d", batchNum);
+
+  if (!headerWritten) {
+    GLogBegin(datalogFolderNameInUse, batchStr, "Relief");
+    GLogAddTimeStamp();
+    GLogAddData("FMT");
+    GLogAddData("ValveOpenedMillis");
+    GLogAddData("VolumeDetermination");
+    GLogAddData("Temperature");
+    GLogAddData("PressureTarget");
+    GLogAddData("AtmosphericPressure");
+    GLogAddData("ReliefVolume");
+    GLogAddData("EffectiveVentingExponent");
+    GLogAddData("PressureOnReliefMeasured");
+    GLogAddData("CurrentOnReliefMeasured");
+    GLogAddData("PressureReachedTarget");
+    GLogAddData("PressureReachedTargetMillis");
+    GLogAddData("PressureOnReliefExtrapolated");
+    GLogAddData("PressureAfterRelief");
+    GLogAddData("PressureAfterReliefMillis");
+    GLogAddData("CurrentAfterRelief");
+    GLogAddData("AdjustedPressureAfterRelief");
+    GLogAddData("InstantPressureDropFactor");
+    GLogAddData("PressureDropFactor");
+    GLogAddData("HeadSpaceVolume");
+    GLogAddData("BeerVolume");
+    GLogAddData("EjectedMols");
+    GLogAddData("TotalEjectedMols");
+    GLogAddData("HeadSpaceCO2Mols");
+    GLogAddData("DissolvedCO2Mols");
+    GLogAddData("DissolvedCO2MolsAtEquilibrium");
+    GLogAddData("TotalCO2Mols");
+    GLogAddData("BeerSG");
+    GLogAddData("BeerRealPlato");
+    GLogAddData("BeerABV");
+    GLogAddData("ReliefCount");
+    GLogAddData("ReliefsPerHour");
+    GLogAddData("gCO2/L/d");
+    GLogSend();
+    headerWritten = true;
+  }
+
+  // Send the data row separately so the first relief is logged as well.
+  GLogBegin(datalogFolderNameInUse, batchStr, "Relief");
+  GLogAddTimeStamp();
+  GLogAddData(data.povotoNumber);
+  GLogAddData(data.valveOpenedMillis);
+  GLogAddData(data.volumeDeterminationActive ? "yes" : "no");
+  GLogAddData(data.temperature, 2);
+  GLogAddData(data.targetPressure, 3);
+  GLogAddData(data.atmosphericPressure, 3);
+  GLogAddData(data.reliefVolume, 3);
+  GLogAddData(data.effectiveVentingExponent, 3);
+  GLogAddData(data.pressureOnReliefMeasured, 3);
+  GLogAddData(data.currentOnReliefMeasured, 3);
+  GLogAddData(data.pressureReachedTarget, 3);
+  GLogAddData(data.pressureReachedTargetMillis);
+  GLogAddData(data.pressureOnReliefExtrapolated, 3);
+  GLogAddData(data.pressureAfterRelief, 3);
+  GLogAddData(data.pressureAfterReliefMillis);
+  GLogAddData(data.currentAfterRelief, 3);
+  GLogAddData(data.adjustedPressureAfterRelief, 3);
+  GLogAddData(data.instantaneousPressureDropFactor, 6);
+  GLogAddData(data.pressureDropFactor, 6);
+  GLogAddData(data.headSpaceVolume, 3);
+  GLogAddData(data.beerVolume, 3);
+  GLogAddData(data.ejectedMols, 6);
+  GLogAddData((float)data.totalMolsEjected, 6);
+  GLogAddData(data.headSpaceCO2Mols, 6);
+  GLogAddData((float)data.dissolvedCO2Mols, 6);
+  GLogAddData(data.dissolvedCO2MolsAtEquilibrium, 6);
+  GLogAddData((float)data.totalCO2Mols, 6);
+  GLogAddData(data.beerSG, 5);
+  GLogAddData(data.beerRealPlato, 3);
+  GLogAddData(data.beerABV, 3);
+  GLogAddData(data.totalReliefCount);
+  GLogAddData(data.reliefsPerHour, 3);
+  GLogAddData(data.beerCO2EvolutionGramsPerLiterPerDay, 3);
+  GLogSend();
+}

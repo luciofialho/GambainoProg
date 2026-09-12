@@ -27,6 +27,40 @@ unsigned long numBrewfatherSendAttempts    = 0;
 unsigned long numBrewfatherSendConnected   = 0;
 // mutext for log cache
 SemaphoreHandle_t mutexLogCache;
+static bool logBuffersReady = false;
+
+static bool ensureLogCache() {
+  if (mutexLogCache == NULL) mutexLogCache = xSemaphoreCreateMutex();
+  if (mutexLogCache == NULL) {
+    Serial.println("[LOG] Could not create cache mutex");
+    return false;
+  }
+  if (logBuffersReady) return true;
+  if (xSemaphoreTake(mutexLogCache, pdMS_TO_TICKS(10)) != pdTRUE) return false;
+
+  if (!logBuffersReady) {
+    bool allocated = true;
+    for (int i = 0; i < LOGCACHESIZE; i++) {
+      datalogBuffer[i] = (char *)malloc(MAXPACKETSIZE + 1);
+      if (!datalogBuffer[i]) {
+        Serial.printf("[LOG] Failed to allocate cache entry %d\n", i);
+        allocated = false;
+        break;
+      }
+      datalogBuffer[i][0] = '\0';
+    }
+    if (!allocated) {
+      for (int i = 0; i < LOGCACHESIZE; i++) {
+        free(datalogBuffer[i]);
+        datalogBuffer[i] = NULL;
+      }
+    } else {
+      logBuffersReady = true;
+    }
+  }
+  xSemaphoreGive(mutexLogCache);
+  return logBuffersReady;
+}
 
 const char* dataLogScriptURL = "https://script.google.com/macros/s/AKfycbyBmwFQoiJUpesd4LlS1Bf908ZcU5m0HmAG3s7Ushouiz10uHpkXKjV8ZOOkGI2nQuyyQ/exec";
 
@@ -104,54 +138,32 @@ bP6MvPJwNQzcmRk13NfIRmPVNnGuV/u3gm3c
 -----END CERTIFICATE-----
 )EOF";
 
-void initLogBuffers() {
-  for (int i=0; i<LOGCACHESIZE; i++) {
-    datalogBuffer[i] = (char *)malloc(MAXPACKETSIZE+1); 
-    
-    if (datalogBuffer[i] == NULL) {
-      Serial.print("Failed to allocate memory for datalogBuffer"); Serial.println(i);
-    }
-    datalogBuffer[i][0] = '\0'; // initialize as empty string
-  }
-
-}
-
 void cashLogRequest(char *logEntry) {
+  if (!logEntry || !ensureLogCache()) return;
   lastCashLogMs = millis();
-  //Serial.printf("[LOG] cashLogRequest: will be idx=%ld, len=%d\n", logLastEntry + 1, (int)strlen(logEntry));
-  static bool initialized = false;
-  if (!initialized) {
-    initLogBuffers();
-    initialized = true;
-  }
+  if (strnlen(logEntry, MAXPACKETSIZE + 1) > MAXPACKETSIZE) return;
 
-  if (mutexLogCache == NULL)
-    mutexLogCache = xSemaphoreCreateMutex();
-
-  if (1/*xSemaphoreTake(mutexLogCache,pdMS_TO_TICKS(10)*/) {
-    if (logLastEntry > logRxLockedStart + LOGCACHESIZE-1) {
+  if (xSemaphoreTake(mutexLogCache, pdMS_TO_TICKS(10)) == pdTRUE) {
+    // This protects both the batch currently being sent and the queued batch.
+    if ((logLastEntry + 1) - logRxLockedStart >= LOGCACHESIZE) {
       numCacheOverflow++;
-      //Serial.printf("[LOG] OVERFLOW! lastEntry=%ld lockedStart=%ld queueStart=%ld\n", logLastEntry, logRxLockedStart, logRxQueueStart);
     }
     else {
       logLastEntry++;
-      strcpy(datalogBuffer[logLastEntry % LOGCACHESIZE],logEntry);
+      strncpy(datalogBuffer[logLastEntry % LOGCACHESIZE], logEntry, MAXPACKETSIZE);
+      datalogBuffer[logLastEntry % LOGCACHESIZE][MAXPACKETSIZE] = '\0';
       hasNewLog = true;
-      //Serial.printf("[LOG] Cached slot=%ld idx=%ld hasNewLog=true\n", logLastEntry % LOGCACHESIZE, logLastEntry);
     }
-    //xSemaphoreGive(mutexLogCache);
+    xSemaphoreGive(mutexLogCache);
   }
 } 
 
 void cashBrewfatherLogRequest(char *logEntry) {
-  if (!logEntry) return;
+  if (!logEntry || !ensureLogCache()) return;
 
   lastCashBrewfatherLogMs = millis();
 
-  if (mutexLogCache == NULL)
-    mutexLogCache = xSemaphoreCreateMutex();
-
-  if (1/*xSemaphoreTake(mutexLogCache,pdMS_TO_TICKS(10))*/) {
+  if (xSemaphoreTake(mutexLogCache,pdMS_TO_TICKS(10)) == pdTRUE) {
     if (brewfatherHasPendingLog && !brewfatherSending) {
       numBrewfatherReplacedBeforeSend++;
     }
@@ -163,14 +175,102 @@ void cashBrewfatherLogRequest(char *logEntry) {
                   (int)brewfatherSending,
                   numBrewfatherReplacedBeforeSend);
     logBrewfatherPayloadPreview("RX", brewfatherLatestPayload);
-    //xSemaphoreGive(mutexLogCache);
+    xSemaphoreGive(mutexLogCache);
   }
+}
 
-  // Send immediately; periodic task remains as fallback retry path.
-  sendLogToBrewfather();
+static bool writeGoogleString(WiFiClientSecure &client, const char *text) {
+  const size_t length = strlen(text);
+  return client.write((const uint8_t *)text, length) == length;
+}
+
+static bool readGoogleSuccess(WiFiClientSecure &client) {
+  const unsigned long deadline = millis() + 10000UL;
+  while (!client.available()) {
+    if (!client.connected() || (long)(millis() - deadline) >= 0) return false;
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+  char statusLine[96];
+  const size_t length = client.readBytesUntil('\n', statusLine, sizeof(statusLine) - 1);
+  statusLine[length] = '\0';
+  int statusCode = 0;
+  return sscanf(statusLine, "HTTP/%*u.%*u %d", &statusCode) == 1 &&
+         statusCode >= 200 && statusCode < 400;
+}
+
+static void finishGoogleSend(bool sent, long int start, long int end) {
+  if (xSemaphoreTake(mutexLogCache, portMAX_DELAY) != pdTRUE) return;
+  if (sent) {
+    logRxLockedStart = end;
+    hasNewLog = logRxQueueStart <= logLastEntry;
+  } else {
+    logRxLockedStart = start;
+    logRxQueueStart = start;
+    hasNewLog = true;
+  }
+  xSemaphoreGive(mutexLogCache);
+}
+
+static void sendLogToGoogleSheetsImpl() {
+  if (!ensureLogCache()) return;
+
+  long int start;
+  long int end;
+  if (xSemaphoreTake(mutexLogCache, pdMS_TO_TICKS(10)) != pdTRUE) return;
+  if (!hasNewLog || logRxQueueStart > logLastEntry) {
+    xSemaphoreGive(mutexLogCache);
+    return;
+  }
+  start = logRxQueueStart;
+  end = logLastEntry + 1;
+  logRxLockedStart = start;
+  logRxQueueStart = end;
+  hasNewLog = false;
+  xSemaphoreGive(mutexLogCache);
+
+  WiFiClientSecure client;
+  client.setCACert(rootCACertificate);
+  client.setTimeout(10);          // WiFiClientSecure expects seconds.
+  client.setHandshakeTimeout(10); // seconds.
+  lastSendAttemptMs = millis();
+  numSendAttempts++;
+
+  bool sent = false;
+  if (client.connect("script.google.com", 443)) {
+    lastSendConnectedMs = millis();
+    numSendConnected++;
+    int totalLen = 0;
+    for (long int idx = start; idx < end; idx++) {
+      totalLen += (int)strlen(datalogBuffer[idx % LOGCACHESIZE]);
+      if (idx + 1 < end) totalLen++;
+    }
+    const char wrapper1[] = "{\"requests\": [";
+    const char wrapper2[] = "]}";
+    totalLen += strlen(wrapper1) + strlen(wrapper2);
+
+    const char *path = strchr(dataLogScriptURL + 8, '/');
+    char header[512];
+    snprintf(header, sizeof(header),
+             "POST %s HTTP/1.1\r\nHost: script.google.com\r\n"
+             "Content-Type: application/json\r\nContent-Length: %d\r\n"
+             "Connection: close\r\n\r\n",
+             path ? path : dataLogScriptURL, totalLen);
+    bool writeOk = writeGoogleString(client, header) && writeGoogleString(client, wrapper1);
+    for (long int idx = start; writeOk && idx < end; idx++) {
+      writeOk = writeGoogleString(client, datalogBuffer[idx % LOGCACHESIZE]);
+      if (writeOk && idx + 1 < end) writeOk = writeGoogleString(client, ",");
+    }
+    if (writeOk) writeOk = writeGoogleString(client, wrapper2);
+    sent = writeOk && readGoogleSuccess(client);
+  }
+  client.stop();
+  finishGoogleSend(sent, start, end);
 }
 
 void sendLogToGoogleSheets() {
+  sendLogToGoogleSheetsImpl();
+  return;
+#if 0 // Previous implementation retained below temporarily for source-history context.
   if (mutexLogCache == NULL)
     return;
 
@@ -259,9 +359,74 @@ void sendLogToGoogleSheets() {
       //xSemaphoreGive(mutexLogCache);
     }
   }
+#endif
+}
+
+static void sendLogToBrewfatherImpl() {
+  if (!brewfatherStreamURL[0] || !ensureLogCache()) return;
+
+  char payload[MAXPACKETSIZE + 1];
+  if (xSemaphoreTake(mutexLogCache, pdMS_TO_TICKS(10)) != pdTRUE) return;
+  if (brewfatherSending || !brewfatherHasPendingLog) {
+    xSemaphoreGive(mutexLogCache);
+    return;
+  }
+  brewfatherSending = true;
+  strncpy(payload, brewfatherLatestPayload, MAXPACKETSIZE);
+  payload[MAXPACKETSIZE] = '\0';
+  brewfatherHasPendingLog = false;
+  xSemaphoreGive(mutexLogCache);
+
+  HTTPClient http;
+  WiFiClient plainClient;
+  WiFiClientSecure secureClient;
+  bool beginOk;
+  if (startsWithIgnoreCase(brewfatherStreamURL, "https://")) {
+    // A custom HTTPS endpoint has no configured CA in this project yet.
+    secureClient.setInsecure();
+    secureClient.setTimeout(10);
+    secureClient.setHandshakeTimeout(10);
+    beginOk = http.begin(secureClient, brewfatherStreamURL);
+  } else {
+    beginOk = http.begin(plainClient, brewfatherStreamURL);
+  }
+
+  lastBrewfatherSendAttemptMs = millis();
+  numBrewfatherSendAttempts++;
+  bool sent = false;
+  if (beginOk) {
+    http.setConnectTimeout(10000);
+    http.setTimeout(10000);
+    http.addHeader("Content-Type", "application/json");
+    const int httpCode = http.POST((uint8_t *)payload, strlen(payload));
+    sent = httpCode >= 200 && httpCode < 300;
+    if (sent) {
+      lastBrewfatherSendConnectedMs = millis();
+      numBrewfatherSendConnected++;
+    } else {
+      Serial.printf("[BREWFATHER] HTTP POST failed: %d\n", httpCode);
+    }
+    http.end();
+  } else {
+    Serial.println("[BREWFATHER] http.begin failed");
+  }
+
+  if (xSemaphoreTake(mutexLogCache, portMAX_DELAY) == pdTRUE) {
+    // A newer payload received while this POST ran always wins.
+    if (!sent && !brewfatherHasPendingLog) {
+      strncpy(brewfatherLatestPayload, payload, MAXPACKETSIZE);
+      brewfatherLatestPayload[MAXPACKETSIZE] = '\0';
+      brewfatherHasPendingLog = true;
+    }
+    brewfatherSending = false;
+    xSemaphoreGive(mutexLogCache);
+  }
 }
 
 void sendLogToBrewfather() {
+  sendLogToBrewfatherImpl();
+  return;
+#if 0 // Previous implementation retained below temporarily for source-history context.
   if (!brewfatherStreamURL[0]) {
     Serial.println("[BREWFATHER] Skip send: BREWFATHER_STREAM_URL is empty");
     return;
@@ -344,6 +509,7 @@ void sendLogToBrewfather() {
 
     brewfatherSending = false;
   }
+#endif
 }
 
 static void appendAgoStr(char *buf, size_t sz, const char *label, unsigned long ts) {
