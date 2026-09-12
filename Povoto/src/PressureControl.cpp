@@ -78,6 +78,64 @@ unsigned long pressureAfterReliefMillis = 0;
 float pressureReachedTarget = 0;
 unsigned long int pressureReachedTargetMillis = 0;
 
+static float lastPressureTarget = NAN;
+static float lastSlowPressureTarget = NOTaTEMP;
+static unsigned long lastSlowPressureTargetChange = 0;
+
+static unsigned long slowPressureIncrementIntervalMs(float speedPerDay) {
+  if (!isfinite(speedPerDay) || speedPerDay <= 0.0f) return ULONG_MAX;
+  const double interval = 86400000.0 * 0.01 / speedPerDay;
+  return static_cast<unsigned long>(fmax(1000.0, fmin(interval, double(ULONG_MAX))));
+}
+
+static void processSlowPressureTarget() {
+  bool changed = false;
+
+  if (SetPointData.setPointSlowPressure != lastSlowPressureTarget) {
+    // A new slow target may be configured with a new current target.
+    lastPressureTarget = SetPointData.setPointPressure;
+    lastSlowPressureTargetChange = 0;
+  }
+  else if (isfinite(lastPressureTarget) &&
+           fabsf(SetPointData.setPointPressure - lastPressureTarget) > 0.00001f &&
+           SetPointData.setPointSlowPressure != NOTaTEMP) {
+    // A direct pressure target change takes precedence over the slow transition.
+    SetPointData.setPointSlowPressure = NOTaTEMP;
+    lastSlowPressureTargetChange = 0;
+    changed = true;
+  }
+
+  if (SetPointData.setPointSlowPressure != NOTaTEMP) {
+    if (lastSlowPressureTargetChange == 0) {
+      lastSlowPressureTargetChange = millis();
+    }
+    else if (MILLISDIFF(lastSlowPressureTargetChange,
+                         slowPressureIncrementIntervalMs(SetPointData.setPointSlowPressureSpeed))) {
+      const float destination = SetPointData.setPointSlowPressure;
+      const float current = SetPointData.setPointPressure;
+      if (destination < current - 0.01f) {
+        SetPointData.setPointPressure = current - 0.01f;
+      }
+      else if (destination > current + 0.01f) {
+        SetPointData.setPointPressure = current + 0.01f;
+      }
+      else {
+        SetPointData.setPointPressure = destination;
+        SetPointData.setPointSlowPressure = NOTaTEMP;
+      }
+      lastSlowPressureTargetChange = millis();
+      changed = true;
+    }
+  }
+  else {
+    lastSlowPressureTargetChange = 0;
+  }
+
+  lastPressureTarget = SetPointData.setPointPressure;
+  lastSlowPressureTarget = SetPointData.setPointSlowPressure;
+  if (changed) writeSetPointDataToNIV();
+}
+
 struct PressureReliefRecord {
   char timestamp[32];
   float temperature;
@@ -984,9 +1042,7 @@ void processPressure(bool afterRelief) {
   CountersData.headSpaceVolume = headSpaceVolume;
 
 //  float massCO2Produced = CO2Mass(CountersData.totalCO2MolsProduced - lastTotalCO2MolsProceduced);
-//  CountersData.SGAttenuation += 2.047*massCO2Produced/(beerVolume)/1000;
 
-//  CountersData.SGAttenuation -= EstimateSGFromProducedCO2Mol(beerSG, beerVolume, CountersData.totalCO2MolsProduced - lastTotalCO2MolsProceduced) - beerSG;
 //  Serial.println(EstimateSGFromProducedCO2Mol(beerSG, beerVolume, CountersData.totalCO2MolsProduced - lastTotalCO2MolsProceduced) *1000.0);
 /*
   float Pi = SGToPlato(BatchData.batchOG) + BatchData.addedPlato;
@@ -999,7 +1055,6 @@ void processPressure(bool afterRelief) {
   beerSG = PlatoToSG(beerPlato);
   beerABV = 100*(105*(BatchData.batchOG - beerSG) / (100 - beerSG) * (beerSG / 0.79));
   */
-  //beerSG = BatchData.batchOG - CountersData.SGAttenuation;
   calculateFermentationState();
   
   if (afterRelief && volumeDeterminationActive) {
@@ -1557,6 +1612,7 @@ void pressureControl() {
   }
 
   readPressure();
+  processSlowPressureTarget();
 
   if (SetPointData.mode != MODE_OFF &&
       !volumeDeterminationActive &&

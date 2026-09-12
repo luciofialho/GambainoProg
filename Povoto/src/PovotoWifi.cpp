@@ -34,6 +34,30 @@ String scannedSsids[MAX_SCANNED_NETWORKS];
 int scannedNetworkCount = -1;
 bool scanStartRequested = false;
 
+void updateWiFiStatusLed() {
+  const bool pulseOn = (millis() % 1000UL) < 200UL;
+  uint8_t red = 0;
+  uint8_t green = 0;
+  uint8_t blue = 0;
+
+  if (pulseOn && configuredSsid.isEmpty()) {
+    red = 255;                             // No Wi-Fi configured: yellow.
+    green = 180;
+  }
+  else if (pulseOn && WiFi.status() == WL_CONNECTED) {
+    green = 255;                           // Connected: green.
+  }
+  else if (pulseOn) {
+    red = 255;                             // Configured but disconnected: red.
+  }
+
+  static uint32_t previousColor = 0xFFFFFFFFUL;
+  const uint32_t color = (uint32_t(red) << 16) | (uint32_t(green) << 8) | blue;
+  if (color == previousColor) return;
+  previousColor = color;
+  neopixelWrite(PINLED, red, green, blue);
+}
+
 String htmlEscape(const String &value) {
   String escaped;
   escaped.reserve(value.length());
@@ -143,6 +167,8 @@ void povotoWiFiProcess() {
     configuredPassword = pendingPassword;
     beginStationConnection();
   }
+
+  updateWiFiStatusLed();
 
   if (wifiState == WiFiState::Configuring) {
     dnsServer.processNextRequest();

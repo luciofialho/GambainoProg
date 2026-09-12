@@ -283,7 +283,6 @@ void setup() {
   pinMode(PINTRANSFERVALVE, OUTPUT);
   pinMode(PINVENTINGLED, OUTPUT);
   pinMode(PINBUZZER, OUTPUT);
-  pinMode(PINLED,OUTPUT);
   pinMode(PINBTN, INPUT);
   digitalWrite(PINCHILLER, LOW);
   digitalWrite(PINLEDCHILLER, LOW);
@@ -292,7 +291,7 @@ void setup() {
   digitalWrite(PINTRANSFERVALVE, LOW);
   digitalWrite(PINVENTINGLED, LOW);
   digitalWrite(PINBUZZER, LOW);
-  digitalWrite(PINLED, LOW);
+  neopixelWrite(PINLED, 0, 0, 0);
 
   mainScreen();
 

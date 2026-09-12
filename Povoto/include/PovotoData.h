@@ -27,7 +27,7 @@ struct HeaterCycle_t {
 } __attribute__((packed));
 
 // Increment to clear/rewrite the active Povoto namespaces after loading them.
-constexpr uint32_t PVT_NVS_SCHEMA_VERSION = 2;
+constexpr uint32_t PVT_NVS_SCHEMA_VERSION = 3;
 
 // FMT data struct
 struct FMTData_t {
@@ -35,8 +35,6 @@ struct FMTData_t {
   byte PovotoNum;
   float FMTVolume;
   float FMTReliefVolume;
-  float FMTOnTimeDuringBrew;
-  float FMTOFFTimeDuringBrew;
   float FMTAltitude;
   float FMTEffectiveVentingExponent;
   float pressure0Current;
@@ -49,7 +47,6 @@ struct FMTData_t {
   int   nucleationWindow;
   HeaterCycle_t heater;
   CoolingCyclePoint_t coolingCycle[3]; // Fixed rows: 20, 10 and 0 degrees C.
-  uint32_t checksum;
 } __attribute__((packed));
 
 
@@ -59,7 +56,6 @@ struct UserConfigurationData_t {
   int screensaverTime;
   int keypadPin;
   int displayBrightness; // 1..10
-  uint32_t checksum;
 } __attribute__((packed));
 extern UserConfigurationData_t UserConfigurationData;
 bool readUserConfigurationDataFromEEPROM();
@@ -76,7 +72,6 @@ struct BatchData_t {
   float addedPlato;
   float startPressure;
   float startTemperature;
-  uint32_t checksum;
 } __attribute__((packed));
 
 extern BatchData_t BatchData;
@@ -86,10 +81,10 @@ struct SetPointData_t {
   byte mode;  // MODE_OFF=0, MODE_BREWING_TRANSFERING=1, MODE_FERMENTING=2, MODE_CONDITIONING=3
   float setPointTemp;
   float setPointSlowTemp;
+  float setPointSlowTempSpeed;
   float setPointPressure;
-  uint32_t setPointTempSetEpoch;
-  uint32_t setPointPressureSetEpoch;
-  uint32_t checksum;
+  float setPointSlowPressure;
+  float setPointSlowPressureSpeed;
 } __attribute__((packed));
 
 extern SetPointData_t SetPointData;
@@ -105,7 +100,6 @@ struct ControlData_t {
   byte heaterOverride;
   byte transferOverride;
   byte reliefOverride;
-  uint32_t checksum;
 } __attribute__((packed));
 
 extern ControlData_t ControlData;
@@ -117,10 +111,8 @@ struct CountersData_t {
   double CO2InSolution;
   float headSpaceVolume;
   float correctionPlato;
-  float SGAttenuation;
   long int totalChillTime; // seconds
   long int totalHeatTime;  // seconds
-  uint32_t checksum;
 } __attribute__((packed));
 
 extern CountersData_t CountersData;

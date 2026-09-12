@@ -83,6 +83,12 @@ static float coolingCycleMinutes(float temperature, float at20, float at10, floa
   return float(fmax(0.01, fmin(1440.0, minutes)));
 }
 
+static unsigned long slowTargetIncrementIntervalMs(float speedPerDay, float increment) {
+  if (!isfinite(speedPerDay) || speedPerDay <= 0.0f) return ULONG_MAX;
+  const double interval = 86400000.0 * increment / speedPerDay;
+  return static_cast<unsigned long>(fmax(1000.0, fmin(interval, double(ULONG_MAX))));
+}
+
 long int fermenterOnOffCycle(float temperature, byte targetMode) {
   long timeUnit = debugging ? 1000L : 60000L; 
 
@@ -145,11 +151,18 @@ void temperatureControl() {
   if (SetPointData.setPointSlowTemp == 85) 
     SetPointData.setPointSlowTemp = NOTaTEMP;
 
-  if (lastTarget != -999) { // avoid entering in the first time it is called, so we keep setting after restart
-    if (SetPointData.setPointTemp != lastTarget && SetPointData.setPointSlowTemp != NOTaTEMP) { //if Target is manually set
+  static float lastSlowTarget = NOTaTEMP;
+  if (SetPointData.setPointSlowTemp != lastSlowTarget) {
+    // A new slow target may be sent together with a new current target.
+    // Treat that pair as a new transition instead of a manual cancellation.
+    lastTarget = SetPointData.setPointTemp;
+    lastTargetChange = 0;
+  }
+  else if (lastTarget != -999 && SetPointData.setPointTemp != lastTarget && SetPointData.setPointSlowTemp != NOTaTEMP) {
+      // A direct target change cancels the transition in progress.
       SetPointData.setPointSlowTemp = NOTaTEMP; // reset slowTarget 
       lastModeChange = 0;
-    }
+      needsToWriteNIV = true;
   }
 
 
@@ -158,7 +171,8 @@ void temperatureControl() {
     if (lastTargetChange==0)
       lastTargetChange = millis();
     else {
-      if (MILLISDIFF(lastTargetChange,FMTSLOWINCREMENTTIME)) {
+      if (MILLISDIFF(lastTargetChange,
+                      slowTargetIncrementIntervalMs(SetPointData.setPointSlowTempSpeed, 0.1f))) {
         if (SetPointData.setPointSlowTemp<SetPointData.setPointTemp) {
           if (SetPointData.setPointSlowTemp < SetPointData.setPointTemp-0.1)
             SetPointData.setPointTemp = SetPointData.setPointTemp-0.1;
@@ -184,6 +198,9 @@ void temperatureControl() {
   }
   else
     lastTargetChange = 0;
+
+  lastTarget = SetPointData.setPointTemp;
+  lastSlowTarget = SetPointData.setPointSlowTemp;
 
 
   newMode = mode;

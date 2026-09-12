@@ -388,12 +388,6 @@ void handleFMTDataUpdate(AsyncWebServerRequest *request) {
     }
     FMTData.FMTReliefVolume = relief;
   }
-  if (request->hasParam("FMTOnTimeDuringBrew", true)) {
-    FMTData.FMTOnTimeDuringBrew = request->getParam("FMTOnTimeDuringBrew", true)->value().toFloat();
-  }
-  if (request->hasParam("FMTOFFTimeDuringBrew", true)) {
-    FMTData.FMTOFFTimeDuringBrew = request->getParam("FMTOFFTimeDuringBrew", true)->value().toFloat();
-  }
   if (request->hasParam("FMTAltitude", true)) {
     FMTData.FMTAltitude = request->getParam("FMTAltitude", true)->value().toFloat();
   }
@@ -1062,14 +1056,6 @@ void handleCountersDataPage(AsyncWebServerRequest *request) {
   strncat(html, "</div>", remaining);
 
   remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='form-group'><label for='SGAttenuation'>SG Attenuation:</label>", remaining);
-  snprintf(buffer, sizeof(buffer), "<input type='number' id='SGAttenuation' name='SGAttenuation' value='%.4f' step='0.0001'>", CountersData.SGAttenuation);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, buffer, remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div>", remaining);
-
-  remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='form-group'><label for='totalChillTime'>Total Chill Time (s):</label>", remaining);
   snprintf(buffer, sizeof(buffer), "<input type='number' id='totalChillTime' name='totalChillTime' value='%ld' step='1'>", CountersData.totalChillTime);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -1117,9 +1103,6 @@ void handleCountersDataUpdate(AsyncWebServerRequest *request) {
   if (request->hasParam("correctionPlato", true)) {
     CountersData.correctionPlato = request->getParam("correctionPlato", true)->value().toFloat();
   }
-  if (request->hasParam("SGAttenuation", true)) {
-    CountersData.SGAttenuation = request->getParam("SGAttenuation", true)->value().toFloat();
-  }
   if (request->hasParam("totalChillTime", true)) {
     CountersData.totalChillTime = request->getParam("totalChillTime", true)->value().toInt();
   }
@@ -1147,7 +1130,7 @@ void handleCountersDataUpdate(AsyncWebServerRequest *request) {
 // ========== SETPOINT DATA HANDLERS ==========
 
 void handleSetPointDataPage(AsyncWebServerRequest *request) {
-  const size_t BUFFER_SIZE = 5000;
+  const size_t BUFFER_SIZE = 6000;
   char* html = (char*)malloc(BUFFER_SIZE);
   if (!html) {
     request->send(500, "text/plain", "Out of memory");
@@ -1167,7 +1150,7 @@ void handleSetPointDataPage(AsyncWebServerRequest *request) {
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "body { font-family: Arial, sans-serif; margin: 20px; background: #f0f0f0; }", remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, ".container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }", remaining);
+  strncat(html, ".container { max-width: 760px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }", remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "h1 { color: #333; text-align: center; }", remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -1182,6 +1165,8 @@ void handleSetPointDataPage(AsyncWebServerRequest *request) {
   strncat(html, "button[type='submit'] { background: #4CAF50; color: white; }", remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, ".btn-secondary { background: #999; color: white; }", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "h2 { color: #333; margin: 28px 0 12px; } .setpoint-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; } .setpoint-grid .form-group { margin-bottom: 0; } @media (max-width: 600px) { .setpoint-grid { grid-template-columns: 1fr; } }", remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "</style></head><body>", remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -1212,8 +1197,7 @@ void handleSetPointDataPage(AsyncWebServerRequest *request) {
   strncat(html, "</div>", remaining);
   
   remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='form-group'>"
-               "<label for='setPointTemp'>Set Point Temperature (°C):</label>", remaining);
+  strncat(html, "<h2>Temperature</h2><div class='setpoint-grid'><div class='form-group'><label for='setPointTemp'>Set point (&deg;C):</label>", remaining);
   {
     char tmp[16];
     if (SetPointData.setPointTemp == NOTaTEMP) snprintf(tmp, sizeof(tmp), "N/A");
@@ -1223,11 +1207,7 @@ void handleSetPointDataPage(AsyncWebServerRequest *request) {
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div>", remaining);
-  
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='form-group'>"
-               "<label for='setPointSlowTemp'>Set Point Slow Temperature (°C):</label>", remaining);
+  strncat(html, "</div><div class='form-group'><label for='setPointSlowTemp'>Slow set point (&deg;C):</label>", remaining);
   {
     char tmp[16];
     if (SetPointData.setPointSlowTemp == NOTaTEMP) snprintf(tmp, sizeof(tmp), "N/A");
@@ -1237,17 +1217,32 @@ void handleSetPointDataPage(AsyncWebServerRequest *request) {
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div>", remaining);
-  
+  strncat(html, "</div><div class='form-group'><label for='setPointSlowTempSpeed'>Slow set point speed (&deg;C/day):</label>", remaining);
+  snprintf(buffer, sizeof(buffer), "<input type='number' id='setPointSlowTempSpeed' name='setPointSlowTempSpeed' value='%.1f' step='0.1' min='1.0' max='8.0' title='Allowed range: 1.0 to 8.0 degrees/day' oninvalid=\"this.setCustomValidity('Enter a value from 1.0 to 8.0 degrees/day.')\" oninput=\"this.setCustomValidity('')\">", SetPointData.setPointSlowTempSpeed);
   remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='form-group'>"
-               "<label for='setPointPressure'>Set Point Pressure (bar):</label>", remaining);
+  strncat(html, buffer, remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "</div></div><h2>Pressure</h2><div class='setpoint-grid'><div class='form-group'><label for='setPointPressure'>Set point (bar):</label>", remaining);
   snprintf(buffer, sizeof(buffer), "<input type='number' id='setPointPressure' name='setPointPressure' value='%.2f' step='0.01'>", SetPointData.setPointPressure);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div>", remaining);
-  
+  strncat(html, "</div><div class='form-group'><label for='setPointSlowPressure'>Slow set point (bar):</label>", remaining);
+  {
+    char tmp[16];
+    if (SetPointData.setPointSlowPressure == NOTaTEMP) snprintf(tmp, sizeof(tmp), "N/A");
+    else snprintf(tmp, sizeof(tmp), "%.2f", SetPointData.setPointSlowPressure);
+    snprintf(buffer, sizeof(buffer), "<input type='text' id='setPointSlowPressure' name='setPointSlowPressure' value='%s'>", tmp);
+  }
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, buffer, remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "</div><div class='form-group'><label for='setPointSlowPressureSpeed'>Slow set point speed (bar/day):</label>", remaining);
+  snprintf(buffer, sizeof(buffer), "<input type='number' id='setPointSlowPressureSpeed' name='setPointSlowPressureSpeed' value='%.1f' step='0.1' min='0.1' max='2.0' title='Allowed range: 0.1 to 2.0 bar/day' oninvalid=\"this.setCustomValidity('Enter a value from 0.1 to 2.0 bar/day.')\" oninput=\"this.setCustomValidity('')\">", SetPointData.setPointSlowPressureSpeed);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, buffer, remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "</div></div>", remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
     strncat(html, "<button type='submit'>Save</button> "
                  "<button type='button' class='btn-secondary' onclick='window.location=\"/\"'>Cancel</button>"
@@ -1260,9 +1255,24 @@ void handleSetPointDataPage(AsyncWebServerRequest *request) {
 }
 
 void handleSetPointDataUpdate(AsyncWebServerRequest *request) {
-  float oldTemp = SetPointData.setPointTemp;
-  float oldPressure = SetPointData.setPointPressure;
   byte oldMode = SetPointData.mode;
+  float slowTempSpeed = SetPointData.setPointSlowTempSpeed;
+  float slowPressureSpeed = SetPointData.setPointSlowPressureSpeed;
+
+  if (request->hasParam("setPointSlowTempSpeed", true)) {
+    slowTempSpeed = request->getParam("setPointSlowTempSpeed", true)->value().toFloat();
+    if (!isfinite(slowTempSpeed) || slowTempSpeed < 1.0f || slowTempSpeed > 8.0f) {
+      request->send(400, "text/plain", "Slow temperature set point speed must be from 1.0 to 8.0 degrees/day.");
+      return;
+    }
+  }
+  if (request->hasParam("setPointSlowPressureSpeed", true)) {
+    slowPressureSpeed = request->getParam("setPointSlowPressureSpeed", true)->value().toFloat();
+    if (!isfinite(slowPressureSpeed) || slowPressureSpeed < 0.1f || slowPressureSpeed > 2.0f) {
+      request->send(400, "text/plain", "Slow pressure set point speed must be from 0.1 to 2.0 bar/day.");
+      return;
+    }
+  }
 
   if (request->hasParam("mode", true)) {
     SetPointData.mode = request->getParam("mode", true)->value().toInt();
@@ -1283,15 +1293,22 @@ void handleSetPointDataUpdate(AsyncWebServerRequest *request) {
     else
       SetPointData.setPointSlowTemp = v.toFloat();
   }
+  if (request->hasParam("setPointSlowTempSpeed", true)) {
+    SetPointData.setPointSlowTempSpeed = slowTempSpeed;
+  }
   if (request->hasParam("setPointPressure", true)) {
     SetPointData.setPointPressure = request->getParam("setPointPressure", true)->value().toFloat();
   }
-
-  if (fabsf(SetPointData.setPointTemp - oldTemp) > 0.0001f) {
-    SetPointData.setPointTempSetEpoch = NTPEpoch();
+  if (request->hasParam("setPointSlowPressure", true)) {
+    String v = request->getParam("setPointSlowPressure", true)->value();
+    v.trim();
+    if (v.length() == 0 || v.equalsIgnoreCase("N/A"))
+      SetPointData.setPointSlowPressure = NOTaTEMP;
+    else
+      SetPointData.setPointSlowPressure = v.toFloat();
   }
-  if (fabsf(SetPointData.setPointPressure - oldPressure) > 0.00001f) {
-    SetPointData.setPointPressureSetEpoch = NTPEpoch();
+  if (request->hasParam("setPointSlowPressureSpeed", true)) {
+    SetPointData.setPointSlowPressureSpeed = slowPressureSpeed;
   }
   if (SetPointData.mode != oldMode) {
     resetChillHeatCycle();

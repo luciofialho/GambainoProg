@@ -12,8 +12,6 @@ FMTData_t FMTData = {
   .PovotoNum = 0,
   .FMTVolume = 120.0,
   .FMTReliefVolume = 2.0,
-  .FMTOnTimeDuringBrew = 5.0,
-  .FMTOFFTimeDuringBrew = 5.0,
   .FMTAltitude = 0.0,
   .FMTEffectiveVentingExponent = 1.2900f,
   .pressure0Current = 4.5,
@@ -25,11 +23,10 @@ FMTData_t FMTData = {
   .co2TransferTime = 34,
   .nucleationWindow = 5,
   .heater = {true, 0.5f, 2.0f},
-  .coolingCycle = {{30.0f, 15.0f}, {20.0f, 10.0f}, {5.0f, 8.0f}},
-  .checksum = 0
+  .coolingCycle = {{30.0f, 15.0f}, {20.0f, 10.0f}, {5.0f, 8.0f}}
 };
 
-UserConfigurationData_t UserConfigurationData = {120, 6350, 10, 0};
+UserConfigurationData_t UserConfigurationData = {120, 6350, 10};
 
 float Patm = 1.0f;
 
@@ -43,8 +40,7 @@ BatchData_t BatchData = {
   .batchOG = 1.050f,
   .addedPlato = 0.0f,
   .startPressure = 0.0f,
-  .startTemperature = 0.0f,
-  .checksum = 0
+  .startTemperature = 0.0f
 };
 
 // set points
@@ -53,10 +49,10 @@ SetPointData_t SetPointData = {
   .mode = 0,
   .setPointTemp = 18.0,
   .setPointSlowTemp = NOTaTEMP,
+  .setPointSlowTempSpeed = 4.0f,
   .setPointPressure = 0.2,
-  .setPointTempSetEpoch = 0,
-  .setPointPressureSetEpoch = 0,
-  .checksum = 0
+  .setPointSlowPressure = NOTaTEMP,
+  .setPointSlowPressureSpeed = 0.5f
 };
 
 // control data
@@ -70,8 +66,7 @@ ControlData_t ControlData = {
   .chillerOverride = 0,
   .heaterOverride = 0,
   .transferOverride = 0,
-  .reliefOverride = 0,
-  .checksum = 0
+  .reliefOverride = 0
 };
 
 // counters data
@@ -82,10 +77,8 @@ CountersData_t CountersData = {
   .CO2InSolution = 0.0,
   .headSpaceVolume = 0.0f,
   .correctionPlato = 0.0f,
-  .SGAttenuation = 0.0f,
   .totalChillTime = 0,
-  .totalHeatTime = 0,
-  .checksum = 0
+  .totalHeatTime = 0
 };
 
 // =============
@@ -130,10 +123,6 @@ bool readFMTDataFromEEPROM() {
   if (!isfinite(FMTData.FMTVolume)) FMTData.FMTVolume = defaultFMTData.FMTVolume;
   FMTData.FMTReliefVolume = store.getFloat("reliefVolume", defaultFMTData.FMTReliefVolume);
   if (!isfinite(FMTData.FMTReliefVolume)) FMTData.FMTReliefVolume = defaultFMTData.FMTReliefVolume;
-  FMTData.FMTOnTimeDuringBrew = store.getFloat("brewOn", defaultFMTData.FMTOnTimeDuringBrew);
-  if (!isfinite(FMTData.FMTOnTimeDuringBrew)) FMTData.FMTOnTimeDuringBrew = defaultFMTData.FMTOnTimeDuringBrew;
-  FMTData.FMTOFFTimeDuringBrew = store.getFloat("brewOff", defaultFMTData.FMTOFFTimeDuringBrew);
-  if (!isfinite(FMTData.FMTOFFTimeDuringBrew)) FMTData.FMTOFFTimeDuringBrew = defaultFMTData.FMTOFFTimeDuringBrew;
   FMTData.FMTAltitude = store.getFloat("altitude", defaultFMTData.FMTAltitude);
   if (!isfinite(FMTData.FMTAltitude)) FMTData.FMTAltitude = defaultFMTData.FMTAltitude;
   FMTData.FMTEffectiveVentingExponent = store.getFloat("ventExponent", defaultFMTData.FMTEffectiveVentingExponent);
@@ -169,8 +158,6 @@ bool writeFMTDataToNIV() {
   saved = (store.putUChar("number", FMTData.PovotoNum) == sizeof(FMTData.PovotoNum)) && saved;
   saved = (store.putFloat("volume", FMTData.FMTVolume) == sizeof(FMTData.FMTVolume)) && saved;
   saved = (store.putFloat("reliefVolume", FMTData.FMTReliefVolume) == sizeof(FMTData.FMTReliefVolume)) && saved;
-  saved = (store.putFloat("brewOn", FMTData.FMTOnTimeDuringBrew) == sizeof(FMTData.FMTOnTimeDuringBrew)) && saved;
-  saved = (store.putFloat("brewOff", FMTData.FMTOFFTimeDuringBrew) == sizeof(FMTData.FMTOFFTimeDuringBrew)) && saved;
   saved = (store.putFloat("altitude", FMTData.FMTAltitude) == sizeof(FMTData.FMTAltitude)) && saved;
   saved = (store.putFloat("ventExponent", FMTData.FMTEffectiveVentingExponent) == sizeof(FMTData.FMTEffectiveVentingExponent)) && saved;
   saved = (store.putBytes("cooling", &FMTData.coolingCycle, sizeof(FMTData.coolingCycle)) == sizeof(FMTData.coolingCycle)) && saved;
@@ -270,10 +257,18 @@ bool readSetPointDataFromEEPROM() {
   if (!isfinite(SetPointData.setPointTemp)) SetPointData.setPointTemp = defaultSetPointData.setPointTemp;
   SetPointData.setPointSlowTemp = store.getFloat("slowTemp", defaultSetPointData.setPointSlowTemp);
   if (!isfinite(SetPointData.setPointSlowTemp)) SetPointData.setPointSlowTemp = defaultSetPointData.setPointSlowTemp;
+  SetPointData.setPointSlowTempSpeed = store.getFloat("slowTempSpeed", defaultSetPointData.setPointSlowTempSpeed);
+  if (!isfinite(SetPointData.setPointSlowTempSpeed) ||
+      SetPointData.setPointSlowTempSpeed < 1.0f || SetPointData.setPointSlowTempSpeed > 8.0f)
+    SetPointData.setPointSlowTempSpeed = defaultSetPointData.setPointSlowTempSpeed;
   SetPointData.setPointPressure = store.getFloat("pressure", defaultSetPointData.setPointPressure);
   if (!isfinite(SetPointData.setPointPressure)) SetPointData.setPointPressure = defaultSetPointData.setPointPressure;
-  SetPointData.setPointTempSetEpoch = store.getUInt("tempEpoch", defaultSetPointData.setPointTempSetEpoch);
-  SetPointData.setPointPressureSetEpoch = store.getUInt("pressureEpoch", defaultSetPointData.setPointPressureSetEpoch);
+  SetPointData.setPointSlowPressure = store.getFloat("slowPressure", defaultSetPointData.setPointSlowPressure);
+  if (!isfinite(SetPointData.setPointSlowPressure)) SetPointData.setPointSlowPressure = defaultSetPointData.setPointSlowPressure;
+  SetPointData.setPointSlowPressureSpeed = store.getFloat("slowPressSpeed", defaultSetPointData.setPointSlowPressureSpeed);
+  if (!isfinite(SetPointData.setPointSlowPressureSpeed) ||
+      SetPointData.setPointSlowPressureSpeed < 0.1f || SetPointData.setPointSlowPressureSpeed > 2.0f)
+    SetPointData.setPointSlowPressureSpeed = defaultSetPointData.setPointSlowPressureSpeed;
   if (SetPointData.mode > MODE_CONDITIONING) SetPointData.mode = defaultSetPointData.mode;
   store.end();
   return true;
@@ -289,9 +284,10 @@ bool writeSetPointDataToNIV() {
   saved = (store.putUChar("mode", SetPointData.mode) == sizeof(SetPointData.mode)) && saved;
   saved = (store.putFloat("temperature", SetPointData.setPointTemp) == sizeof(SetPointData.setPointTemp)) && saved;
   saved = (store.putFloat("slowTemp", SetPointData.setPointSlowTemp) == sizeof(SetPointData.setPointSlowTemp)) && saved;
+  saved = (store.putFloat("slowTempSpeed", SetPointData.setPointSlowTempSpeed) == sizeof(SetPointData.setPointSlowTempSpeed)) && saved;
   saved = (store.putFloat("pressure", SetPointData.setPointPressure) == sizeof(SetPointData.setPointPressure)) && saved;
-  saved = (store.putUInt("tempEpoch", SetPointData.setPointTempSetEpoch) == sizeof(SetPointData.setPointTempSetEpoch)) && saved;
-  saved = (store.putUInt("pressureEpoch", SetPointData.setPointPressureSetEpoch) == sizeof(SetPointData.setPointPressureSetEpoch)) && saved;
+  saved = (store.putFloat("slowPressure", SetPointData.setPointSlowPressure) == sizeof(SetPointData.setPointSlowPressure)) && saved;
+  saved = (store.putFloat("slowPressSpeed", SetPointData.setPointSlowPressureSpeed) == sizeof(SetPointData.setPointSlowPressureSpeed)) && saved;
   store.end();
   if (!saved) Serial.println("NVS: SetPointData save incomplete");
   return saved;
@@ -311,8 +307,6 @@ bool readCountersDataFromEEPROM() {
   if (!isfinite(CountersData.headSpaceVolume)) CountersData.headSpaceVolume = defaultCountersData.headSpaceVolume;
   CountersData.correctionPlato = store.getFloat("correctPlato", defaultCountersData.correctionPlato);
   if (!isfinite(CountersData.correctionPlato)) CountersData.correctionPlato = defaultCountersData.correctionPlato;
-  CountersData.SGAttenuation = store.getFloat("sgAttenuation", defaultCountersData.SGAttenuation);
-  if (!isfinite(CountersData.SGAttenuation)) CountersData.SGAttenuation = defaultCountersData.SGAttenuation;
   CountersData.totalChillTime = store.getInt("chillTime", defaultCountersData.totalChillTime);
   CountersData.totalHeatTime = store.getInt("heatTime", defaultCountersData.totalHeatTime);
   store.end();
@@ -331,7 +325,6 @@ bool writeCountersDataToNIV() {
   saved = (store.putDouble("co2Solution", CountersData.CO2InSolution) == sizeof(CountersData.CO2InSolution)) && saved;
   saved = (store.putFloat("headSpace", CountersData.headSpaceVolume) == sizeof(CountersData.headSpaceVolume)) && saved;
   saved = (store.putFloat("correctPlato", CountersData.correctionPlato) == sizeof(CountersData.correctionPlato)) && saved;
-  saved = (store.putFloat("sgAttenuation", CountersData.SGAttenuation) == sizeof(CountersData.SGAttenuation)) && saved;
   saved = (store.putInt("chillTime", CountersData.totalChillTime) == sizeof(CountersData.totalChillTime)) && saved;
   saved = (store.putInt("heatTime", CountersData.totalHeatTime) == sizeof(CountersData.totalHeatTime)) && saved;
   store.end();
@@ -443,7 +436,6 @@ void resetCountersForNewBatch() {
   CountersData.totalMolsEjected = 0.0;
   CountersData.CO2InSolution = 0.0;
   CountersData.headSpaceVolume = 0.0f;
-  CountersData.SGAttenuation = 0.0f;
   CountersData.totalChillTime = 0;
   CountersData.totalHeatTime = 0;
 

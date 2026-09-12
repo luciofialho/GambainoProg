@@ -15,7 +15,7 @@ extern TFT_eSPI tft;
 #define PINVENTINGLED 42
 
 #define PINBUZZER 47
-#define PINLED    13
+#define PINLED    48  // Addressable RGB LED built into the ESP32-S3 DevKitC.
 
 #define PINBTN    14
 
@@ -25,12 +25,10 @@ extern TFT_eSPI tft;
 #define FMTHEAT 2
 
 #define FMTOFFSET 0.3
-#define FMTSLOWINCREMENTTIME (36*60L*1000L) // time to change 0.1 ºC ex. 36 minutes = 4ºC per day
-
 extern float dallasTemperature;
 extern bool  debugTemperatureOverride;
 extern float environmentTemp;
 extern byte DisplayMode;
 extern bool  soundAlarm;
 
-  
+

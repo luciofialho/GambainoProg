@@ -28,8 +28,6 @@ String savePovotoSettingsBackup() {
   appendNumber(json, "PovotoNum", FMTData.PovotoNum, 0);
   appendNumber(json, "FMTVolume", FMTData.FMTVolume, 6);
   appendNumber(json, "FMTReliefVolume", FMTData.FMTReliefVolume, 6);
-  appendNumber(json, "FMTOnTimeDuringBrew", FMTData.FMTOnTimeDuringBrew, 6);
-  appendNumber(json, "FMTOFFTimeDuringBrew", FMTData.FMTOFFTimeDuringBrew, 6);
   appendNumber(json, "FMTAltitude", FMTData.FMTAltitude, 6);
   appendNumber(json, "FMTEffectiveVentingExponent", FMTData.FMTEffectiveVentingExponent, 6);
   appendNumber(json, "pressure0Current", FMTData.pressure0Current, 6);
@@ -146,8 +144,6 @@ bool loadPovotoSettingsBackup(const String &settings) {
   if (hasKey(json, "PovotoNum") && !readInt(json, "PovotoNum", povotoNumber)) return false;
   READ_BACKUP_FLOAT("FMTVolume", loadedFmt.FMTVolume);
   READ_BACKUP_FLOAT("FMTReliefVolume", loadedFmt.FMTReliefVolume);
-  READ_BACKUP_FLOAT("FMTOnTimeDuringBrew", loadedFmt.FMTOnTimeDuringBrew);
-  READ_BACKUP_FLOAT("FMTOFFTimeDuringBrew", loadedFmt.FMTOFFTimeDuringBrew);
   READ_BACKUP_FLOAT("FMTAltitude", loadedFmt.FMTAltitude);
   READ_BACKUP_FLOAT("FMTEffectiveVentingExponent", loadedFmt.FMTEffectiveVentingExponent);
   READ_BACKUP_FLOAT("pressure0Current", loadedFmt.pressure0Current);

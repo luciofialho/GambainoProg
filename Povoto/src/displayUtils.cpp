@@ -633,9 +633,8 @@ void initTFT() {
   drawBmp("/SplashScreen.bmp", 0, 0);
   delay(3000);
   pinMode(PINBUZZER, OUTPUT);
-  tone(PINBUZZER, 1200, 60);
-  delay(70);
-  noTone(PINBUZZER);
+  digitalWrite(PINBUZZER, HIGH);
+  delay(60);
   digitalWrite(PINBUZZER, LOW);
   mainScreen();
   lastClick = millis();
@@ -1010,8 +1009,7 @@ static void doOpenTempKeyboard() {
   openNumKeyboard("Temp Target:", SetPointData.setPointTemp,
                   0.0f, 24.0f, 1, true, NOTaTEMP, false,
                   [](float val) {
-                    SetPointData.setPointTemp     = val;
-                    SetPointData.setPointTempSetEpoch = 0;
+                    SetPointData.setPointTemp = val;
                     writeSetPointDataToNIV();
                     Serial.printf(">>> KB OK: setPointTemp = %.2f <<<\n", val);
                   });
@@ -1034,7 +1032,6 @@ static void doOpenPressureKeyboard() {
                   0.0f, 2.0f, 2, false, 0.0f, false,
                   [](float val) {
                     SetPointData.setPointPressure = val;
-                    SetPointData.setPointPressureSetEpoch = 0;
                     writeSetPointDataToNIV();
                     Serial.printf(">>> KB OK: setPointPressure = %.2f <<<\n", val);
                   });

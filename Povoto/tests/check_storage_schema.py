@@ -8,7 +8,7 @@ source = (root / "src/PovotoData.cpp").read_text(encoding="utf-8")
 for group in ["FMTData", "UserConfigurationData", "BatchData",
               "SetPointData", "CountersData"]:
     body = re.search(r"struct " + group + r"_t \{(.*?)\}", header, re.S)[1]
-    members = set(re.findall(r"\w+\s+(\w+)(?:\[\d+\])?;", body)) - {"checksum"}
+    members = set(re.findall(r"\w+\s+(\w+)(?:\[\d+\])?;", body))
     read = re.search(r"bool read" + group + r"FromEEPROM\(\) \{(.*?)\n\}", source, re.S)[1]
     write = re.search(r"bool write" + group + r"ToNIV\(\) \{(.*?)\n\}", source, re.S)[1]
     for member in members:
