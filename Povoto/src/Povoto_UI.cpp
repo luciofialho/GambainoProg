@@ -198,6 +198,7 @@ void screenData() {
     strcmp(screenSignature, lastScreenDataSignature) != 0;
   if (!drawStatic && !drawDynamic) {
     povotoWiFiDrawStatusIndicator();
+    drawCalibrationStatus();
     return;
   }
   if (drawDynamic) {
@@ -235,6 +236,7 @@ void screenData() {
 
   if (!drawDynamic) {
     povotoWiFiDrawStatusIndicator();
+    drawCalibrationStatus();
     return;
   }
 
@@ -305,6 +307,7 @@ void screenData() {
   textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,204, " %.2f", beerABV);
 
   povotoWiFiDrawStatusIndicator();
+  drawCalibrationStatus();
 }
 
 void mainScreen() {

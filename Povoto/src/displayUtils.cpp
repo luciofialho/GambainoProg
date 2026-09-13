@@ -1339,7 +1339,7 @@ void processTouch() {
   uint16_t x, y;
   uint16_t raw_x, raw_y;
 
-  if (isVolumeDeterminationActive()) {
+  if (isVolumeDeterminationActive() || isSpeedCalibrationActive()) {
     lastClick = millis();
     if (screenSaverActive) {
       forceScreenSaver(false);
@@ -1348,7 +1348,7 @@ void processTouch() {
   
   if (!touchFlag) {
     unsigned long ssTimeout = (unsigned long)UserConfigurationData.screensaverTime * 1000UL;
-    if (!screenSaverActive && !isVolumeDeterminationActive() && !taskUIActive && (MILLISDIFF(lastClick, ssTimeout))) {
+    if (!screenSaverActive && !isVolumeDeterminationActive() && !isSpeedCalibrationActive() && !taskUIActive && (MILLISDIFF(lastClick, ssTimeout))) {
       forceScreenSaver(true);
     }
     // Sai da tela de seleção de tarefa se ficar idle por mais que o timeout do screensaver

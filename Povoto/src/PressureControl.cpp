@@ -172,6 +172,19 @@ static unsigned long lastSolenoidToggleMillis = 0;
 float pressureDropFactor = 0.99f;
 
 static bool volumeDeterminationActive = false;
+static bool speedCalibrationActive = false;
+static bool speedCalibrationVenting = false;
+static const uint8_t speedDurations[] = {1, 2, 4, 6, 8, 10, 12, 14, 16};
+struct SpeedRecord { float p1, p2, pl, r; };
+static SpeedRecord speedRecords[2][27];
+static uint8_t speedRecordCount[2] = {0, 0};
+static uint8_t speedStage = 0; // 0: open, 1: close, 2: settle/read
+static unsigned long speedStageMillis = 0;
+static float speedVolumeFactor = 0.0f;
+static unsigned long speedSettlingIntervalMs() {
+  return debugging ? 10000UL : 180000UL;
+}
+static const char *speedStatus = "Idle";
 static float volumeStartPressure = 0.0f;
 static float volumeStartTemperatureK = 0.0f;
 static uint16_t volumeStartReliefIteration = 0;
@@ -1037,14 +1050,29 @@ void readPressure() {
   }
 }  
 
+static char calibrationDisplayLines[3][80] = {};
+
 static void showVolumeStatus(const char *line1, const char *line2, const char *line3) {
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.setTextSize(1);
-  tft.fillRect(10, 220, 300, 90, TFT_BLACK);
-  tft.drawString(line1, 10, 225, 2);
-  tft.drawString(line2, 10, 245, 2);
-  tft.drawString(line3, 10, 265, 2);
+  // Publish the text; screenData draws it after the normal screen update.
+  snprintf(calibrationDisplayLines[0], sizeof(calibrationDisplayLines[0]), "%s", line1);
+  snprintf(calibrationDisplayLines[1], sizeof(calibrationDisplayLines[1]), "%s", line2);
+  snprintf(calibrationDisplayLines[2], sizeof(calibrationDisplayLines[2]), "%s", line3);
   Serial.print(line1); Serial.print(" | "); Serial.print(line2); Serial.print(" | "); Serial.println(line3);
+}
+
+void drawCalibrationStatus() {
+  if (!calibrationDisplayLines[0][0]) return;
+  tft.setFreeFont(nullptr);
+  tft.setTextFont(2);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextPadding(0);
+  tft.setTextSize(1);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  // Keep the temperature and pressure readings below this panel unobstructed.
+  tft.fillRect(10, 2, 460, 66, TFT_BLACK);
+  for (uint8_t i = 0; i < 3; ++i) {
+    tft.drawString(calibrationDisplayLines[i], 16, 5 + i * 20, 2);
+  }
 }
 
 static void formatFloatCsv(char *out, size_t size, float value, uint8_t decimals) {
@@ -1408,7 +1436,7 @@ bool processReliefCycle() {
 
 void pressureRelief(bool fromVolumeDetermination) {
   static unsigned long lastReliefEvent = 0;
-  if (inTheMiddleOfRelief()) { // if we're still in the middle of a relief, ignore new relief requests to avoid overlapping and potential hardware issues
+  if (speedCalibrationActive || inTheMiddleOfRelief()) { // if we're still in the middle of a relief, ignore new relief requests to avoid overlapping and potential hardware issues
     return;
   }
   
@@ -1745,6 +1773,151 @@ void handlePressureDumpCSV(AsyncWebServerRequest *request) {
 }
 
 
+// Valve writes happen only in the main loop, just like the relief state machine.
+bool startSpeedCalibration(bool venting, char *reason, size_t reasonSize) {
+  const char *blocked = nullptr;
+  if (SetPointData.mode != MODE_OFF) blocked = "Mode must be OFF";
+  else if (speedCalibrationActive || volumeDeterminationActive || inTheMiddleOfRelief() || taskWindowType != 0)
+    blocked = "Process in progress";
+  else if (!isfinite(ControlData.pressure) || ControlData.pressure < 1.9f)
+    blocked = "Insufficient pressure (min 1.9 bar)";
+  else if (!venting && (!isfinite(FMTData.FMTVolume) || FMTData.FMTVolume <= 0.0f ||
+                       !isfinite(FMTData.FMTReliefVolume) || FMTData.FMTReliefVolume <= 0.0f))
+    blocked = "Invalid fermenter or expansion volume";
+  if (blocked) {
+    snprintf(reason, reasonSize, "%s", blocked);
+    return false;
+  }
+  speedCalibrationVenting = venting;
+  speedVolumeFactor = venting ? 0.0f : FMTData.FMTVolume / (FMTData.FMTVolume + FMTData.FMTReliefVolume);
+  speedRecordCount[venting ? 1 : 0] = 0;
+  speedStage = 0;
+  speedStatus = "Running";
+  speedCalibrationActive = true;
+  return true;
+}
+
+String getSpeedCalibrationStatus() {
+  return String(speedStatus) + " - expansion: " + String(speedRecordCount[0]) +
+         "/27; venting: " + String(speedRecordCount[1]) + "/27";
+}
+
+static void closeSpeedValve() {
+  digitalWrite(PINTRANSFERVALVE, LOW);
+  ControlData.transferValve = false;
+  markSolenoidToggle();
+  resetCurrentMedianFilter();
+  noPressureReadUntil = millis() + TRANSFER_CLOSE_PRESSURE_BLOCK_MS;
+}
+
+bool isSpeedCalibrationActive() {
+  return speedCalibrationActive;
+}
+
+static void showSpeedCalibrationProgress(bool force = false) {
+  static unsigned long lastUpdate = 0;
+  const unsigned long now = millis();
+  if (!force && now - lastUpdate < 1000UL) return;
+  lastUpdate = now;
+  const uint8_t count = speedRecordCount[speedCalibrationVenting ? 1 : 0];
+  char line1[48], line2[64], line3[64];
+  snprintf(line1, sizeof(line1), "%s speed: %s",
+           speedCalibrationVenting ? "Venting" : "Expansion",
+           speedCalibrationActive ? "RUN" : count == 27 ? "END" : "ABORT");
+  if (speedCalibrationActive) {
+    snprintf(line2, sizeof(line2), "Ciclo %u/3 | %us | %u/27",
+             count / 9 + 1, speedDurations[count % 9], count);
+    const unsigned long duration = speedStage == 1 ? speedDurations[count % 9] * 1000UL : speedSettlingIntervalMs();
+    const unsigned long elapsed = now - speedStageMillis;
+    const unsigned long remaining = elapsed >= duration ? 0 : (duration - elapsed + 999UL) / 1000UL;
+    snprintf(line3, sizeof(line3), "%s %lus | P: %.3f bar",
+             speedStage == 1 ? "Aberta:" : "Espera:", remaining, ControlData.pressure);
+  } else {
+    snprintf(line2, sizeof(line2), "Medicoes: %u/27", count);
+    snprintf(line3, sizeof(line3), "%s", count == 27 ? "CSV na pagina Calibration" : speedStatus);
+  }
+  showVolumeStatus(line1, line2, line3);
+}
+
+static void processSpeedCalibration() {
+  if (SetPointData.mode != MODE_OFF || taskWindowType != 0 ||
+      !isfinite(ControlData.pressure) || ControlData.pressure > FMTData.maximumPressure) {
+    closeSpeedValve();
+    speedStatus = "Aborted: mode, task or pressure changed";
+    speedCalibrationActive = false;
+    showSpeedCalibrationProgress(true);
+    return;
+  }
+  const unsigned long now = millis();
+  uint8_t &count = speedRecordCount[speedCalibrationVenting ? 1 : 0];
+  SpeedRecord &record = speedRecords[speedCalibrationVenting ? 1 : 0][count];
+  if (debugging && speedStage == 1) {
+    // Seconds of valve opening, capped at the requested duration even if a
+    // loop iteration runs late. Keep this pressure throughout settling.
+    const float seconds = fminf((now - speedStageMillis) / 1000.0f,
+                                speedDurations[count % 9]);
+
+    float f;
+    
+    if (!speedCalibrationVenting)
+      f = 1-powf(100,-seconds/10);
+    else
+      f = 1-powf(100,-seconds/100);
+      
+    ControlData.pressure = record.p1 * (1.-f) + (record.pl) * f;
+  }
+  if (speedStage == 0) {
+    record.p1 = ControlData.pressure;
+    record.pl = record.p1 * speedVolumeFactor;
+    if (record.p1 - record.pl <= 0.0f) {
+      speedStatus = "Aborted: pressure too low to calculate R";
+      speedCalibrationActive = false;
+      showSpeedCalibrationProgress(true);
+      return;
+    }
+    digitalWrite(PINTRANSFERVALVE, HIGH);
+    ControlData.transferValve = true;
+    markSolenoidToggle();
+    speedStageMillis = now;
+    speedStage = 1;
+    showSpeedCalibrationProgress(true);
+  } else if (speedStage == 1 && now - speedStageMillis >= speedDurations[count % 9] * 1000UL) {
+    closeSpeedValve();
+    speedStageMillis = now;
+    speedStage = 2;
+    showSpeedCalibrationProgress(true);
+  } else if (speedStage == 2 && now - speedStageMillis >= speedSettlingIntervalMs()) {
+    record.p2 = ControlData.pressure;
+    record.r = (record.p2 - record.pl) / (record.p1 - record.pl);
+    ++count;
+    speedStage = 0;
+    if (count == 27) {
+      speedStatus = "Completed";
+      speedCalibrationActive = false;
+      showSpeedCalibrationProgress(true);
+    }
+  }
+  if (speedCalibrationActive && speedStage != 0) showSpeedCalibrationProgress();
+}
+
+void handleSpeedCalibrationCSV(AsyncWebServerRequest *request) {
+  const bool venting = request->hasParam("type") && request->getParam("type")->value() == "venting";
+  const uint8_t count = speedRecordCount[venting ? 1 : 0];
+  String csv = "ciclo,tempo,P1,P2,PL,R\n";
+  csv.reserve(4096);
+  for (uint8_t i = 0; i < count; ++i) {
+    const SpeedRecord &r = speedRecords[venting ? 1 : 0][i];
+    char line[160];
+    snprintf(line, sizeof(line), "%u,%u,%.6f,%.6f,%.6f,%.6f\n",
+             i / 9 + 1, speedDurations[i % 9], r.p1, r.p2, r.pl, r.r);
+    csv += line;
+  }
+  AsyncWebServerResponse *response = request->beginResponse(200, "text/csv", csv);
+  response->addHeader("Content-Disposition", venting ? "attachment; filename=venting_speed.csv" :
+                                                      "attachment; filename=expansion_speed.csv");
+  request->send(response);
+}
+
 bool startVolumeDetermination(char *reason, size_t reasonSize) {
   if (reason && reasonSize > 0) {
     reason[0] = '\0';
@@ -1757,7 +1930,7 @@ bool startVolumeDetermination(char *reason, size_t reasonSize) {
     return false;
   }
 
-  if (volumeDeterminationActive || inTheMiddleOfRelief()) {
+  if (speedCalibrationActive || volumeDeterminationActive || inTheMiddleOfRelief()) {
     if (reason && reasonSize > 0) {
       snprintf(reason, reasonSize, "Process in progress");
     }
@@ -1771,7 +1944,7 @@ bool startVolumeDetermination(char *reason, size_t reasonSize) {
     return false;
   }
 
-  if (ControlData.pressure < 1.9f) {
+  if (!isfinite(ControlData.pressure) || ControlData.pressure < 1.9f) {
     if (reason && reasonSize > 0) {
       snprintf(reason, reasonSize, "Insufficient pressure (min 1.9 bar)");
     }
@@ -1852,7 +2025,15 @@ void pressureControl() {
     beerSG = BatchData.batchOG;
   }
 
-  readPressure();
+  // During a debug speed test the simulated pressure owns the reading,
+  // including the settling interval and the next measurement's P1.
+  if (!(debugging && speedCalibrationActive)) {
+    readPressure();
+  }
+  if (speedCalibrationActive) {
+    processSpeedCalibration();
+    return;
+  }
   processSlowPressureTarget();
   updateCO2DissolvedEstimationMode();
 

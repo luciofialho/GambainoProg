@@ -27,6 +27,7 @@ void handleSetPointDataUpdate(AsyncWebServerRequest *request);
 
 void handleControlDataPage(AsyncWebServerRequest *request);
 void handleControlDataUpdate(AsyncWebServerRequest *request);
+void handleStartSpeedCalibration(AsyncWebServerRequest *request);
 void handleStartVolume(AsyncWebServerRequest *request);
 void handleControlAuto(AsyncWebServerRequest *request);
 void handleControlReliefOnce(AsyncWebServerRequest *request);

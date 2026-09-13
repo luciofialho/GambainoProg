@@ -677,7 +677,35 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
                "</div>"
                "</body></html>", remaining);
 
-  request->send(200, "text/html", html);
+  String page(html);
+  String volumeStatus = "Not running";
+  if (isVolumeDeterminationActive()) {
+    volumeStatus = "Running - relief cycles: " + String(getVolumeDeterminationIteration()) + "/35";
+  } else {
+    const float calculatedVolume = getVolumeDeterminationCalculatedSoFar();
+    if (!isnan(calculatedVolume)) {
+      volumeStatus = "Completed - calculated FMT volume: " + String(calculatedVolume, 3) + " L";
+    }
+  }
+
+  const String actions = String("<div class='container' style='margin-top:20px'><h2>Calibration tests</h2>") +
+    "<p>Requirements: Mode OFF; initial pressure at least 1.9 bar.</p><p>No pressure target.</p>" +
+    "<hr><h3>FMT volume determination</h3>" +
+    "<p>Determines the fermenter total volume from the pressure reduction produced by repeated expansions into the configured relief volume. " +
+    "The test stops automatically after 35 relief cycles and calculates the final result using the initial and final pressures, compensated for temperature.</p>" +
+    "<form action='/startvolume'><button>Volume determination</button></form><p>" + volumeStatus + "</p>" +
+    "<p>Download results: <a href='/pressurehistory'>Pressure history</a> | " +
+    "<a href='/pressuredump'>Pressure dump</a></p>" +
+    "<hr><h3>Gas transfer speed determination</h3>" +
+    "<p>Speed tests: 3 cycles of 1, 2, 4, 6, 8, 10, 12, 14, 16 seconds; wait 3 minutes after closing (10 seconds in debug mode).</p>" +
+    "<p>Venting speed requires the valve outlet connected to atmosphere.</p>" +
+    "<form action='/calibration/speed' method='POST'><button name='type' value='expansion'>Expansion speed</button> " +
+    "<button name='type' value='venting'>Venting speed</button></form><p>" + getSpeedCalibrationStatus() + "</p>" +
+    "<p>Download results: <a href='/calibration/speed.csv?type=expansion'>Expansion CSV</a> | " +
+    "<a href='/calibration/speed.csv?type=venting'>Venting CSV</a></p>" +
+    "<p>CSV results are kept in RAM until restart or the next test of the same type.</p></div>";
+  page.replace("</body>", actions + "</body>");
+  request->send(200, "text/html", page);
   free(html);
 }
 
@@ -1427,18 +1455,10 @@ void handleControlDataPage(AsyncWebServerRequest *request) {
                "<a class='action-btn' href='/control/auto'>All Auto</a>"
                "<a class='action-btn' href='/control/relief'>Relief once</a>"
                "<a class='action-btn' href='/resetdisplay'>Reset display</a>"
-               "<a class='action-btn' href='/startvolume?from=control' onclick=\"return confirm('Start volume determination?');\">Start volume</a>"
                "</div>", remaining);
 
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='sub-link'><a href='/counters'>Counters</a></div>", remaining);
-
-  if (request->hasParam("volume", false)) {
-    remaining = BUFFER_SIZE - strlen(html) - 1;
-    strncat(html, "<div class='notice'>after volume determination finished, download results links are:<br>"
-                 "<a href='/pressurehistory'>/pressurehistory</a><br>"
-                 "<a href='/pressuredump'>/pressuredump</a></div>", remaining);
-  }
 
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "</div>"
@@ -1474,19 +1494,34 @@ void handleControlDataUpdate(AsyncWebServerRequest *request) {
   request->send(200, "text/html", html);
 }
 
+void handleStartSpeedCalibration(AsyncWebServerRequest *request) {
+  if (!request->hasParam("type", true)) {
+    request->send(400, "text/plain", "Missing test type");
+    return;
+  }
+  const String type = request->getParam("type", true)->value();
+  if (type != "expansion" && type != "venting") {
+    request->send(400, "text/plain", "Invalid test type");
+    return;
+  }
+  char reason[100];
+  if (!startSpeedCalibration(type == "venting", reason, sizeof(reason))) {
+    request->send(409, "text/plain", reason);
+    return;
+  }
+  request->redirect("/calibration");
+}
+
 void handleStartVolume(AsyncWebServerRequest *request) {
   char reason[80];
-  if (debugging) {
-    ControlData.pressure = 1.6;
-  }
   
   bool started = startVolumeDetermination(reason, sizeof(reason));
   if (started) {
-    request->redirect("/control?volume=1");
+    request->redirect("/calibration?volume=1");
   } else {
     String html = "<!DOCTYPE html><html><head>";
     html += "<meta charset='UTF-8'>";
-    html += "<meta http-equiv='refresh' content='2;url=/control'>";
+    html += "<meta http-equiv='refresh' content='2;url=/calibration'>";
     html += "<style>body{font-family:Arial;text-align:center;margin-top:50px;}";
     html += "</head><body>";
     html += "<h1>Volume determination blocked</h1>";

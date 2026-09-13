@@ -197,6 +197,8 @@ void setup() {
   server.on("/userConfig", HTTP_GET, handleUserConfigPage);
   server.on("/userConfig/update", HTTP_POST, handleUserConfigUpdate);
   
+  server.on("/calibration/speed.csv", HTTP_GET, handleSpeedCalibrationCSV);
+  server.on("/calibration/speed", HTTP_POST, handleStartSpeedCalibration);
   server.on("/calibration", HTTP_GET, handleCalibrationDataPage);
   server.on("/calibration/refresh-current", HTTP_GET, handleCalibrationCurrentRefresh);
   server.on("/calibration/update", HTTP_POST, handleCalibrationDataUpdate);
