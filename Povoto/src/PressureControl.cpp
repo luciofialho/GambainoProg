@@ -5,7 +5,7 @@
 #include "GambainoCommon.h"
 #include "PovotoTasks.h"
 #include "datalog.h"
-#include <Adafruit_INA219.h>
+#include <INA226.h>
 #include <Arduino.h>
 #include <IOTK.h>
 #include <IOTK_NTP.h>
@@ -18,10 +18,11 @@
 #define RELIEFTIME (8000 / DEBUGACCELERATION)
 
 #define PRESSURE_MEDIAN_WINDOW 9
-#define CURRENT_MEDIAN_MIN_SAMPLE_MS 20 // defined for 32 samples in INA 219 (17ms)
+#define CURRENT_MEDIAN_MIN_SAMPLE_MS 20 // defined for 16 samples at 1.1ms in the INA226 (~17.6ms)
 #define INSTABILITYTHRESHOLDMA 4.0f
 
-#define INA219_SHUNT_OHMS 10.0f
+#define INA226_I2C_ADDRESS 0x44
+#define INA226_SHUNT_OHMS 3.0f
 
 #define SOLENOID_NOISE_MS 400
 
@@ -41,7 +42,7 @@
 #define CO2MOLAR_MASS 44.01
 
 
-Adafruit_INA219 ina219;
+INA226 ina226(INA226_I2C_ADDRESS);
 bool pressureSensorConnected = false;
 float currentReading = 0.0; // Corrente em mA
 
@@ -850,30 +851,16 @@ static void markSolenoidToggle() {
   lastSolenoidToggleMillis = millis();
 }
 
-static float readCurrentFromINA219mA() {
-  #ifdef INA219_SHUNT_OHMS
-    return ina219.getShuntVoltage_mV() / INA219_SHUNT_OHMS;
-  #else
-    return ina219.getCurrent_mA();
-  #endif
+static float readCurrentFromINA226mA() {
+  return ina226.getShuntVoltage_mV() / INA226_SHUNT_OHMS;
 }
 
-// Current is obtained from the shunt ADC. Average 32 conversions there
-// (about 17 ms) so each software sample represents a complete shunt cycle.
-static void configureINA219CurrentAveraging() {
-  const uint16_t config = INA219_CONFIG_BVOLTAGERANGE_32V |
-                          INA219_CONFIG_GAIN_8_320MV |
-                          INA219_CONFIG_BADCRES_12BIT |
-                          INA219_CONFIG_SADCRES_12BIT_32S_17MS |
-                          INA219_CONFIG_MODE_SVOLT_CONTINUOUS;
-
-  Wire.beginTransmission(INA219_ADDRESS);
-  Wire.write(INA219_REG_CONFIG);
-  Wire.write(uint8_t(config >> 8));
-  Wire.write(uint8_t(config));
-  if (Wire.endTransmission() != 0) {
-    Serial.println("INA219: unable to configure current averaging");
-  }
+// Current is obtained straight from the shunt ADC, averaging 16 conversions of
+// 1.1ms each there (~17.6ms) so each software sample represents a full shunt cycle.
+static void configureINA226CurrentAveraging() {
+  ina226.setAverage(INA226_16_SAMPLES);
+  ina226.setBusVoltageConversionTime(INA226_1100_us);
+  ina226.setShuntVoltageConversionTime(INA226_1100_us);
 }
 
 
@@ -1003,18 +990,30 @@ bool inTheMiddleOfRelief() {
   return (timeToStartExpansion || timeToFinishExpansion || timeToRegisterPressure);
 }
 
+// Scans the whole INA226 address range (0x40-0x4F) and logs any device found,
+// to help spot a wrong INA226_I2C_ADDRESS after swapping the sensor board.
+static void scanForINA226Candidates() {
+  for (uint8_t addr = 0x40; addr <= 0x4F; ++addr) {
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0) {
+      Serial.printf("INA226: I2C device responding at address 0x%02X\n", addr);
+    }
+  }
+}
+
 void readPressure() {
-  // Try to initialize the INA219 if it hasn't been done yet
+  // Try to initialize the INA226 if it hasn't been done yet
   static bool initialized = false;
   if (!initialized) {
-    pressureSensorConnected = ina219.begin();
+    pressureSensorConnected = ina226.begin();
     if (pressureSensorConnected) {
-      Serial.println("INA219 pressure sensor initialized successfully");
+      Serial.println("INA226 pressure sensor initialized successfully");
+      configureINA226CurrentAveraging();
+      Serial.printf("INA226: config register after setup = 0x%04X\n", ina226.getRegister(0x00));
     } else {
-      Serial.println("Could not find INA219 pressure sensor");
+      Serial.printf("Could not find INA226 pressure sensor at address 0x%02X\n", INA226_I2C_ADDRESS);
+      scanForINA226Candidates();
     }
-    ina219.setCalibration_32V_2A();
-    configureINA219CurrentAveraging();
     initialized = true;
   }
   
@@ -1023,7 +1022,7 @@ void readPressure() {
       // Read and filter the INA current even in debugging mode. Debug pressure
       // simulation is only used when this reading is zero or the INA is absent.
       if (currentWindowCount == 0 || MILLISDIFF(lastCurrentMedianSampleMillis, CURRENT_MEDIAN_MIN_SAMPLE_MS)) {
-        currentReading = medianFilter(readCurrentFromINA219mA());
+        currentReading = medianFilter(readCurrentFromINA226mA());
         lastCurrentMedianSampleMillis = millis();
       }
 
@@ -1863,7 +1862,7 @@ static void processSpeedCalibration() {
       f = 1-powf(100,-seconds/10);
     else
       f = 1-powf(100,-seconds/100);
-      
+
     ControlData.pressure = record.p1 * (1.-f) + (record.pl) * f;
   }
   if (speedStage == 0) {
@@ -2126,7 +2125,7 @@ char *getPressureControlStatus(char *st) {
     strnncat(st, tmp, 2048);
     snprintf(tmp, sizeof(tmp),
              "INA: Filtered current reading: %.2f mA Shunt voltage: %.2f mV Momentary current: %.2f mA<br>",
-             currentReading, ina219.getShuntVoltage_mV(), readCurrentFromINA219mA());
+             currentReading, ina226.getShuntVoltage_mV(), readCurrentFromINA226mA());
     strnncat(st, tmp, 2048);
 
     const unsigned long criteriaElapsedMs = co2DissolvedCriteriaElapsedMillis(now);
@@ -2176,7 +2175,7 @@ char *getPressureControlStatus(char *st) {
              beerSG, SGToApparentPlato(beerSG), beerABV);
     strnncat(st, tmp, 2048);
   } else {
-    snprintf(tmp, sizeof(tmp), "INA219 Pressure Sensor: DISCONNECTED<br>Atmospheric pressure: %.3f bar<br>", Patm);
+    snprintf(tmp, sizeof(tmp), "INA226 Pressure Sensor: DISCONNECTED<br>Atmospheric pressure: %.3f bar<br>", Patm);
     strnncat(st, tmp, 2048);
   }
 
