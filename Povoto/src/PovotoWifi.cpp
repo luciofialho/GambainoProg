@@ -17,6 +17,7 @@ constexpr char WIFI_PASSWORD_KEY[] = "password";
 constexpr char SETUP_AP_SSID[] = "Povoto Setup";
 constexpr char SETUP_AP_PASSWORD[] = "povoto123";
 constexpr int MAX_SCANNED_NETWORKS = 30;
+constexpr unsigned long WIFI_CONNECT_RETRY_MS = 20000UL;
 
 enum class WiFiState : uint8_t { Unconfigured, Connecting, Configuring, Connected };
 
@@ -33,6 +34,8 @@ bool statusTouchHeld = false;
 String scannedSsids[MAX_SCANNED_NETWORKS];
 int scannedNetworkCount = -1;
 bool scanStartRequested = false;
+unsigned long lastStationConnectAttemptMillis = 0;
+uint16_t stationConnectAttemptCount = 0;
 
 void updateWiFiStatusLed() {
   const bool pulseOn = (millis() % 1000UL) < 200UL;
@@ -100,9 +103,25 @@ void beginStationConnection() {
   WiFi.disconnect(true, false);
   WiFi.mode(WIFI_STA);
   WiFi.begin(configuredSsid.c_str(), configuredPassword.c_str());
+  lastStationConnectAttemptMillis = millis();
+  ++stationConnectAttemptCount;
   wifiState = WiFiState::Connecting;
   screenDirty = true;
-  Serial.printf("WiFi: attempting to connect to '%s'\n", configuredSsid.c_str());
+  Serial.printf("WiFi: attempting to connect to '%s' (attempt %u)\n",
+                configuredSsid.c_str(), stationConnectAttemptCount);
+}
+
+void retryStationConnection() {
+  // WiFi.reconnect() can remain stuck after a failed boot-time association.
+  // Recreate the station connection without erasing the saved credentials.
+  WiFi.disconnect(false, false);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(configuredSsid.c_str(), configuredPassword.c_str());
+  lastStationConnectAttemptMillis = millis();
+  ++stationConnectAttemptCount;
+  screenDirty = true;
+  Serial.printf("WiFi: retrying '%s' (attempt %u)\n",
+                configuredSsid.c_str(), stationConnectAttemptCount);
 }
 
 void startAccessPoint() {
@@ -178,14 +197,19 @@ void povotoWiFiProcess() {
 
   if (wifiState == WiFiState::Connected && WiFi.status() != WL_CONNECTED) {
     wifiState = WiFiState::Connecting;
-    WiFi.reconnect();
+    retryStationConnection();
   }
 
   if (wifiState == WiFiState::Connecting && WiFi.status() == WL_CONNECTED) {
     wifiState = WiFiState::Connected;
+    stationConnectAttemptCount = 0;
     screenDirty = true;
     Serial.printf("WiFi: connected to '%s', IP %s\n", WiFi.SSID().c_str(),
                   WiFi.localIP().toString().c_str());
+  }
+  else if (wifiState == WiFiState::Connecting &&
+           millis() - lastStationConnectAttemptMillis >= WIFI_CONNECT_RETRY_MS) {
+    retryStationConnection();
   }
 }
 

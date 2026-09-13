@@ -697,7 +697,7 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
     "<p>Download results: <a href='/pressurehistory'>Pressure history</a> | " +
     "<a href='/pressuredump'>Pressure dump</a></p>" +
     "<hr><h3>Gas transfer speed determination</h3>" +
-    "<p>Speed tests: 3 cycles of 1, 2, 4, 6, 8, 10, 12, 14, 16 seconds; wait 3 minutes after closing (10 seconds in debug mode).</p>" +
+    "<p>Speed tests: 5 cycles of 1, 2, 4, 6, 8, 10, 12, 14, 16 seconds; wait 3 minutes after closing (10 seconds in debug mode).</p>" +
     "<p>Venting speed requires the valve outlet connected to atmosphere.</p>" +
     "<form action='/calibration/speed' method='POST'><button name='type' value='expansion'>Expansion speed</button> " +
     "<button name='type' value='venting'>Venting speed</button></form><p>" + getSpeedCalibrationStatus() + "</p>" +

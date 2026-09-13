@@ -177,7 +177,7 @@ static bool speedCalibrationActive = false;
 static bool speedCalibrationVenting = false;
 static const uint8_t speedDurations[] = {1, 2, 4, 6, 8, 10, 12, 14, 16};
 struct SpeedRecord { float p1, p2, pl, r; };
-static SpeedRecord speedRecords[2][27];
+static SpeedRecord speedRecords[2][45];
 static uint8_t speedRecordCount[2] = {0, 0};
 static uint8_t speedStage = 0; // 0: open, 1: close, 2: settle/read
 static unsigned long speedStageMillis = 0;
@@ -1798,7 +1798,7 @@ bool startSpeedCalibration(bool venting, char *reason, size_t reasonSize) {
 
 String getSpeedCalibrationStatus() {
   return String(speedStatus) + " - expansion: " + String(speedRecordCount[0]) +
-         "/27; venting: " + String(speedRecordCount[1]) + "/27";
+         "/45; venting: " + String(speedRecordCount[1]) + "/45";
 }
 
 static void closeSpeedValve() {
@@ -1822,9 +1822,9 @@ static void showSpeedCalibrationProgress(bool force = false) {
   char line1[48], line2[64], line3[64];
   snprintf(line1, sizeof(line1), "%s speed: %s",
            speedCalibrationVenting ? "Venting" : "Expansion",
-           speedCalibrationActive ? "RUN" : count == 27 ? "END" : "ABORT");
+           speedCalibrationActive ? "RUN" : count == 45 ? "END" : "ABORT");
   if (speedCalibrationActive) {
-    snprintf(line2, sizeof(line2), "Ciclo %u/3 | %us | %u/27",
+    snprintf(line2, sizeof(line2), "Ciclo %u/5 | %us | %u/45",
              count / 9 + 1, speedDurations[count % 9], count);
     const unsigned long duration = speedStage == 1 ? speedDurations[count % 9] * 1000UL : speedSettlingIntervalMs();
     const unsigned long elapsed = now - speedStageMillis;
@@ -1832,8 +1832,8 @@ static void showSpeedCalibrationProgress(bool force = false) {
     snprintf(line3, sizeof(line3), "%s %lus | P: %.3f bar",
              speedStage == 1 ? "Aberta:" : "Espera:", remaining, ControlData.pressure);
   } else {
-    snprintf(line2, sizeof(line2), "Medicoes: %u/27", count);
-    snprintf(line3, sizeof(line3), "%s", count == 27 ? "CSV na pagina Calibration" : speedStatus);
+    snprintf(line2, sizeof(line2), "Medicoes: %u/45", count);
+    snprintf(line3, sizeof(line3), "%s", count == 45 ? "CSV na pagina Calibration" : speedStatus);
   }
   showVolumeStatus(line1, line2, line3);
 }
@@ -1890,7 +1890,7 @@ static void processSpeedCalibration() {
     record.r = (record.p2 - record.pl) / (record.p1 - record.pl);
     ++count;
     speedStage = 0;
-    if (count == 27) {
+    if (count == 45) {
       speedStatus = "Completed";
       speedCalibrationActive = false;
       showSpeedCalibrationProgress(true);
