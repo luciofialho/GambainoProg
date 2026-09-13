@@ -32,7 +32,6 @@ struct ReliefLogData {
   double totalMolsEjected;
   float headSpaceCO2Mols;
   double dissolvedCO2Mols;
-  float dissolvedCO2MolsAtEquilibrium;
   double totalCO2Mols;
   float beerSG;
   float beerRealPlato;

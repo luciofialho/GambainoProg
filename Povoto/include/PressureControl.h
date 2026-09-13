@@ -6,6 +6,22 @@
 
 void pressureRelief(bool fromVolumeDetermination);
 void pressureControl();
+struct DissolvedCO2LogData {
+  const char *mode;
+  const char *criteriaState;
+  const char *withReliefsState;
+  const char *withoutReliefsState;
+  unsigned long criteriaElapsedMillis;
+  unsigned long confirmationMillis;
+  unsigned long withReliefsElapsedMillis;
+  unsigned long withoutReliefsElapsedMillis;
+  float calculationPressure;
+  float equilibriumMols;
+  float previousPressure;
+  float reliefIntervalSeconds;
+  float sinceLastReliefSeconds;
+};
+DissolvedCO2LogData getDissolvedCO2LogData();
 char *getPressureControlStatus(char *st);
 void handlePressureHistoryCSV(AsyncWebServerRequest *request);
 void handlePressureDumpCSV(AsyncWebServerRequest *request);

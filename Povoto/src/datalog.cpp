@@ -209,6 +209,22 @@ void doDataLog() {
     GLogAddData("AdjustedPressureAfterRelief");
     GLogAddData("PressureReachedTarget");
     GLogAddData("PressureReachedTargetMillis");
+    GLogAddData("DissolvedCO2Mode");
+    GLogAddData("DissolvedCO2CalculationPressure");
+    GLogAddData("DissolvedCO2MolsAtEquilibrium");
+    GLogAddData("DissolvedCO2CriteriaState");
+    GLogAddData("DissolvedCO2CriteriaElapsedMillis");
+    GLogAddData("DissolvedCO2ConfirmationMillis");
+    GLogAddData("CO2WithReliefsState");
+    GLogAddData("CO2WithReliefsElapsedMillis");
+    GLogAddData("CO2WithoutReliefsState");
+    GLogAddData("CO2WithoutReliefsElapsedMillis");
+    GLogAddData("Pressure10MinAgo");
+    GLogAddData("ReliefIntervalSeconds");
+    GLogAddData("SinceLastReliefSeconds");
+    GLogAddData("LastTaskMillis");
+    GLogAddData("OperatingMode");
+    GLogAddData("AtmosphericPressure");
 
     GLogSend();
     headerWritten = true;
@@ -244,6 +260,23 @@ void doDataLog() {
     GLogAddData(adjustedPressureAfterRelief,3);
     GLogAddData(pressureReachedTarget,3);
     GLogAddData(pressureReachedTargetMillis);
+    const DissolvedCO2LogData co2 = getDissolvedCO2LogData();
+    GLogAddData(co2.mode);
+    GLogAddData(co2.calculationPressure, 3);
+    GLogAddData(co2.equilibriumMols, 6);
+    GLogAddData(co2.criteriaState);
+    GLogAddData(co2.criteriaElapsedMillis);
+    GLogAddData(co2.confirmationMillis);
+    GLogAddData(co2.withReliefsState);
+    GLogAddData(co2.withReliefsElapsedMillis);
+    GLogAddData(co2.withoutReliefsState);
+    GLogAddData(co2.withoutReliefsElapsedMillis);
+    GLogAddData(co2.previousPressure, 3);
+    GLogAddData(co2.reliefIntervalSeconds, 3);
+    GLogAddData(co2.sinceLastReliefSeconds, 3);
+    GLogAddData(lastTaskMillis);
+    GLogAddData((int)SetPointData.mode);
+    GLogAddData(Patm, 3);
     GLogSend();
   }
 }
@@ -292,7 +325,6 @@ void doReliefDataLog(const ReliefLogData &data) {
     GLogAddData("TotalEjectedMols");
     GLogAddData("HeadSpaceCO2Mols");
     GLogAddData("DissolvedCO2Mols");
-    GLogAddData("DissolvedCO2MolsAtEquilibrium");
     GLogAddData("TotalCO2Mols");
     GLogAddData("BeerSG");
     GLogAddData("BeerRealPlato");
@@ -332,7 +364,6 @@ void doReliefDataLog(const ReliefLogData &data) {
   GLogAddData((float)data.totalMolsEjected, 6);
   GLogAddData(data.headSpaceCO2Mols, 6);
   GLogAddData((float)data.dissolvedCO2Mols, 6);
-  GLogAddData(data.dissolvedCO2MolsAtEquilibrium, 6);
   GLogAddData((float)data.totalCO2Mols, 6);
   GLogAddData(data.beerSG, 5);
   GLogAddData(data.beerRealPlato, 3);

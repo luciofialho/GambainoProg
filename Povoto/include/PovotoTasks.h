@@ -7,6 +7,7 @@
 
 extern byte taskWindowType;
 extern unsigned long taskWindowEndTime;
+extern unsigned long lastTaskMillis;
 
 void startDumpTask();
 void startGasTask();

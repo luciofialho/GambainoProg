@@ -56,9 +56,18 @@ float sgPointGenerationTime = 0.0f;
 
 static constexpr unsigned long CO2_EVOLUTION_SAMPLE_MS = 60000UL;
 static constexpr uint16_t CO2_EVOLUTION_HISTORY_SIZE = 71;
+static constexpr unsigned long CO2_IMMEDIATE_PERCEPTION_DELAY_MS = 10UL * MINUTESms;
+enum CO2DissolvedEstimationMode : uint8_t {
+  CO2_DISSOLVED_HALF_LIFE,
+  CO2_DISSOLVED_IMMEDIATE
+};
+static CO2DissolvedEstimationMode co2DissolvedEstimationMode = CO2_DISSOLVED_HALF_LIFE;
+static unsigned long co2ActiveFermentationCriteriaSinceMillis = 0;
+static unsigned long co2FermentationConfirmationMs = CO2_IMMEDIATE_PERCEPTION_DELAY_MS;
 struct CO2EvolutionSample {
   unsigned long millisStamp;
   double totalMols;
+  float pressure;
 };
 static CO2EvolutionSample co2EvolutionHistory[CO2_EVOLUTION_HISTORY_SIZE];
 static uint16_t co2EvolutionStart = 0;
@@ -268,9 +277,191 @@ float CO2DissolvedMols(float pressureBar, float sg, float temperatureC, float vo
   return molPerL * volumeL;
 }
 
+enum class FermentationCriteria : uint8_t { Inactive, Active, Imprecise };
+static FermentationCriteria fermentationCriteria = FermentationCriteria::Inactive;
+static DissolvedCO2LogData dissolvedCO2LogData = {};
+
+static const char *fermentationCriteriaLabel(FermentationCriteria state) {
+  switch (state) {
+    case FermentationCriteria::Active: return "active";
+    case FermentationCriteria::Imprecise: return "imprecise";
+    default: return "inactive";
+  }
+}
+
+static FermentationCriteria hasActiveFermentationCriteria() {
+  const unsigned long now = millis();
+  static constexpr unsigned long observationWindowMs = 10UL * MINUTESms;
+  static constexpr unsigned long maximumReliefIntervalMs = 2UL * MINUTESms;
+  static constexpr uint16_t observationSamples = observationWindowMs / CO2_EVOLUTION_SAMPLE_MS;
+  static constexpr float CO2PressurePerceptionThresholdForWindow = 0.05f; // Example threshold value
+
+  static bool timingCriteria = false;
+  static bool timingReliefCriteria = false;
+  static unsigned long reliefCriteriaSinceMillis = 0;
+  static unsigned long pressureCriteriaSinceMillis = 0;
+
+  bool criteriaWithoutReliefs = false;
+  bool criteriaWithReliefs = false;
+  FermentationCriteria result = FermentationCriteria::Inactive;
+  co2FermentationConfirmationMs = CO2_IMMEDIATE_PERCEPTION_DELAY_MS;
+
+  const float pressure = ControlData.pressure;
+  dissolvedCO2LogData.withReliefsState = "not evaluated";
+  dissolvedCO2LogData.withoutReliefsState = "not evaluated";
+  dissolvedCO2LogData.withReliefsElapsedMillis = 0;
+  dissolvedCO2LogData.withoutReliefsElapsedMillis = 0;
+  dissolvedCO2LogData.previousPressure = NAN;
+  if (SetPointData.mode != MODE_FERMENTING) {
+    timingCriteria = false;
+    timingReliefCriteria = false;
+    co2ActiveFermentationCriteriaSinceMillis = 0;
+  }
+  else if (taskWindowType != 0 || now - lastTaskMillis < observationWindowMs ||
+             !isfinite(pressure) || !isfinite(SetPointData.setPointPressure)) {
+    timingCriteria = false;
+    timingReliefCriteria = false;
+    co2ActiveFermentationCriteriaSinceMillis = 0;
+    criteriaWithoutReliefs = false;
+  } else {
+    const bool reducingPressure = SetPointData.setPointSlowPressure != NOTaTEMP &&
+        SetPointData.setPointSlowPressure < SetPointData.setPointPressure;
+
+    // "With reliefs" determination
+    if (!reducingPressure && reliefMillisCount >= 2 &&
+        isfinite(pressureAfterRelief) && pressureAfterRelief < SetPointData.setPointPressure) {
+      const uint8_t lastIndex = (reliefMillisIndex + RELIEFS_WINDOW_SIZE - 1) % RELIEFS_WINDOW_SIZE;
+      const uint8_t previousIndex = (lastIndex + RELIEFS_WINDOW_SIZE - 1) % RELIEFS_WINDOW_SIZE;
+      const unsigned long lastRelief = reliefMillisWindow[lastIndex];
+      const unsigned long interval = lastRelief - reliefMillisWindow[previousIndex];
+      // A pair of old, close reliefs must not keep the criterion true indefinitely.
+      criteriaWithReliefs = interval > 0 && interval < maximumReliefIntervalMs && now - lastRelief < maximumReliefIntervalMs;
+
+    }
+
+    FermentationCriteria withReliefsResult = FermentationCriteria::Inactive;
+    if (criteriaWithReliefs) {
+      if (!timingReliefCriteria) {
+        reliefCriteriaSinceMillis = now;
+        timingReliefCriteria = true;
+      }
+      withReliefsResult = now - reliefCriteriaSinceMillis >= observationWindowMs
+          ? FermentationCriteria::Active : FermentationCriteria::Imprecise;
+    } else if (timingReliefCriteria) {
+      timingReliefCriteria = false;
+    }
+
+    // "Without reliefs" determination
+    // Samples are approximately one minute apart.
+    const float previousPressure = co2EvolutionCount > observationSamples
+        ? co2EvolutionHistory[(co2EvolutionStart + co2EvolutionCount - 1 - observationSamples) % CO2_EVOLUTION_HISTORY_SIZE].pressure
+        : NAN;
+    criteriaWithoutReliefs = pressure < SetPointData.setPointPressure && isfinite(previousPressure) && pressure > previousPressure+CO2PressurePerceptionThresholdForWindow;
+    dissolvedCO2LogData.previousPressure = previousPressure;
+
+    FermentationCriteria withoutReliefsResult = FermentationCriteria::Inactive;
+    if (criteriaWithoutReliefs) {
+      if (!timingCriteria) {
+        pressureCriteriaSinceMillis = now;
+        timingCriteria = true;
+      }
+      withoutReliefsResult = now - pressureCriteriaSinceMillis >= CO2_IMMEDIATE_PERCEPTION_DELAY_MS
+          ? FermentationCriteria::Active : FermentationCriteria::Imprecise;
+    } else {
+      timingCriteria = false;
+      if (pressure < SetPointData.setPointPressure && !isfinite(previousPressure)) {
+        withoutReliefsResult = FermentationCriteria::Imprecise;
+      }
+    }
+
+    if (withReliefsResult == FermentationCriteria::Active ||
+        withoutReliefsResult == FermentationCriteria::Active) {
+      result = FermentationCriteria::Active;
+    } else if (withReliefsResult == FermentationCriteria::Imprecise &&
+               withoutReliefsResult == FermentationCriteria::Imprecise) {
+      result = FermentationCriteria::Imprecise;
+    }
+
+    dissolvedCO2LogData.withReliefsState = fermentationCriteriaLabel(withReliefsResult);
+    dissolvedCO2LogData.withoutReliefsState = fermentationCriteriaLabel(withoutReliefsResult);
+    dissolvedCO2LogData.withReliefsElapsedMillis = timingReliefCriteria ? now - reliefCriteriaSinceMillis : 0;
+    dissolvedCO2LogData.withoutReliefsElapsedMillis = timingCriteria ? now - pressureCriteriaSinceMillis : 0;
+
+    // Report the timer of a criterion supporting the selected state.
+    if (timingReliefCriteria && withReliefsResult == result) {
+      co2ActiveFermentationCriteriaSinceMillis = reliefCriteriaSinceMillis;
+      co2FermentationConfirmationMs = observationWindowMs;
+    } else if (timingCriteria && withoutReliefsResult == result) {
+      co2ActiveFermentationCriteriaSinceMillis = pressureCriteriaSinceMillis;
+    } else {
+      co2ActiveFermentationCriteriaSinceMillis = 0;
+    }
+  }
+  return result;
+}
+
+static float expansionPressureThreshold() {
+  if (SetPointData.setPointPressure <= 0.0f ||
+      !isfinite(pressureDropFactor) || pressureDropFactor <= 0.0f) {
+    return ControlData.pressure;
+  }
+  return SetPointData.setPointPressure / sqrtf(pressureDropFactor);
+}
+
+static void updateCO2DissolvedEstimationMode() {
+  fermentationCriteria = hasActiveFermentationCriteria();
+  if (fermentationCriteria == FermentationCriteria::Inactive) {
+    co2DissolvedEstimationMode = CO2_DISSOLVED_HALF_LIFE;
+  } else if (fermentationCriteria == FermentationCriteria::Active) {
+    co2DissolvedEstimationMode = CO2_DISSOLVED_IMMEDIATE;
+  }
+}
+
+static unsigned long co2DissolvedCriteriaElapsedMillis(unsigned long now) {
+  if (co2ActiveFermentationCriteriaSinceMillis == 0) {
+    return 0;
+  }
+  return now - co2ActiveFermentationCriteriaSinceMillis;
+}
+
+static float dissolvedCO2CalculationPressure() {
+  return co2DissolvedEstimationMode == CO2_DISSOLVED_IMMEDIATE
+      ? expansionPressureThreshold()
+      : ControlData.pressure;
+}
+
+static const char *co2DissolvedEstimationModeLabel() {
+  return co2DissolvedEstimationMode == CO2_DISSOLVED_IMMEDIATE
+      ? "immediate"
+      : "half-life";
+}
+
+DissolvedCO2LogData getDissolvedCO2LogData() {
+  DissolvedCO2LogData data = dissolvedCO2LogData;
+  const unsigned long now = millis();
+  data.mode = co2DissolvedEstimationModeLabel();
+  data.criteriaState = fermentationCriteriaLabel(fermentationCriteria);
+  if (!data.withReliefsState) data.withReliefsState = "not evaluated";
+  if (!data.withoutReliefsState) data.withoutReliefsState = "not evaluated";
+  data.criteriaElapsedMillis = co2DissolvedCriteriaElapsedMillis(now);
+  data.confirmationMillis = co2FermentationConfirmationMs;
+  data.calculationPressure = dissolvedCO2CalculationPressure();
+  data.equilibriumMols = CO2DissolvedMols(data.calculationPressure, beerSG, ControlData.temperature, beerVolume);
+  data.reliefIntervalSeconds = NAN;
+  data.sinceLastReliefSeconds = NAN;
+  if (reliefMillisCount > 0) {
+    const uint8_t last = (reliefMillisIndex + RELIEFS_WINDOW_SIZE - 1) % RELIEFS_WINDOW_SIZE;
+    data.sinceLastReliefSeconds = (now - reliefMillisWindow[last]) / 1000.0f;
+    if (reliefMillisCount >= 2) {
+      const uint8_t previous = (last + RELIEFS_WINDOW_SIZE - 1) % RELIEFS_WINDOW_SIZE;
+      data.reliefIntervalSeconds = (reliefMillisWindow[last] - reliefMillisWindow[previous]) / 1000.0f;
+    }
+  }
+  return data;
+}
+
 static void recomputeDissolvedCO2MolsFromCurrentState() {
     static unsigned long lastUpdateMillis = 0;
-
 
     const unsigned long now = millis();
 
@@ -287,6 +478,16 @@ static void recomputeDissolvedCO2MolsFromCurrentState() {
       return;
     }
 
+    const float calculationPressure = dissolvedCO2CalculationPressure();
+    const double equilibriumMols = CO2DissolvedMols(
+        calculationPressure, beerSG, ControlData.temperature, beerVolume);
+
+    if (co2DissolvedEstimationMode == CO2_DISSOLVED_IMMEDIATE) {
+      CountersData.CO2InSolution = equilibriumMols;
+      lastUpdateMillis = now;
+      return;
+    }
+
     if (!MILLISDIFF(lastUpdateMillis, 30000UL)) 
       return;
 
@@ -297,16 +498,7 @@ static void recomputeDissolvedCO2MolsFromCurrentState() {
 
     lastUpdateMillis = now;
 
-    const bool activeFermentation =
-      SetPointData.mode == MODE_FERMENTING &&
-      reliefsPerHourAvailable &&
-      reliefsPerHourValue > 1.0f;
-
-    const double t50Seconds = activeFermentation
-      ? 300.0
-      : double(FMTData.co2TransferTime) * 3600.0;
-
-    const double equilibriumMols = CO2DissolvedMols(ControlData.pressure,beerSG,ControlData.temperature,beerVolume);
+    const double t50Seconds = double(FMTData.co2TransferTime) * 3600.0;
 
     if (t50Seconds > 0.0) {
         const double alpha =
@@ -365,7 +557,7 @@ static void recomputeBeerCO2EvolutionFromCurrentState() {
   }
 
   const uint16_t index = (co2EvolutionStart + co2EvolutionCount) % CO2_EVOLUTION_HISTORY_SIZE;
-  co2EvolutionHistory[index] = {now, totalMols};
+  co2EvolutionHistory[index] = {now, totalMols, ControlData.pressure};
   ++co2EvolutionCount;
 
   if (co2EvolutionCount < 5) {
@@ -1105,45 +1297,41 @@ void processPressure(bool afterRelief) {
   }
 
   if (afterRelief) {
-    const float dissolvedCO2MolsAtEquilibrium =
-        CO2DissolvedMols(ControlData.pressure, beerSG, ControlData.temperature, beerVolume);
     const double totalCO2Mols = CountersData.totalMolsEjected +
                                 CountersData.CO2InSolution + headSpaceCO2Mols;
-    ReliefLogData reliefLog = {
-      (int)FMTData.PovotoNum,
-      reliefValveOpenedMillis,
-      reliefPressureReachedTargetMillis,
-      pressureAfterReliefMillis,
-      volumeDeterminationActive,
-      ControlData.temperature,
-      SetPointData.setPointPressure,
-      Patm,
-      FMTData.FMTReliefVolume,
-      FMTData.FMTEffectiveVentingExponent,
-      pressureOnReliefMeas,
-      currentOnReliefMeasured,
-      reliefPressureReachedTarget,
-      pressureOnReliefExtrap,
-      pressureAfterRelief,
-      currentReading,
-      adjustedPressureAfterRelief,
-      instantPressureDropFactor,
-      pressureDropFactor,
-      CountersData.headSpaceVolume,
-      beerVolume,
-      ejectedMols,
-      CountersData.totalMolsEjected,
-      headSpaceCO2Mols,
-      CountersData.CO2InSolution,
-      dissolvedCO2MolsAtEquilibrium,
-      totalCO2Mols,
-      beerSG,
-      SGToRealPlato(beerSG),
-      beerABV,
-      CountersData.totalReliefCount,
-      reliefsPerHourValue,
-      beerCO2EvolutionGramsPerLiterPerDay
-    };
+    ReliefLogData reliefLog = {};
+    reliefLog.povotoNumber = (int)FMTData.PovotoNum;
+    reliefLog.valveOpenedMillis = reliefValveOpenedMillis;
+    reliefLog.pressureReachedTargetMillis = reliefPressureReachedTargetMillis;
+    reliefLog.pressureAfterReliefMillis = pressureAfterReliefMillis;
+    reliefLog.volumeDeterminationActive = volumeDeterminationActive;
+    reliefLog.temperature = ControlData.temperature;
+    reliefLog.targetPressure = SetPointData.setPointPressure;
+    reliefLog.atmosphericPressure = Patm;
+    reliefLog.reliefVolume = FMTData.FMTReliefVolume;
+    reliefLog.effectiveVentingExponent = FMTData.FMTEffectiveVentingExponent;
+    reliefLog.pressureOnReliefMeasured = pressureOnReliefMeas;
+    reliefLog.currentOnReliefMeasured = currentOnReliefMeasured;
+    reliefLog.pressureReachedTarget = reliefPressureReachedTarget;
+    reliefLog.pressureOnReliefExtrapolated = pressureOnReliefExtrap;
+    reliefLog.pressureAfterRelief = pressureAfterRelief;
+    reliefLog.currentAfterRelief = currentReading;
+    reliefLog.adjustedPressureAfterRelief = adjustedPressureAfterRelief;
+    reliefLog.instantaneousPressureDropFactor = instantPressureDropFactor;
+    reliefLog.pressureDropFactor = pressureDropFactor;
+    reliefLog.headSpaceVolume = CountersData.headSpaceVolume;
+    reliefLog.beerVolume = beerVolume;
+    reliefLog.ejectedMols = ejectedMols;
+    reliefLog.totalMolsEjected = CountersData.totalMolsEjected;
+    reliefLog.headSpaceCO2Mols = headSpaceCO2Mols;
+    reliefLog.dissolvedCO2Mols = CountersData.CO2InSolution;
+    reliefLog.totalCO2Mols = totalCO2Mols;
+    reliefLog.beerSG = beerSG;
+    reliefLog.beerRealPlato = SGToRealPlato(beerSG);
+    reliefLog.beerABV = beerABV;
+    reliefLog.totalReliefCount = CountersData.totalReliefCount;
+    reliefLog.reliefsPerHour = reliefsPerHourValue;
+    reliefLog.beerCO2EvolutionGramsPerLiterPerDay = beerCO2EvolutionGramsPerLiterPerDay;
     doReliefDataLog(reliefLog);
   }
 }
@@ -1666,6 +1854,7 @@ void pressureControl() {
 
   readPressure();
   processSlowPressureTarget();
+  updateCO2DissolvedEstimationMode();
 
   if (SetPointData.mode != MODE_OFF &&
       !volumeDeterminationActive &&
@@ -1742,9 +1931,11 @@ char *getPressureControlStatus(char *st) {
 
   snprintf(tmp, sizeof(tmp), "<br>---------PRESSURE CONTROL:<br>");
     strnncat(st, tmp, 2048);
-  if (pressureSensorConnected) {
+  if (1 || pressureSensorConnected) {
+    const unsigned long now = millis();
+    const float co2CalculationPressure = dissolvedCO2CalculationPressure();
     const float equilibriumCO2Mols = CO2DissolvedMols(
-      ControlData.pressure, beerSG, ControlData.temperature, beerVolume);
+      co2CalculationPressure, beerSG, ControlData.temperature, beerVolume);
     const double totalCO2Mols = CountersData.totalMolsEjected
       + CountersData.CO2InSolution + headSpaceCO2Mols;
 
@@ -1755,6 +1946,17 @@ char *getPressureControlStatus(char *st) {
     snprintf(tmp, sizeof(tmp),
              "INA: Filtered current reading: %.2f mA Shunt voltage: %.2f mV Momentary current: %.2f mA<br>",
              currentReading, ina219.getShuntVoltage_mV(), readCurrentFromINA219mA());
+    strnncat(st, tmp, 2048);
+
+    const unsigned long criteriaElapsedMs = co2DissolvedCriteriaElapsedMillis(now);
+    snprintf(tmp, sizeof(tmp),
+             "CO2 dissolved estimation: %s; active-fermentation criteria: %s for %.1f / %.1f s; calculation pressure: %.3f bar<br>",
+             co2DissolvedEstimationModeLabel(),
+             fermentationCriteria == FermentationCriteria::Active ? "met" :
+                 fermentationCriteria == FermentationCriteria::Imprecise ? "imprecise" : "not met",
+             criteriaElapsedMs / 1000.0f,
+             co2FermentationConfirmationMs / 1000.0f,
+             co2CalculationPressure);
     strnncat(st, tmp, 2048);
 
     strnncat(st, "-------------------------------------------------------------------------------------------<br>", 2048);
@@ -1827,8 +2029,6 @@ char *getPressureControlStatus(char *st) {
 
 
 /*Implementar redução por purga
-Implementar transferência de massa
-Rever modelo de controle de resfriamento / aquecimento
 Implementar tasks de adição de volume o de intercenção em gás
 implementar conditioning
 quando reiniciou perdeu contador de co2 ejetado

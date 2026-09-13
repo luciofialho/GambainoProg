@@ -8,17 +8,20 @@
 
 byte taskWindowType = 0;
 unsigned long taskWindowEndTime = 0;
+unsigned long lastTaskMillis = 0;
 static float dumpStartPressureBar = 0.0f;
 static float dumpStartHeadspaceL = 0.0f;
 
 static void startTask(byte type) {
+  lastTaskMillis = millis();
   taskWindowType = type;
-  taskWindowEndTime = millis() + (unsigned long)TASK_TIMEOUT_MIN * 60000UL;
+  taskWindowEndTime = lastTaskMillis + (unsigned long)TASK_TIMEOUT_MIN * 60000UL;
 }
 
 static void endTask(unsigned long restWindowMinutes) {
+  lastTaskMillis = millis();
   if (restWindowMinutes)
-    taskWindowEndTime = millis() + restWindowMinutes * 60000UL;
+    taskWindowEndTime = lastTaskMillis + restWindowMinutes * 60000UL;
   else {
     taskWindowType = 0;
     taskWindowEndTime = 0;
@@ -65,7 +68,7 @@ void checkTaskExpiration() {
       case 3: endLiquidTask(); break;
       case 4: endDryHoppingTask(); break;
       case 5: endDynamicHoppingTask(); break;
-      default: taskWindowType = 0; taskWindowEndTime = 0; break;
+      default: endTask(0); break;
     }
   }
 }
@@ -196,13 +199,12 @@ void handleTaskFinish(AsyncWebServerRequest *request) {
     case 3: endLiquidTask();        break;
     case 4: endDryHoppingTask();    break;
     case 5: endDynamicHoppingTask();break;
-    default: taskWindowType = 0; taskWindowEndTime = 0; break;
+    default: endTask(0); break;
   }
   request->redirect("/");
 }
 
 void handleTaskCancel(AsyncWebServerRequest *request) {
-  taskWindowType = 0;
-  taskWindowEndTime = 0;
+  endTask(0);
   request->redirect("/");
 }
