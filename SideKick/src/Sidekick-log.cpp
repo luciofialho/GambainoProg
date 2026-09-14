@@ -224,7 +224,18 @@ void sendLogToGoogleSheets() {
       if (writeOk && idx + 1 < googleBatchCount) writeOk = writeGoogleString(client, ",");
     }
     if (writeOk) writeOk = writeGoogleString(client, wrapper2);
-    sent = writeOk && readGoogleSuccess(client);
+
+    // Apps Script can execute the request and close the connection before
+    // the ESP32 gets its status line. Retrying that fully written POST adds
+    // the same rows again. Once every byte has been accepted by the socket,
+    // use at-most-once delivery for Google Sheets; a missing reply is kept
+    // as a diagnostic only.
+    if (writeOk) {
+      sent = true;
+      if (!readGoogleSuccess(client)) {
+        Serial.println("Google Sheets reply unavailable after POST; batch released to avoid duplicate rows");
+      }
+    }
   }
   client.stop();
   if (sent) {

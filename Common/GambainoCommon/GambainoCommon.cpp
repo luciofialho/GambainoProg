@@ -436,20 +436,25 @@ void setupWiFi() {
   ESPSetup(NUMSSID,SSIDs,pwds);
 }
 
+void updateDebugModeFromWiFi() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  debugging = WiFi.localIP() != IPAddress(192,168,29,178) &&
+              WiFi.localIP() != IPAddress(192,168,29,181) &&
+              WiFi.localIP() != IPAddress(192,168,29,182);
+  if (debugging) {
+    Serial.println("Entering development mode");
+    strcpy(datalogFolderNameInUse, "GambainoDebug");
+  }
+  else {
+    Serial.println("Entering operational mode");
+    strcpy(datalogFolderNameInUse, "Beers");
+  }
+  peerUpdateOwnAddress();  // update peer slot with real IP now that WiFi is up
+}
+
 void checkDebugMode() {
   if (wifiHasJustConnected()) {
-    debugging = WiFi.localIP() != IPAddress(192,168,29,178) && 
-                WiFi.localIP() != IPAddress(192,168,29,181) &&
-                WiFi.localIP() != IPAddress(192,168,29,182);
-    if (debugging) {
-      Serial.println("Entering development mode");
-      strcpy(datalogFolderNameInUse, "GambainoDebug");
-    }
-    else {
-      Serial.println("Entering operational mode");
-      strcpy(datalogFolderNameInUse, "Beers");
-    }
-    peerUpdateOwnAddress();  // update peer slot with real IP now that WiFi is up
+    updateDebugModeFromWiFi();
   }
 }
 

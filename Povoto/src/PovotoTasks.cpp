@@ -11,14 +11,19 @@ unsigned long taskWindowEndTime = 0;
 unsigned long lastTaskMillis = 0;
 static float dumpStartPressureBar = 0.0f;
 static float dumpStartHeadspaceL = 0.0f;
+static bool taskRestWindowActive = false;
 
 static void startTask(byte type) {
+  taskRestWindowActive = false;
   lastTaskMillis = millis();
   taskWindowType = type;
   taskWindowEndTime = lastTaskMillis + (unsigned long)TASK_TIMEOUT_MIN * 60000UL;
 }
 
 static void endTask(unsigned long restWindowMinutes) {
+  // Finishing again during nucleation must not extend its deadline.
+  if (restWindowMinutes && taskRestWindowActive) return;
+  taskRestWindowActive = restWindowMinutes != 0;
   lastTaskMillis = millis();
   if (restWindowMinutes)
     taskWindowEndTime = lastTaskMillis + restWindowMinutes * 60000UL;
@@ -62,6 +67,10 @@ void endDynamicHoppingTask() {
 
 void checkTaskExpiration() {
   if (taskWindowType != 0 && taskWindowEndTime != 0 && MILLISDIFF(taskWindowEndTime,0)) {
+    if (taskRestWindowActive) {
+      endTask(0);
+      return;
+    }
     switch (taskWindowType) {
       case 1: endDumpTask(); break;
       case 2: endGasTask(); break;

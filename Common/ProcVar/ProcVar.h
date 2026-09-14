@@ -253,35 +253,47 @@ class ProcVar {
 inline bool operator ==  (ProcVar p, float d)    {return (float)p == d;};
 inline bool operator ==  (ProcVar p, double d)   {return (float)p == (float)d;};
 inline bool operator ==  (ProcVar p, int    i)   {return (float)p == i;};
+inline bool operator ==  (ProcVar p, unsigned long int i) {return (float)p == i;};
 inline bool operator ==  (float   d, ProcVar p)  {return (float)p == d;};
 inline bool operator ==  (double  d, ProcVar p)  {return (float)p == (float)d;};
 inline bool operator ==  (int     i, ProcVar p)  {return (float)p == i;};
+inline bool operator ==  (unsigned long int i, ProcVar p) {return i == (float)p;};
 inline bool operator !=  (ProcVar p, float d)    {return (float)p != d;};
 inline bool operator !=  (ProcVar p, double d)   {return (float)p != (float)d;};
 inline bool operator !=  (ProcVar p, int    i)   {return (float)p != i;};
+inline bool operator !=  (ProcVar p, unsigned long int i) {return (float)p != i;};
 inline bool operator !=  (float   d, ProcVar p)  {return (float)p != d;};
 inline bool operator !=  (double  d, ProcVar p)  {return (float)p != (float)d;};
 inline bool operator !=  (int     i, ProcVar p)  {return (float)p != i;};
+inline bool operator !=  (unsigned long int i, ProcVar p) {return i != (float)p;};
 inline bool operator >   (ProcVar p, float d)    {return (float)p > d;};
 inline bool operator >   (ProcVar p, double d)   {return (float)p > d;};
 inline bool operator >   (ProcVar p, int    i)   {return (float)p > i;};
 inline bool operator >   (ProcVar p, long int i) {return (float)p > i;};
+inline bool operator >   (ProcVar p, unsigned long int i) {return (float)p > i;};
 inline bool operator >   (ProcVar p, ProcVar q)  {return (float)p > float(q);};
+inline bool operator >   (unsigned long int i, ProcVar p) {return i > (float)p;};
 inline bool operator >=  (ProcVar p, float d)    {return (float)p >= d;};
 inline bool operator >=  (ProcVar p, double d)   {return (float)p >= d;};
 inline bool operator >=  (ProcVar p, int    i)   {return (float)p >= i;};
 inline bool operator >=  (ProcVar p, long int i) {return (float)p >= i;};
+inline bool operator >=  (ProcVar p, unsigned long int i) {return (float)p >= i;};
 inline bool operator >=  (ProcVar p, ProcVar q)  {return (float)p >= float(q);};
+inline bool operator >=  (unsigned long int i, ProcVar p) {return i >= (float)p;};
 inline bool operator <   (ProcVar p, float d)    {return (float)p < d;};
 inline bool operator <   (ProcVar p, double d)   {return (float)p < d;};
 inline bool operator <   (ProcVar p, int    i)   {return (float)p < i;};
 inline bool operator <   (ProcVar p, long int i) {return (float)p < i;};
+inline bool operator <   (ProcVar p, unsigned long int i) {return (float)p < i;};
 inline bool operator <   (ProcVar p, ProcVar q)  {return (float)p < float(q);};
+inline bool operator <   (unsigned long int i, ProcVar p) {return i < (float)p;};
 inline bool operator <=  (ProcVar p, float d)    {return (float)p <= d;};
 inline bool operator <=  (ProcVar p, double d)   {return (float)p <= d;};
 inline bool operator <=  (ProcVar p, int    i)   {return (float)p <= i;};
 inline bool operator <=  (ProcVar p, long int i) {return (float)p <= i;};
+inline bool operator <=  (ProcVar p, unsigned long int i) {return (float)p <= i;};
 inline bool operator <=  (ProcVar p, ProcVar q)  {return (float)p <= float(q);};
+inline bool operator <=  (unsigned long int i, ProcVar p) {return i <= (float)p;};
 
 inline float operator + (ProcVar p, float d)   {return (float)p+d;};
 inline float operator + (ProcVar p, double d)  {return (float)p+d;};
@@ -312,6 +324,7 @@ inline float operator * (ProcVar q, ProcVar p) {return (float)p*(float)q;};
 inline float operator * (ProcVar p, float d)   {return (float)p*d;};
 inline float operator * (ProcVar p, double d)  {return (float)p*d;};
 inline float operator * (ProcVar p, int    d)  {return (float)p*d;};
+inline float operator * (ProcVar p, unsigned long int    d)  {return (float)p*d;};
 inline float operator * (ProcVar p, long   d)  {return (float)p*d;};
 inline float operator / (ProcVar p, float d)   {return (float)p/d;};
 inline float operator / (ProcVar p, double d)  {return (float)p/d;};
@@ -323,4 +336,4 @@ inline float operator / (int    d, ProcVar p)  {return d/(float)p;};
 
 
 
-#endif        
+#endif

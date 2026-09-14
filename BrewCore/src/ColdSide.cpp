@@ -12,7 +12,10 @@
 void coldSideControl() {
     if (ColdBankTemp != NOTaTEMP && ColdBankTargetTemp != NOTaTEMP && MILLISDIFF(0,120000L) && !ColdBankValve.asBoolean() && Status != STANDBY) {
       ColdBankControl.setBooleanFromOffset(ColdBankTargetTemp,ColdBankTemp,COLDSIDEOFFSET,'-');
-      ColdBankPump = ColdBankControl;
+      if (ColdBankTemp < 7) /* constante */
+        ColdBankPump = ColdBankControl;
+      else
+        ColdBankPump = OFF;
     }
     else {
       ColdBankControl = OFF;

@@ -310,6 +310,7 @@ void setup() {
 }
 
 void loop() {
+  ElegantOTA.loop(); // required to actually reboot after a successful update
   povotoWiFiProcess();
   checkTaskExpiration();
   updateTaskUIIfActive();
@@ -409,3 +410,21 @@ Calculo de vbolume do headspace está sensível a pressão ou a temperatura. vol
 o task de dump está jogando o volume lá para cima
 
 */
+
+/* Pendencias da revisao de logica e memoria (itens ainda nao corrigidos):
+ * 2. PressureControl.cpp: o callback de pressure_history.csv pode ler
+ *    pressureReliefHistory enquanto o loop libera esse buffer ao sair de OFF.
+ *    Garantir a vida util do historico durante toda a exportacao.
+ * 3. PressureControl.cpp: downloads interrompidos podem deixar
+ *    pressureDumpInProgress/pressureHistoryExportInProgress ativos, bloqueando
+ *    novos downloads e, no dump, a coleta. Limpar o estado na desconexao.
+ * 4. PressureControl.cpp: concluir pressure_dump.csv apaga pressureSamples
+ *    mesmo durante a determinacao de volume, impedindo novas amostras nessa
+ *    rodada. Separar a exportacao da liberacao do buffer ainda em uso.
+ * 6. SideKick/src/Sidekick-log.cpp: erro HTTP permanente no Brewfather retém
+ *    o mesmo payload indefinidamente, bloqueando os seguintes e enchendo a
+ *    fila. Distinguir erros permanentes de falhas que justificam nova tentativa.
+ * 7. SideKick/src/Sidekick-log.cpp: o envio ao Google libera o lote apos escrever
+ *    o POST mesmo com resposta HTTP 429/500. Distinguir rejeicao HTTP explicita
+ *    de resposta ausente e registrar o codigo real no diagnostico.
+ */

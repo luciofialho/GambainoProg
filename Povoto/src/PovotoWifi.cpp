@@ -7,6 +7,7 @@
 #include <qrcode.h>
 
 #include "IOTK_ESPAsyncServer.h"
+#include "GambainoCommon.h"
 #include "PovotoCommon.h"
 #include "displayUtils.h"
 
@@ -204,6 +205,7 @@ void povotoWiFiProcess() {
     wifiState = WiFiState::Connected;
     stationConnectAttemptCount = 0;
     screenDirty = true;
+    updateDebugModeFromWiFi();
     Serial.printf("WiFi: connected to '%s', IP %s\n", WiFi.SSID().c_str(),
                   WiFi.localIP().toString().c_str());
   }

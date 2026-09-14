@@ -175,7 +175,7 @@ void doDataLog() {
     lastBatchNum = batchNum;
     headerWritten = false;
   }
-  char batchStr[4];
+  char batchStr[6]; // All uint16_t batch numbers plus the terminator.
   snprintf(batchStr, sizeof(batchStr), "%03d", batchNum);
 
   if (!headerWritten) {
@@ -288,13 +288,30 @@ void doReliefDataLog(const ReliefLogData &data) {
 
   static bool headerWritten = false;
   static int lastBatchNum = -1;
+  // A relief is identified by the instant at which its valve was opened.
+  // processPressure(true) is expected to run once, but retaining this small
+  // guard prevents a repeated scheduling event from producing a second row.
+  static bool lastReliefLogged = false;
+  static int lastReliefBatchNum = -1;
+  static unsigned long lastReliefValveOpenedMillis = 0;
   const int batchNum = (int)BatchData.batchNumber;
+
+  if (lastReliefLogged &&
+      lastReliefBatchNum == batchNum &&
+      lastReliefValveOpenedMillis == data.valveOpenedMillis) {
+    return;
+  }
+
+  lastReliefLogged = true;
+  lastReliefBatchNum = batchNum;
+  lastReliefValveOpenedMillis = data.valveOpenedMillis;
+
   if (batchNum != lastBatchNum) {
     lastBatchNum = batchNum;
     headerWritten = false;
   }
 
-  char batchStr[4];
+  char batchStr[6]; // All uint16_t batch numbers plus the terminator.
   snprintf(batchStr, sizeof(batchStr), "%03d", batchNum);
 
   if (!headerWritten) {
