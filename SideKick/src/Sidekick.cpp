@@ -9,6 +9,9 @@
 #include "IOTK.h"
 #include <RCSwitch.h>
 #include <esp_now.h>
+#include <atomic>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
 
 // Task handle para envio de logs
 TaskHandle_t logSendTaskHandle = NULL;
@@ -77,8 +80,7 @@ char serial2Buffer[MAXPACKETSIZE+1];  // Buffer global para recepção Serial2
 
 // ===== ESP-NOW receive queue (callback → loop) =====
 // The ESP-NOW callback runs on Core 0; loop() runs on Core 1.
-// We use a simple lock-free ring buffer so the callback only copies bytes
-// and the main loop does all processing safely.
+// A FreeRTOS queue publishes complete frames across cores without waiting.
 #define ESPNOW_QUEUE_SLOTS  16
 #define ESPNOW_MAX_FRAME   250
 struct EspNowFrame {
@@ -86,10 +88,10 @@ struct EspNowFrame {
   int     len;
   uint8_t senderMac[6];
 };
-static EspNowFrame        espnowQueue[ESPNOW_QUEUE_SLOTS];
-static volatile int       espnowQHead = 0;  // written by callback (Core 0)
-static volatile int       espnowQTail = 0;  // read    by loop()  (Core 1)
-static volatile uint32_t  espnowQueueDrops = 0;
+static EspNowFrame espnowQueueStorage[ESPNOW_QUEUE_SLOTS];
+static StaticQueue_t espnowQueueControl;
+static QueueHandle_t espnowQueue = nullptr;
+static std::atomic<unsigned long> espnowQueueDrops{0};
 
 static volatile bool reconnectNetworkRequested = false;
 static volatile unsigned long resetBrewCoreUntil = 0;
@@ -113,7 +115,7 @@ static void handlePacket(char type, const char *payload) {
       if (length == 0) break;
       char last = payload[length - 1];
       if (last == '}' || last == ',') {
-        cashLogRequest((char*)payload);
+        cashLogRequest(payload);
       } else {
         Serial.println("Invalid log packet received - missing closing brace");
       }
@@ -124,7 +126,7 @@ static void handlePacket(char type, const char *payload) {
       if (length == 0) break;
       char last = payload[length - 1];
       if (last == '}') {
-        cashBrewfatherLogRequest((char*)payload);
+        cashBrewfatherLogRequest(payload);
       } else {
         Serial.println("Invalid Brewfather packet received - missing closing brace");
       }
@@ -149,9 +151,6 @@ static void handlePacket(char type, const char *payload) {
 
 // Wrapper called from loop with senderMac context
 static void handlePacketWithMac(char type, const char *payload, const uint8_t *senderMac) {
-  Serial.printf("[ESP-NOW] type='%c'(0x%02X) len=%d from ...%02X:%02X\n",
-    (type >= 32 ? type : '?'), (uint8_t)type, (int)strlen(payload),
-    senderMac[4], senderMac[5]);
   if (type == PEERBROADCASTPACKET || type == PEERREPLYPACKET) {
     handlePeerEspNow(type, payload, senderMac);
   } else {
@@ -160,17 +159,15 @@ static void handlePacketWithMac(char type, const char *payload, const uint8_t *s
 }
 
 static void onEspNowRecv(const uint8_t *mac, const uint8_t *data, int len) {
-  int next = (espnowQHead + 1) % ESPNOW_QUEUE_SLOTS;
-  if (next == espnowQTail) {
-    espnowQueueDrops++;
+  if (!espnowQueue || !data || len <= 0 || len > ESPNOW_MAX_FRAME) {
+    ++espnowQueueDrops;
     return;
   }
-  if (len > ESPNOW_MAX_FRAME) len = ESPNOW_MAX_FRAME;
-  memcpy(espnowQueue[espnowQHead].data, data, len);
-  espnowQueue[espnowQHead].len = len;
-  if (mac) memcpy(espnowQueue[espnowQHead].senderMac, mac, 6);
-  else     memset(espnowQueue[espnowQHead].senderMac, 0, 6);
-  espnowQHead = next;  // publish slot (32-bit write is atomic on Xtensa)
+  EspNowFrame frame = {};
+  memcpy(frame.data, data, len);
+  frame.len = len;
+  if (mac) memcpy(frame.senderMac, mac, sizeof(frame.senderMac));
+  if (xQueueSend(espnowQueue, &frame, 0) != pdTRUE) ++espnowQueueDrops;
 }
 
 // ================== TASK DE ENVIO DE LOGS ====
@@ -223,7 +220,7 @@ char *getSideKickStatus(char *st) {
            (unsigned long)espResets);
   strcat(st, buf2);
   snprintf(buf2, sizeof(buf2), "ESP-NOW queue drops: %lu<br>",
-           (unsigned long)espnowQueueDrops);
+           espnowQueueDrops.load());
   strcat(st, buf2);
 
   getPeerStatus(st, MAXSTATUSLEN);
@@ -236,6 +233,13 @@ void setup() {
   strcpy(ESP_AppName, "Gambaino - SideKick");  
   Serial.begin(115200);
   delay(500);
+
+  // Initialize all storage before web callbacks, LogSend or ESP-NOW can run.
+  const bool logQueuesReady = initLogQueues();
+  if (!logQueuesReady) Serial.println("[LOG] Could not initialize log queues");
+  espnowQueue = xQueueCreateStatic(ESPNOW_QUEUE_SLOTS, sizeof(EspNowFrame),
+      reinterpret_cast<uint8_t *>(espnowQueueStorage), &espnowQueueControl);
+  if (!espnowQueue) Serial.println("[ESP-NOW] Could not initialize receive queue");
 
   // WiFi Setup
   setupWiFi();
@@ -253,7 +257,7 @@ void setup() {
   digitalWrite(RESETBREWCOREPIN, LOW); 
 
 
-  BaseType_t taskCreated = xTaskCreatePinnedToCore(
+  BaseType_t taskCreated = logQueuesReady ? xTaskCreatePinnedToCore(
     logSendTask,           // Função da task
     "LogSend",             // Nome da task (para debug)
     8192,                  // Stack size in bytes
@@ -261,7 +265,7 @@ void setup() {
     1,                     // Prioridade (1 = baixa)
     &logSendTaskHandle,    // Handle da task
     1                      // Core 1 – TLS handshake é CPU-intensivo; Core 0 fica livre para IDLE/WiFi stack
-  );
+  ) : pdFAIL;
   if (taskCreated == pdPASS) {
     Serial.println("Log send task created on core 1");
   } else {
@@ -294,7 +298,7 @@ void setup() {
   Serial2.setTimeout(5);
   Serial2.begin(SERIAL2_SPEED, SERIAL_8N1, SERIAL2_RX, SERIAL2_TX);
 
-  if (esp_now_init() == ESP_OK) {
+  if (espnowQueue && esp_now_init() == ESP_OK) {
     esp_now_register_recv_cb(onEspNowRecv);
     Serial.println("ESP-NOW receiver initialized");
   } else {
@@ -326,23 +330,21 @@ void loop() {
     // MAXPACKETSIZE frame before its 100 ms assembly timeout.
     for (int pass = 0; pass < 20 && Serial2.available(); pass++) {
       if (char type = readSerial2(serial2Buffer, sizeof(serial2Buffer))) {
-        Serial.printf("[Serial2] type='%c'(0x%02X) len=%d\n",
-          (type >= 32 ? type : '?'), (uint8_t)type, (int)strlen(serial2Buffer));
         handlePacket(type, serial2Buffer);
       }
     }
   }
 
-  // reads espnow
-  while (espnowQTail != espnowQHead) {
-    EspNowFrame &frame = espnowQueue[espnowQTail];
+  // Bound each drain so continuous ESP-NOW traffic cannot starve Serial2.
+  EspNowFrame frame;
+  for (int pass = 0; espnowQueue && pass < ESPNOW_QUEUE_SLOTS &&
+       xQueueReceive(espnowQueue, &frame, 0) == pdTRUE; ++pass) {
     // Store sender MAC in a static so the non-capturing lambda can access it
     static uint8_t espnowCurrentSenderMac_[6];
     memcpy(espnowCurrentSenderMac_, frame.senderMac, 6);
     processEspNowData(frame.data, frame.len, frame.senderMac, [](char type, const char *payload) {
       handlePacketWithMac(type, payload, espnowCurrentSenderMac_);
     });
-    espnowQTail = (espnowQTail + 1) % ESPNOW_QUEUE_SLOTS;
   }
 
 
