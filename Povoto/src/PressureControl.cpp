@@ -33,7 +33,15 @@
 #define PRESSURE_RELIEF_HISTORY_MAX 500
 #define VOLUME_DETERMINATION_RECORD_START_CYCLE 6
 #define VOLUME_DETERMINATION_RECORD_END_CYCLE 35
-#define VOLUME_DETERMINATION_CYCLE_INTERVAL_MS (5L*60000UL / DEBUGACCELERATION)
+#define VOLUME_DETERMINATION_OPEN_MS (3L*60000UL / DEBUGACCELERATION)
+#define VOLUME_DETERMINATION_WAIT_MS (4L*60000UL / DEBUGACCELERATION)
+static constexpr unsigned VOLUME_MIN_VALID_RELIEFS = 10;
+static constexpr unsigned VOLUME_CONVERGENCE_WINDOW = 5;
+static constexpr float VOLUME_MAX_FIT_SPREAD = 0.005f;
+static constexpr float VOLUME_MAX_METHOD_DIFFERENCE_PERCENT = 1.0f;
+static constexpr unsigned VOLUME_RECENT_FIT_WINDOW = 10;
+static constexpr float VOLUME_MAX_TREND_PERCENT_PER_CYCLE = 0.05f;
+static constexpr float VOLUME_MAX_RECENT_DIFFERENCE_PERCENT = 0.5f;
 #define RELIEFS_WINDOW_SIZE 2
 #define RELIEF_OVERDUE_FACTOR 1.20f
 #define RELIEF_PER_HOUR_MIN_DISPLAY 0.20f
@@ -162,7 +170,14 @@ struct PressureReliefRecord {
   uint16_t nReliefs;
   float factorMedio;
   float fermenterVolume;
+  float fittedVolume;
+  float volumeDifferencePercent;
+  float recentFittedVolume;
+  float recentDifferencePercent;
+  float trendPercentPerCycle;
+  bool converged;
   bool volumeMetricsValid;
+  bool pressureSettled;
 };
 
 static PressureReliefRecord *pressureReliefHistory = nullptr;
@@ -175,17 +190,39 @@ float pressureDropFactor = 0.99f;
 static bool volumeDeterminationActive = false;
 static bool speedCalibrationActive = false;
 static bool speedCalibrationVenting = false;
-static const uint8_t speedDurations[] = {1, 2, 4, 6, 8, 10, 12, 14, 16};
+static const uint8_t speedDurations[] = {1, 2, 4, 6, 8, 10, 12, 14, 16, 30};
+static constexpr uint8_t SPEED_VENTING_DURATION_COUNT = 5;  // 1 through 8 seconds.
+static constexpr uint8_t SPEED_EXPANSION_DURATION_COUNT = sizeof(speedDurations) / sizeof(speedDurations[0]);
+static constexpr uint8_t SPEED_CYCLES_PER_DURATION = 5;
+static constexpr uint8_t SPEED_MAX_RECORDS = SPEED_EXPANSION_DURATION_COUNT * SPEED_CYCLES_PER_DURATION;
 struct SpeedRecord { float p1, p2, pl, r; };
-static SpeedRecord speedRecords[2][45];
+static SpeedRecord speedRecords[2][SPEED_MAX_RECORDS];
 static uint8_t speedRecordCount[2] = {0, 0};
 static uint8_t speedStage = 0; // 0: open, 1: close, 2: settle/read
 static unsigned long speedStageMillis = 0;
 static float speedVolumeFactor = 0.0f;
+static float speedOpenTimeFactor[2] = {1.0f, 1.0f};
 static unsigned long speedSettlingIntervalMs() {
   return debugging ? 10000UL : 180000UL;
 }
 static const char *speedStatus = "Idle";
+
+static uint8_t speedDurationCount(bool venting) {
+  return venting ? SPEED_VENTING_DURATION_COUNT : SPEED_EXPANSION_DURATION_COUNT;
+}
+
+static uint8_t speedRecordTarget(bool venting) {
+  return speedDurationCount(venting) * SPEED_CYCLES_PER_DURATION;
+}
+
+static uint8_t speedRequestedSeconds(uint8_t recordIndex, bool venting) {
+  return speedDurations[recordIndex % speedDurationCount(venting)];
+}
+
+static unsigned long speedOpenDurationMs(uint8_t recordIndex, bool venting) {
+  return (unsigned long)(speedRequestedSeconds(recordIndex, venting) * 1000.0f *
+                         speedOpenTimeFactor[venting ? 1 : 0] + 0.5f);
+}
 static float volumeStartPressure = 0.0f;
 static float volumeStartTemperatureK = 0.0f;
 static uint16_t volumeStartReliefIteration = 0;
@@ -204,6 +241,48 @@ static float volumeSummaryFactor = 0.0f;
 static float volumeSummaryFermenterVolume = 0.0f;
 static float volumeCalculatedSoFar = 0.0f;
 static bool volumeCalculatedSoFarValid = false;
+static float volumeFittedSoFar = NAN;
+static bool volumeConverged = false;
+static bool volumePressureSettled = false;
+
+static bool volumeHasConverged() {
+  if (!pressureReliefHistory || pressureReliefCount < VOLUME_CONVERGENCE_WINDOW) return false;
+  unsigned validCount = 0;
+  float minVolume = INFINITY;
+  float maxVolume = 0.0f;
+  double sx = 0.0, sy = 0.0, sxx = 0.0, sxy = 0.0;
+  bool windowSettled = true;
+  for (uint16_t i = 0; i < pressureReliefCount; ++i) {
+    const uint16_t idx = (pressureReliefIndex + PRESSURE_RELIEF_HISTORY_MAX - pressureReliefCount + i)
+                         % PRESSURE_RELIEF_HISTORY_MAX;
+    const PressureReliefRecord &r = pressureReliefHistory[idx];
+    const bool valid = r.volumeMetricsValid && isfinite(r.fittedVolume) && r.fittedVolume > 0.0f;
+    if (valid) ++validCount;
+    if (i >= pressureReliefCount - VOLUME_CONVERGENCE_WINDOW) {
+      if (!valid) return false;
+      windowSettled = windowSettled && r.pressureSettled;
+      const double x = r.nReliefs;
+      const double y = r.fittedVolume;
+      sx += x; sy += y; sxx += x * x; sxy += x * y;
+      minVolume = fminf(minVolume, r.fittedVolume);
+      maxVolume = fmaxf(maxVolume, r.fittedVolume);
+    }
+  }
+  PressureReliefRecord &last = pressureReliefHistory[
+      (pressureReliefIndex + PRESSURE_RELIEF_HISTORY_MAX - 1) % PRESSURE_RELIEF_HISTORY_MAX];
+  const double denominator = VOLUME_CONVERGENCE_WINDOW * sxx - sx * sx;
+  if (denominator <= 0.0) return false;
+  const double slope = (VOLUME_CONVERGENCE_WINDOW * sxy - sx * sy) / denominator;
+  last.trendPercentPerCycle = 100.0 * slope / (sy / VOLUME_CONVERGENCE_WINDOW);
+  return windowSettled && validCount >= VOLUME_MIN_VALID_RELIEFS &&
+         (maxVolume - minVolume) / minVolume < VOLUME_MAX_FIT_SPREAD &&
+         isfinite(last.trendPercentPerCycle) &&
+         fabsf(last.trendPercentPerCycle) < VOLUME_MAX_TREND_PERCENT_PER_CYCLE &&
+         isfinite(last.recentDifferencePercent) &&
+         fabsf(last.recentDifferencePercent) < VOLUME_MAX_RECENT_DIFFERENCE_PERCENT &&
+         isfinite(last.volumeDifferencePercent) &&
+         fabsf(last.volumeDifferencePercent) < VOLUME_MAX_METHOD_DIFFERENCE_PERCENT;
+}
 
 struct PressureSampleRecord {
   char timestamp[6];
@@ -1083,6 +1162,63 @@ static void formatFloatCsv(char *out, size_t size, float value, uint8_t decimals
   }
 }
 
+// Least-squares fit with a free intercept: ln(Padjusted) = a + b*N.
+// Include the initial measurement at N=0 and each settled measurement once.
+static float fitVolumeFromHistory(unsigned recentWindow = 0) {
+  if (!pressureReliefHistory || !isfinite(volumeStartPressure) || volumeStartPressure <= 0.0f)
+    return NAN;
+  if (recentWindow && pressureReliefCount < recentWindow) return NAN;
+  unsigned count = recentWindow ? 0 : 1;
+  double meanX = 0.0;
+  double meanY = recentWindow ? 0.0 : log((double)volumeStartPressure);
+  double sxx = 0.0;
+  double sxy = 0.0;
+  for (uint16_t i = recentWindow ? pressureReliefCount - recentWindow : 0; i < pressureReliefCount; ++i) {
+    const uint16_t idx = (pressureReliefIndex + PRESSURE_RELIEF_HISTORY_MAX - pressureReliefCount + i)
+                         % PRESSURE_RELIEF_HISTORY_MAX;
+    const PressureReliefRecord &record = pressureReliefHistory[idx];
+    if (record.nReliefs == 0 ||
+        !isfinite(record.pfAdjusted) || record.pfAdjusted <= 0.0f) {
+      if (recentWindow) return NAN;
+      continue;
+    }
+    const double x = record.nReliefs;
+    const double y = log((double)record.pfAdjusted);
+    ++count;
+    const double dx = x - meanX;
+    const double dy = y - meanY;
+    meanX += dx / count;
+    meanY += dy / count;
+    sxx += dx * (x - meanX);
+    sxy += dx * (y - meanY);
+  }
+  if (count < 2 || sxx <= 0.0) return NAN;
+  const double slope = sxy / sxx;
+  if (!isfinite(slope) || slope >= 0.0 ||
+      !isfinite(FMTData.FMTReliefVolume) || FMTData.FMTReliefVolume <= 0.0f) return NAN;
+  const double factor = exp(slope);
+  const double volume = FMTData.FMTReliefVolume * factor / (1.0 - factor);
+  return isfinite(volume) && volume > 0.0 ? (float)volume : NAN;
+}
+
+static void formatVolumeComparison(char *extremes, size_t extremesSize,
+                                   char *fit, size_t fitSize, float endpointVolume,
+                                   float fittedVolume) {
+  if (isfinite(endpointVolume) && endpointVolume > 0.0f)
+    snprintf(extremes, extremesSize, "Extremos: %.3f L", endpointVolume);
+  else
+    snprintf(extremes, extremesSize, "Extremos: N/A");
+  if (isfinite(fittedVolume) && fittedVolume > 0.0f) {
+    if (isfinite(endpointVolume) && endpointVolume > 0.0f)
+      snprintf(fit, fitSize, "Ajuste: %.3f L (%+.2f%%)", fittedVolume,
+               100.0f * (fittedVolume / endpointVolume - 1.0f));
+    else
+      snprintf(fit, fitSize, "Ajuste: %.3f L", fittedVolume);
+  } else {
+    snprintf(fit, fitSize, "Ajuste: N/A");
+  }
+}
+
 static void finalizeVolumeDeterminationSummary() {
   if (!volumeDeterminationActive) {
     return;
@@ -1128,9 +1264,10 @@ static void finalizeVolumeDeterminationSummary() {
   char line1[40];
   char line2[40];
   char line3[40];
-  snprintf(line1, sizeof(line1), "Volume: END (%u reliefs)", (unsigned)volumeSummaryNReliefs);
-  snprintf(line2, sizeof(line2), "f=%.4f Pi=%.3f Pf=%.3f", volumeSummaryFactor, volumeSummaryPi, volumeSummaryPfAdjusted);
-  snprintf(line3, sizeof(line3), "Vf=%.3fL", volumeSummaryFermenterVolume);
+  snprintf(line1, sizeof(line1), "END: %s (%u/%u)", volumeConverged ? "convergiu" : "limite",
+           (unsigned)volumeSummaryNReliefs, (unsigned)volumeIteration);
+  formatVolumeComparison(line2, sizeof(line2), line3, sizeof(line3),
+                         volumeSummaryFermenterVolume, volumeFittedSoFar);
   showVolumeStatus(line1, line2, line3);
 }
 
@@ -1286,7 +1423,6 @@ void processPressure(bool afterRelief) {
   
   if (afterRelief && volumeDeterminationActive) {
     volumeIteration++;
-    volumeLastReliefMillis = millis();
 
     if (volumeAwaitingRecord && volumeRecordIndex >= 0) {
       PressureReliefRecord &record = pressureReliefHistory[volumeRecordIndex];
@@ -1305,18 +1441,31 @@ void processPressure(bool afterRelief) {
           record.factorMedio = powf(record.pfAdjusted / record.pi, 1.0f / (float)record.nReliefs);
 
             record.fermenterVolume = volumeEstimationFromPressureDrop(record.factorMedio);
-            record.volumeMetricsValid = true;
+            record.volumeMetricsValid = isfinite(record.fermenterVolume) && record.fermenterVolume > 0.0f;
             volumeCalculatedSoFar = record.fermenterVolume;
-            volumeCalculatedSoFarValid = true;
+            volumeCalculatedSoFarValid = record.volumeMetricsValid;
         }
       }
 
-      char line1[32];
-      char line2[32];
-      char line3[32];
+      volumeFittedSoFar = fitVolumeFromHistory();
+      record.fittedVolume = volumeFittedSoFar;
+      record.pressureSettled = volumePressureSettled;
+      record.volumeDifferencePercent = record.volumeMetricsValid && isfinite(record.fittedVolume)
+          ? 100.0f * (record.fittedVolume / record.fermenterVolume - 1.0f) : NAN;
+      record.recentFittedVolume = fitVolumeFromHistory(VOLUME_RECENT_FIT_WINDOW);
+      record.recentDifferencePercent = isfinite(record.recentFittedVolume) &&
+          isfinite(record.fittedVolume) && record.fittedVolume > 0.0f
+          ? 100.0f * (record.recentFittedVolume / record.fittedVolume - 1.0f) : NAN;
+      volumeConverged = volumeHasConverged();
+      record.converged = volumeConverged;
+
+      char line1[40];
+      char line2[40];
+      char line3[40];
       snprintf(line1, sizeof(line1), "Iteracao: %u", volumeIteration);
-      snprintf(line2, sizeof(line2), "Pf adj: %.3f", record.pfAdjusted);
-      snprintf(line3, sizeof(line3), "Vf: %.3f", record.fermenterVolume);
+      formatVolumeComparison(line2, sizeof(line2), line3, sizeof(line3),
+                             record.volumeMetricsValid ? record.fermenterVolume : NAN,
+                             record.fittedVolume);
       showVolumeStatus(line1, line2, line3);
       volumeAwaitingRecord = false;
       volumeRecordIndex = -1;
@@ -1403,7 +1552,15 @@ bool processReliefCycle() {
         ControlData.transferValve = false;
         resetCurrentMedianFilter();
         noPressureReadUntil = millis() + TRANSFER_CLOSE_PRESSURE_BLOCK_MS;
-        timeToRegisterPressure = noPressureReadUntil; // registra após o período de bloqueio pós-fechamento da transfer
+        if (volumeDeterminationActive) {
+          // Keep the valve closed for a fixed four-minute settling interval,
+          // including after the last cycle.
+          volumeLastReliefMillis = millis();
+          volumePressureSettled = false;
+          timeToRegisterPressure = volumeLastReliefMillis + VOLUME_DETERMINATION_WAIT_MS;
+        } else {
+          timeToRegisterPressure = noPressureReadUntil;
+        }
         timeToFinishExpansion = 0;
       }
     }
@@ -1419,6 +1576,7 @@ bool processReliefCycle() {
       if (MILLISDIFF(timeToRegisterPressure, 0)) {
         //;Serial.printf("[PRESSURE] %lu / %lu: Registrando pressão. Pressure=%.2f bar\n", millis(), timeToRegisterPressure, ControlData.pressure);
         timeToRegisterPressure = 0;
+        if (volumeDeterminationActive) volumePressureSettled = true;
         processPressure(true);
         digitalWrite(PINVENTINGLED, LOW);        
         digitalWrite(PINTRANSFERVALVE, LOW);
@@ -1475,7 +1633,14 @@ void pressureRelief(bool fromVolumeDetermination) {
       record.nReliefs = 0;
       record.factorMedio = 0.0f;
       record.fermenterVolume = 0.0f;
+      record.fittedVolume = NAN;
+      record.volumeDifferencePercent = NAN;
+      record.recentFittedVolume = NAN;
+      record.recentDifferencePercent = NAN;
+      record.trendPercentPerCycle = NAN;
+      record.converged = false;
       record.volumeMetricsValid = false;
+      record.pressureSettled = false;
 
       pendingReliefIndex = recordIndex;
       volumeAwaitingRecord = true;
@@ -1492,10 +1657,11 @@ void pressureRelief(bool fromVolumeDetermination) {
   const unsigned long extraMs = (unsigned long)(pressureSeconds * 1000.0L) / (debugging ? 10 : 1);
   const bool isBrewingTransfer = (SetPointData.mode == MODE_BREWING_TRANSFERING);
   const unsigned long reliefDurationDivisor = isBrewingTransfer ? 2UL : 1UL;
-
-  const unsigned long scaledTransferTime = (unsigned long)TRANSFERTIME / reliefDurationDivisor;
+  const unsigned long scaledTransferTime = volumeDeterminationActive
+      ? VOLUME_DETERMINATION_OPEN_MS
+      : (unsigned long)TRANSFERTIME / reliefDurationDivisor;
   const unsigned long scaledReliefTime = (unsigned long)RELIEFTIME / reliefDurationDivisor;
-  const unsigned long scaledExtraMs = isBrewingTransfer ? 0: extraMs;
+  const unsigned long scaledExtraMs = (volumeDeterminationActive || isBrewingTransfer) ? 0 : extraMs;
   const unsigned long scaledFinishMs = isBrewingTransfer ? 0 : 1000UL;
   
   
@@ -1565,7 +1731,7 @@ void handlePressureHistoryCSV(AsyncWebServerRequest *request) {
         size_t len = 0;
 
         if (!pressureHistoryHeaderSent) {
-          const char *header = "data_hora;temperatura;pressao_antes;pressao_depois;corrente_antes_mA;corrente_depois_mA;patm;relief_volume;volume_estimado;Ti_K;Tf_K;Pi;Pf_ajustada;nReliefs;fatorMedio;volume_fermentador\n";
+          const char *header = "data_hora;temperatura;pressao_antes;pressao_depois;corrente_antes_mA;corrente_depois_mA;patm;relief_volume;volume_estimado;Ti_K;Tf_K;Pi;Pf_ajustada;nReliefs;fatorMedio;volume_fermentador;volume_ajuste;diferenca_ajuste_percentual;volume_ajuste_ultimas10;diferenca_recente_percentual;tendencia_percentual_por_ciclo;pressao_estabilizada;convergiu\n";
           size_t headerLen = strlen(header);
           if (headerLen > maxLen) {
             headerLen = maxLen;
@@ -1603,6 +1769,11 @@ void handlePressureHistoryCSV(AsyncWebServerRequest *request) {
           char nReliefsBuf[12] = "";
           char factorBuf[16] = "";
           char fermenterVolBuf[16] = "";
+          char fittedVolBuf[16] = "";
+          char differenceBuf[16] = "";
+          char recentBuf[16] = "";
+          char recentDifferenceBuf[16] = "";
+          char trendBuf[16] = "";
           char dateBufSafe[32];
 
           if (record.timestamp[0]) {
@@ -1637,11 +1808,23 @@ void handlePressureHistoryCSV(AsyncWebServerRequest *request) {
             formatFloatCsv(fermenterVolBuf, sizeof(fermenterVolBuf), record.fermenterVolume, 3);
           }
 
-          char line[320];
+          if (isfinite(record.fittedVolume))
+            formatFloatCsv(fittedVolBuf, sizeof(fittedVolBuf), record.fittedVolume, 3);
+          if (isfinite(record.volumeDifferencePercent))
+            formatFloatCsv(differenceBuf, sizeof(differenceBuf), record.volumeDifferencePercent, 3);
+
+          if (isfinite(record.recentFittedVolume))
+            formatFloatCsv(recentBuf, sizeof(recentBuf), record.recentFittedVolume, 3);
+          if (isfinite(record.recentDifferencePercent))
+            formatFloatCsv(recentDifferenceBuf, sizeof(recentDifferenceBuf), record.recentDifferencePercent, 3);
+          if (isfinite(record.trendPercentPerCycle))
+            formatFloatCsv(trendBuf, sizeof(trendBuf), record.trendPercentPerCycle, 4);
+
+          char line[512];
           int lineLen = snprintf(
               line,
               sizeof(line),
-              "%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s\n",
+              "%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%u;%u\n",
               dateBufSafe,
               tempBuf,
               pBeforeBuf,
@@ -1657,7 +1840,11 @@ void handlePressureHistoryCSV(AsyncWebServerRequest *request) {
               pfAdjBuf,
               nReliefsBuf,
               factorBuf,
-              fermenterVolBuf);
+              fermenterVolBuf,
+              fittedVolBuf,
+              differenceBuf,
+              recentBuf, recentDifferenceBuf, trendBuf,
+              (unsigned)record.pressureSettled, (unsigned)record.converged);
 
           if (lineLen <= 0) {
             pressureHistoryExportIndex++;
@@ -1780,8 +1967,8 @@ bool startSpeedCalibration(bool venting, char *reason, size_t reasonSize) {
     blocked = "Process in progress";
   else if (!isfinite(ControlData.pressure) || ControlData.pressure < 1.9f)
     blocked = "Insufficient pressure (min 1.9 bar)";
-  else if (!venting && (!isfinite(FMTData.FMTVolume) || FMTData.FMTVolume <= 0.0f ||
-                       !isfinite(FMTData.FMTReliefVolume) || FMTData.FMTReliefVolume <= 0.0f))
+  else if (!isfinite(FMTData.FMTVolume) || FMTData.FMTVolume <= 0.0f ||
+           !isfinite(FMTData.FMTReliefVolume) || FMTData.FMTReliefVolume <= 0.0f)
     blocked = "Invalid fermenter or expansion volume";
   if (blocked) {
     snprintf(reason, reasonSize, "%s", blocked);
@@ -1789,6 +1976,7 @@ bool startSpeedCalibration(bool venting, char *reason, size_t reasonSize) {
   }
   speedCalibrationVenting = venting;
   speedVolumeFactor = venting ? 0.0f : FMTData.FMTVolume / (FMTData.FMTVolume + FMTData.FMTReliefVolume);
+  speedOpenTimeFactor[venting ? 1 : 0] = venting ? FMTData.FMTVolume / FMTData.FMTReliefVolume : 1.0f;
   speedRecordCount[venting ? 1 : 0] = 0;
   speedStage = 0;
   speedStatus = "Running";
@@ -1798,7 +1986,8 @@ bool startSpeedCalibration(bool venting, char *reason, size_t reasonSize) {
 
 String getSpeedCalibrationStatus() {
   return String(speedStatus) + " - expansion: " + String(speedRecordCount[0]) +
-         "/45; venting: " + String(speedRecordCount[1]) + "/45";
+         "/" + String(speedRecordTarget(false)) + "; venting: " + String(speedRecordCount[1]) +
+         "/" + String(speedRecordTarget(true));
 }
 
 static void closeSpeedValve() {
@@ -1819,21 +2008,23 @@ static void showSpeedCalibrationProgress(bool force = false) {
   if (!force && now - lastUpdate < 1000UL) return;
   lastUpdate = now;
   const uint8_t count = speedRecordCount[speedCalibrationVenting ? 1 : 0];
+  const uint8_t target = speedRecordTarget(speedCalibrationVenting);
   char line1[48], line2[64], line3[64];
   snprintf(line1, sizeof(line1), "%s speed: %s",
            speedCalibrationVenting ? "Venting" : "Expansion",
-           speedCalibrationActive ? "RUN" : count == 45 ? "END" : "ABORT");
+           speedCalibrationActive ? "RUN" : count == target ? "END" : "ABORT");
   if (speedCalibrationActive) {
-    snprintf(line2, sizeof(line2), "Ciclo %u/5 | %us | %u/45",
-             count / 9 + 1, speedDurations[count % 9], count);
-    const unsigned long duration = speedStage == 1 ? speedDurations[count % 9] * 1000UL : speedSettlingIntervalMs();
+    snprintf(line2, sizeof(line2), "Ciclo %u/5 | %us | %u/%u",
+             count / speedDurationCount(speedCalibrationVenting) + 1,
+             speedRequestedSeconds(count, speedCalibrationVenting), count, target);
+    const unsigned long duration = speedStage == 1 ? speedOpenDurationMs(count, speedCalibrationVenting) : speedSettlingIntervalMs();
     const unsigned long elapsed = now - speedStageMillis;
     const unsigned long remaining = elapsed >= duration ? 0 : (duration - elapsed + 999UL) / 1000UL;
     snprintf(line3, sizeof(line3), "%s %lus | P: %.3f bar",
              speedStage == 1 ? "Aberta:" : "Espera:", remaining, ControlData.pressure);
   } else {
-    snprintf(line2, sizeof(line2), "Medicoes: %u/45", count);
-    snprintf(line3, sizeof(line3), "%s", count == 45 ? "CSV na pagina Calibration" : speedStatus);
+    snprintf(line2, sizeof(line2), "Medicoes: %u/%u", count, target);
+    snprintf(line3, sizeof(line3), "%s", count == target ? "CSV na pagina Calibration" : speedStatus);
   }
   showVolumeStatus(line1, line2, line3);
 }
@@ -1854,7 +2045,7 @@ static void processSpeedCalibration() {
     // Seconds of valve opening, capped at the requested duration even if a
     // loop iteration runs late. Keep this pressure throughout settling.
     const float seconds = fminf((now - speedStageMillis) / 1000.0f,
-                                speedDurations[count % 9]);
+                                speedOpenDurationMs(count, speedCalibrationVenting) / 1000.0f);
 
     float f;
     
@@ -1880,7 +2071,7 @@ static void processSpeedCalibration() {
     speedStageMillis = now;
     speedStage = 1;
     showSpeedCalibrationProgress(true);
-  } else if (speedStage == 1 && now - speedStageMillis >= speedDurations[count % 9] * 1000UL) {
+  } else if (speedStage == 1 && now - speedStageMillis >= speedOpenDurationMs(count, speedCalibrationVenting)) {
     closeSpeedValve();
     speedStageMillis = now;
     speedStage = 2;
@@ -1890,7 +2081,7 @@ static void processSpeedCalibration() {
     record.r = (record.p2 - record.pl) / (record.p1 - record.pl);
     ++count;
     speedStage = 0;
-    if (count == 45) {
+    if (count == speedRecordTarget(speedCalibrationVenting)) {
       speedStatus = "Completed";
       speedCalibrationActive = false;
       showSpeedCalibrationProgress(true);
@@ -1902,13 +2093,24 @@ static void processSpeedCalibration() {
 void handleSpeedCalibrationCSV(AsyncWebServerRequest *request) {
   const bool venting = request->hasParam("type") && request->getParam("type")->value() == "venting";
   const uint8_t count = speedRecordCount[venting ? 1 : 0];
-  String csv = "ciclo,tempo,P1,P2,PL,R\n";
+  String csv = "ciclo;tempo;tempo_aberto_s;P1;P2;PL;R\n";
   csv.reserve(4096);
   for (uint8_t i = 0; i < count; ++i) {
     const SpeedRecord &r = speedRecords[venting ? 1 : 0][i];
     char line[160];
-    snprintf(line, sizeof(line), "%u,%u,%.6f,%.6f,%.6f,%.6f\n",
-             i / 9 + 1, speedDurations[i % 9], r.p1, r.p2, r.pl, r.r);
+    char openTimeBuf[16];
+    char p1Buf[16];
+    char p2Buf[16];
+    char plBuf[16];
+    char rBuf[16];
+    formatFloatCsv(openTimeBuf, sizeof(openTimeBuf), speedOpenDurationMs(i, venting) / 1000.0f, 3);
+    formatFloatCsv(p1Buf, sizeof(p1Buf), r.p1, 6);
+    formatFloatCsv(p2Buf, sizeof(p2Buf), r.p2, 6);
+    formatFloatCsv(plBuf, sizeof(plBuf), r.pl, 6);
+    formatFloatCsv(rBuf, sizeof(rBuf), r.r, 6);
+    snprintf(line, sizeof(line), "%u;%u;%s;%s;%s;%s;%s\n",
+             i / speedDurationCount(venting) + 1, speedRequestedSeconds(i, venting), openTimeBuf,
+             p1Buf, p2Buf, plBuf, rBuf);
     csv += line;
   }
   AsyncWebServerResponse *response = request->beginResponse(200, "text/csv", csv);
@@ -1976,6 +2178,9 @@ bool startVolumeDetermination(char *reason, size_t reasonSize) {
   volumeSummaryAvailable = false;
   volumeCalculatedSoFar = 0.0f;
   volumeCalculatedSoFarValid = false;
+  volumeFittedSoFar = NAN;
+  volumeConverged = false;
+  volumePressureSettled = false;
   if (!pressureSamples) {
     pressureSamples = new(std::nothrow) PressureSampleRecord[PRESSURE_SAMPLES_MAX];
   }
@@ -2062,9 +2267,10 @@ void pressureControl() {
   }
 
   if (volumeDeterminationActive) {
-    if (volumeIteration >= VOLUME_DETERMINATION_RECORD_END_CYCLE) {
+    if (volumeConverged || volumeIteration >= VOLUME_DETERMINATION_RECORD_END_CYCLE) {
       finalizeVolumeDeterminationSummary();
-    } else if (MILLISDIFF(volumeLastReliefMillis, VOLUME_DETERMINATION_CYCLE_INTERVAL_MS)) {
+    } else if (!inTheMiddleOfRelief() &&
+               MILLISDIFF(volumeLastReliefMillis, VOLUME_DETERMINATION_WAIT_MS)) {
       pressureRelief(true);
     }
   } else if (SetPointData.setPointPressure > 0.0f && 

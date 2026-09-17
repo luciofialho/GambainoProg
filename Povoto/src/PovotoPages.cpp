@@ -692,13 +692,16 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
     "<p>Requirements: Mode OFF; initial pressure at least 1.9 bar.</p><p>No pressure target.</p>" +
     "<hr><h3>FMT volume determination</h3>" +
     "<p>Determines the fermenter total volume from the pressure reduction produced by repeated expansions into the configured relief volume. " +
-    "The test stops automatically after 35 relief cycles and calculates the final result using the initial and final pressures, compensated for temperature.</p>" +
+    "The first five cycles stabilize the system. Each following expansion stays open for three minutes, then pressure is read four minutes after closing. " +
+    "The test stops when the volume estimates converge, or after 35 relief cycles. It reports both the initial-to-final-pressure and full-series-fit results, compensated for temperature.</p>" +
+    "<p>Convergence requires at least 10 valid expansions: the last five fitted estimates must span less than 0.5%, with a trend below 0.05% per cycle and settled pressure. " +
+    "The endpoint and full-series results must agree within 1%, and the fit of the last 10 readings must agree with the full-series fit within 0.5%. The CSV includes these diagnostics.</p>" +
     "<form action='/startvolume'><button>Volume determination</button></form><p>" + volumeStatus + "</p>" +
     "<p>Download results: <a href='/pressurehistory'>Pressure history</a> | " +
     "<a href='/pressuredump'>Pressure dump</a></p>" +
     "<hr><h3>Gas transfer speed determination</h3>" +
-    "<p>Speed tests: 5 cycles of 1, 2, 4, 6, 8, 10, 12, 14, 16 seconds; wait 3 minutes after closing (10 seconds in debug mode).</p>" +
-    "<p>Venting speed requires the valve outlet connected to atmosphere.</p>" +
+    "<p>Expansion speed: 5 cycles of 1, 2, 4, 6, 8, 10, 12, 14, 16 and 30 seconds. Venting speed: 5 cycles of 1, 2, 4, 6 and 8 seconds. Wait 3 minutes after closing (10 seconds in debug mode).</p>" +
+    "<p>For venting, the actual opening time is multiplied by fermenter volume / expansion volume; the CSV keeps the nominal test times and also reports the actual opening time. Venting requires the valve outlet connected to atmosphere.</p>" +
     "<form action='/calibration/speed' method='POST'><button name='type' value='expansion'>Expansion speed</button> " +
     "<button name='type' value='venting'>Venting speed</button></form><p>" + getSpeedCalibrationStatus() + "</p>" +
     "<p>Download results: <a href='/calibration/speed.csv?type=expansion'>Expansion CSV</a> | " +

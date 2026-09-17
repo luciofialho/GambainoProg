@@ -427,4 +427,8 @@ o task de dump está jogando o volume lá para cima
  * 7. SideKick/src/Sidekick-log.cpp: o envio ao Google libera o lote apos escrever
  *    o POST mesmo com resposta HTTP 429/500. Distinguir rejeicao HTTP explicita
  *    de resposta ausente e registrar o codigo real no diagnostico.
+ * 
+ * 
+ * a atualizacao dos campos na tela (temperatura, por exemplo), está deixando sujeira quando os caracteres ocupam menos espaço que a atualização anterior.
+ * nao calcular as coisas (abv, volume, etc) quando estiver em off
  */

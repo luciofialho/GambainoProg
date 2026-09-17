@@ -37,6 +37,25 @@ int scannedNetworkCount = -1;
 bool scanStartRequested = false;
 unsigned long lastStationConnectAttemptMillis = 0;
 uint16_t stationConnectAttemptCount = 0;
+bool debugModeIpApplied = false;
+IPAddress debugModeAppliedIp;
+
+// Wi-Fi can reconnect from credentials retained by the ESP even when they are
+// not present in the Povoto preferences namespace.  Do not tie the operating
+// mode to the UI connection state: it must always reflect the active STA IP.
+void syncDebugModeWithStationIp() {
+  if (WiFi.status() != WL_CONNECTED) {
+    debugModeIpApplied = false;
+    return;
+  }
+
+  const IPAddress stationIp = WiFi.localIP();
+  if (debugModeIpApplied && stationIp == debugModeAppliedIp) return;
+
+  updateDebugModeFromWiFi();
+  debugModeAppliedIp = stationIp;
+  debugModeIpApplied = true;
+}
 
 void updateWiFiStatusLed() {
   const bool pulseOn = (millis() % 1000UL) < 200UL;
@@ -189,6 +208,7 @@ void povotoWiFiProcess() {
   }
 
   updateWiFiStatusLed();
+  syncDebugModeWithStationIp();
 
   if (wifiState == WiFiState::Configuring) {
     dnsServer.processNextRequest();
@@ -205,7 +225,6 @@ void povotoWiFiProcess() {
     wifiState = WiFiState::Connected;
     stationConnectAttemptCount = 0;
     screenDirty = true;
-    updateDebugModeFromWiFi();
     Serial.printf("WiFi: connected to '%s', IP %s\n", WiFi.SSID().c_str(),
                   WiFi.localIP().toString().c_str());
   }
