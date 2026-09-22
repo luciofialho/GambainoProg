@@ -347,7 +347,7 @@ float volumeEstimationFromPressureDrop(float dropFactor) {
 static void updateBeerVolumeFromHeadspace() {
   // The pressure-drop estimate needs three completed reliefs. Until then, use
   // the batch's measured fill volume for every CO2 calculation.
-  if (CountersData.totalReliefCount < 3 &&
+  if (CountersData.totalReliefCount < 3 && !isfinite(headspaceFiltered) &&
       isfinite(BatchData.initialBeerVolume) &&
       BatchData.initialBeerVolume > 0.0f &&
       BatchData.initialBeerVolume <= FMTData.FMTVolume) {
@@ -1673,6 +1673,7 @@ void processPressure(bool afterRelief) {
   const unsigned long reliefPressureReachedTargetMillis = pressureReachedTargetMillis;
   float instantPressureDropFactor = NAN;
   bool headspaceUpdated = false;
+  bool collectingInitialHeadspaceSamples = false;
   float ejectedMols = 0.0f;
   float expansionTankResidualMoles = 0.0f;
   float ejectedMolsBeforeLiquidCorrection = 0.0f;
@@ -1717,9 +1718,11 @@ void processPressure(bool afterRelief) {
         volumeEstimationFromPressureDrop(instantPressureDropFactor);
       const bool validHeadspaceMeasured = isfinite(headspaceMeasured) &&
         headspaceMeasured > 0.0f && headspaceMeasured < FMTData.FMTVolume;
-      if (validHeadspaceMeasured && CountersData.totalReliefCount < 3) {
+      if (validHeadspaceMeasured && CountersData.totalReliefCount < 3 &&
+          !isfinite(headspaceFiltered)) {
         // Keep the three initial factors only for the geometric initialization.
         lnPressureDropAvg.add(logf(instantPressureDropFactor));
+        collectingInitialHeadspaceSamples = true;
       } else if (validHeadspaceMeasured) {
         if (!isfinite(headspaceFiltered)) {
           if (applyFilteredHeadspace(headspaceMeasured)) {
@@ -1738,6 +1741,8 @@ void processPressure(bool afterRelief) {
 
     if (gasFlowCycle && headspaceUpdated) {
       gasHeadspaceUpdateStatus = "updated_adjusted_equilibrium";
+    } else if (gasFlowCycle && collectingInitialHeadspaceSamples) {
+      gasHeadspaceUpdateStatus = "collecting_initial_samples";
     } else if (gasFlowCycle &&
                strcmp(gasHeadspaceUpdateStatus, "missing_pressure_rise_reference") != 0 &&
                strcmp(gasHeadspaceUpdateStatus, "invalid_pressure_compensation") != 0) {
