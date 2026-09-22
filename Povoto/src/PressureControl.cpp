@@ -343,6 +343,16 @@ float volumeEstimationFromPressureDrop(float dropFactor) {
 }
 
 static void updateBeerVolumeFromHeadspace() {
+  // The pressure-drop estimate needs three completed reliefs. Until then, use
+  // the batch's measured fill volume for every CO2 calculation.
+  if (CountersData.totalReliefCount < 3 &&
+      isfinite(BatchData.initialBeerVolume) &&
+      BatchData.initialBeerVolume > 0.0f &&
+      BatchData.initialBeerVolume <= FMTData.FMTVolume) {
+    beerVolume = BatchData.initialBeerVolume;
+    CountersData.headSpaceVolume = FMTData.FMTVolume - beerVolume;
+    return;
+  }
   beerVolume = FMTData.FMTVolume - CountersData.headSpaceVolume;
   if (beerVolume < 0.0f) {
     beerVolume = 0.0f;
@@ -586,6 +596,69 @@ static double expansionTankInventoryMoles() {
   return gasVentingActive ? gasTankMolesAtClose - gasVentedMolesAccounted : gasInitialMoles;
 }
 
+// Keep a persistent progress integral in mol/L. The snapshot is deliberately
+// kept in RAM: after a reboot the first read establishes a new baseline, so a
+// restored persistent integral is never charged with its past total again.
+static constexpr unsigned long CO2_PRODUCED_PER_L_SAMPLE_MS = 30000UL;
+static bool co2ProducedTotalInitialized = false;
+static double lastCO2ProducedTotalMols = 0.0;
+static unsigned long lastCO2ProducedPerLiterUpdateMillis = 0;
+static double co2ModelCorrectionDebtMols = 0.0;
+static double co2ProducedDiagnosticTotalMols = NAN;
+static double co2ProducedDiagnosticRawDeltaMols = NAN;
+static double co2ProducedDiagnosticCreditedDeltaMols = NAN;
+
+static void updateCO2MolsProducedPerLiter(float beerVolumeBeforeEvent) {
+  const unsigned long now = millis();
+  if (lastCO2ProducedPerLiterUpdateMillis != 0 &&
+      now - lastCO2ProducedPerLiterUpdateMillis < CO2_PRODUCED_PER_L_SAMPLE_MS) {
+    return;
+  }
+  lastCO2ProducedPerLiterUpdateMillis = now;
+
+  const double totalMols = CountersData.totalMolsEjected +
+    CountersData.CO2InSolution + double(headSpaceCO2Mols) + expansionTankInventoryMoles();
+  if (!isfinite(totalMols)) return;
+
+  co2ProducedDiagnosticTotalMols = totalMols;
+  co2ProducedDiagnosticCreditedDeltaMols = 0.0;
+
+  if (!co2ProducedTotalInitialized) {
+    lastCO2ProducedTotalMols = totalMols;
+    co2ProducedTotalInitialized = true;
+    co2ProducedDiagnosticRawDeltaMols = 0.0;
+    return;
+  }
+
+  const double rawDeltaMols = totalMols - lastCO2ProducedTotalMols;
+  co2ProducedDiagnosticRawDeltaMols = rawDeltaMols;
+  double deltaProducedCO2Mols = 0.0;
+  if (rawDeltaMols < 0.0) {
+    co2ModelCorrectionDebtMols += -rawDeltaMols;
+  } else if (rawDeltaMols > 0.0) {
+    const double debtPaymentMols = fmin(rawDeltaMols, co2ModelCorrectionDebtMols);
+    co2ModelCorrectionDebtMols -= debtPaymentMols;
+    deltaProducedCO2Mols = rawDeltaMols - debtPaymentMols;
+  }
+
+  if (deltaProducedCO2Mols > 0.0 && isfinite(beerVolumeBeforeEvent) &&
+      beerVolumeBeforeEvent > 0.0f) {
+    CountersData.CO2MolsProducedPerLiter += deltaProducedCO2Mols / beerVolumeBeforeEvent;
+  }
+  co2ProducedDiagnosticCreditedDeltaMols = deltaProducedCO2Mols;
+  lastCO2ProducedTotalMols = totalMols;
+}
+
+void resetCO2MolsProducedPerLiterTracking() {
+  co2ProducedTotalInitialized = false;
+  lastCO2ProducedTotalMols = 0.0;
+  lastCO2ProducedPerLiterUpdateMillis = 0;
+  co2ModelCorrectionDebtMols = 0.0;
+  co2ProducedDiagnosticTotalMols = NAN;
+  co2ProducedDiagnosticRawDeltaMols = NAN;
+  co2ProducedDiagnosticCreditedDeltaMols = NAN;
+}
+
 static double currentVentingResidualFactor() {
   // Before opening, estimate the expansion-tank pressure for the initial
   // expansion budget. At closing the actual-duration projection takes over.
@@ -643,12 +716,6 @@ static double predictedGasRiseRate(unsigned long now) {
   // prediction positive after pressure stabilizes or drops.
   const double current = currentCycleGasRiseRate(now);
   return current > 0 ? fmax(gasPreviousCycleRate, current) : 0;
-}
-
-static double calculateAvailableGasFlowSeconds(unsigned long now) {
-  const double rate = predictedGasRiseRate(now);
-  if (rate <= 0) return INFINITY;
-  return fmax(0.0, (expansionPressureThreshold() - ControlData.pressure) / rate);
 }
 
 static bool shouldStartGasExpansion(unsigned long now) {
@@ -713,9 +780,12 @@ static void finishGasExpansion(unsigned long now) {
     gasHeadspace, FMTData.FMTReliefVolume, kelvin(ControlData.temperature),
     gasInitialMoles, gasTransferredMoles);
   gasClosedMillis = now;
+
+  // provisional calculation of venting factor at close based on projected expansion pressure - will be overridden in processPressure()
   gasVentingFactorAtClose = GasFlow::ventingResidualFactorAtPressure(
     gasProjectedPressures.expansion, FMTData.ventingResidualCoefficientA,
     FMTData.ventingResidualCoefficientB, FMTData.ventingResidualCoefficientC);
+
   gasVentingFermenterVolume = FMTData.FMTVolume;
   gasVentingExpansionVolume = FMTData.FMTReliefVolume;
   gasLoggedVentingOptimalSeconds = GasFlow::ventingSecondsForResidual(0.001,
@@ -833,14 +903,19 @@ static void recomputeDissolvedCO2MolsFromCurrentState() {
 }
 
 static void recomputeHeadspaceCO2MolsFromCurrentState() {
-  if (CountersData.totalReliefCount > 1) {
-    headSpaceCO2Mols = ControlData.pressure    * CountersData.headSpaceVolume / (CONST_R * kelvin(ControlData.temperature))
-                     - BatchData.startPressure * CountersData.headSpaceVolume / (CONST_R * kelvin(BatchData.startTemperature));
-    if (headSpaceCO2Mols < 0.0f) {
-      headSpaceCO2Mols = 0.0f;
-    }
+  const float currentTemperatureK = kelvin(ControlData.temperature);
+  const float initialTemperatureK = kelvin(BatchData.startTemperature);
+  if (!isfinite(CountersData.headSpaceVolume) || CountersData.headSpaceVolume <= 0.0f ||
+      !isfinite(currentTemperatureK) || currentTemperatureK <= 0.0f ||
+      !isfinite(initialTemperatureK) || initialTemperatureK <= 0.0f ||
+      !isfinite(ControlData.pressure) || !isfinite(BatchData.startPressure)) {
+    headSpaceCO2Mols = 0.0f;
+    return;
   }
-  else {
+
+  headSpaceCO2Mols = ControlData.pressure    * CountersData.headSpaceVolume / (CONST_R * currentTemperatureK)
+                   - BatchData.startPressure * CountersData.headSpaceVolume / (CONST_R * initialTemperatureK);
+  if (!isfinite(headSpaceCO2Mols) || headSpaceCO2Mols < 0.0f) {
     headSpaceCO2Mols = 0.0f;
   }
 }
@@ -1104,6 +1179,7 @@ static void restoreDerivedStateFromCounters() {
 
 void requestDerivedStateRestoreFromCounters() {
   resetBeerCO2Evolution();
+  resetCO2MolsProducedPerLiterTracking();
   derivedStateRestorePending = true;
 }
 
@@ -1498,45 +1574,32 @@ void calculateFermentationState() {
   const float initialDensityKgL =
     initialSG * 0.9982f;  // SG 20/20
 
-  const float initialBeerMassG =
-    1000.0f *
-    beerVolume * 
-    initialDensityKgL;
+  const float initialBeerMassPerLiterG = 1000.0f * initialDensityKgL;
 
-  const float initialExtractMassG =
-    initialBeerMassG * OE / 100.0f;
+  const float initialExtractMassPerLiterG = initialBeerMassPerLiterG * OE / 100.0f;
 
-  const double producedCO2Mols =
-    CountersData.totalMolsEjected
-    + CountersData.CO2InSolution
-    + headSpaceCO2Mols + expansionTankInventoryMoles();
+  const float producedCO2MassPerLiterG = 44.0095f *
+    fmax(0.0, CountersData.CO2MolsProducedPerLiter);
 
-  const float producedCO2MassG =
-    44.0095f * producedCO2Mols;
+  const float fermentedExtractMassPerLiterG =
+    producedCO2MassPerLiterG * 2.0665f / 0.9565f;
 
-  const float fermentedExtractMassG =
-    producedCO2MassG * 2.0665f / 0.9565f;
+  const float producedYeastMassPerLiterG =
+    producedCO2MassPerLiterG * 0.11f / 0.9565f;
 
-  const float producedYeastMassG =
-    producedCO2MassG * 0.11f / 0.9565f;
+  const float producedEthanolMassPerLiterG = producedCO2MassPerLiterG / 0.9565f;
 
-  const float producedEthanolMassG =
-    producedCO2MassG / 0.9565f;
-
-  const float remainingExtractMassG =
-    initialExtractMassG -
-    fermentedExtractMassG;
+  const float remainingExtractMassPerLiterG = initialExtractMassPerLiterG -
+    fermentedExtractMassPerLiterG;
 
   // Cerveja clarificada e degaseificada
-  const float currentBeerMassG =
-    initialBeerMassG -
-    producedCO2MassG -
-    producedYeastMassG;
+  const float currentBeerMassPerLiterG = initialBeerMassPerLiterG -
+    producedCO2MassPerLiterG - producedYeastMassPerLiterG;
 
   const float beerRealPlato =
     100.0f *
-    remainingExtractMassG /
-    currentBeerMassG;
+    remainingExtractMassPerLiterG /
+    currentBeerMassPerLiterG;
 
   const float beerApparentPlato =
     (beerRealPlato - 0.1808f * OE) /
@@ -1547,8 +1610,8 @@ void calculateFermentationState() {
 
   const float beerABW =
     100.0f *
-    producedEthanolMassG /
-    currentBeerMassG;
+    producedEthanolMassPerLiterG /
+    currentBeerMassPerLiterG;
 
   const float beerDensityKgL =
     beerSG * 0.9982f;
@@ -1574,6 +1637,9 @@ static float adjustedEquilibriumPressureForPostRelief(float postReliefPressure,
 }
 
 void processPressure(bool afterRelief) {
+  // Capture the old volume before a relief can update headspace below.
+  const float beerVolumeBeforeEvent = beerVolume;
+  updateBeerVolumeFromHeadspace();
   const float reliefPressureReachedTarget = pressureReachedTarget;
   const unsigned long reliefPressureReachedTargetMillis = pressureReachedTargetMillis;
   float instantPressureDropFactor = NAN;
@@ -1610,20 +1676,26 @@ void processPressure(bool afterRelief) {
       (pressureOnReliefMeas - pressureAfterRelief) /
       ((1.0f - targetResidual) * (1.0f - targetResidual));
 
-    instantPressureDropFactor = 1.0f;
-    if (pressureOnReliefExtrap > 0.01f) {
-      instantPressureDropFactor = (adjustedEquilibriumPressure / pressureOnReliefExtrap);
+    if (isfinite(pressureOnReliefExtrap) && pressureOnReliefExtrap > 0.01f &&
+        isfinite(adjustedEquilibriumPressure)) {
+      instantPressureDropFactor = adjustedEquilibriumPressure / pressureOnReliefExtrap;
     }
 
-    if (gasFlowCycle) {
-      gasHeadspaceUpdateStatus = "updated_adjusted_equilibrium";
+    if (isfinite(instantPressureDropFactor) && instantPressureDropFactor > 0.0f &&
+        instantPressureDropFactor < 1.0f) {
+      lnPressureDropAvg.add(logf(instantPressureDropFactor));
+      pressureDropFactor = expf(lnPressureDropAvg.value());
+      pressureDropFactor = fmaxf(0.001f, fminf(pressureDropFactor, 0.999f));
+      CountersData.headSpaceVolume = volumeEstimationFromPressureDrop(pressureDropFactor);
+      updateBeerVolumeFromHeadspace();
+      if (gasFlowCycle) {
+        gasHeadspaceUpdateStatus = "updated_adjusted_equilibrium";
+      }
+    } else if (gasFlowCycle &&
+               strcmp(gasHeadspaceUpdateStatus, "missing_pressure_rise_reference") != 0 &&
+               strcmp(gasHeadspaceUpdateStatus, "invalid_pressure_compensation") != 0) {
+      gasHeadspaceUpdateStatus = "skipped_invalid_pressure_ratio";
     }
-    instantPressureDropFactor = fmaxf(0.001f, fminf(instantPressureDropFactor, 0.999f));
-    lnPressureDropAvg.add(logf(instantPressureDropFactor));
-    pressureDropFactor = expf(lnPressureDropAvg.value());
-    pressureDropFactor = fmaxf(0.001f, fminf(pressureDropFactor, 0.999f));
-    CountersData.headSpaceVolume = volumeEstimationFromPressureDrop(pressureDropFactor);
-    updateBeerVolumeFromHeadspace();
     
     if (pendingReliefIndex >= 0) {
       PressureReliefRecord &record = pressureReliefHistory[pendingReliefIndex];
@@ -1655,6 +1727,32 @@ void processPressure(bool afterRelief) {
     gasTankHasHistory = true;
     gasVentedMolesAccounted = 0;
     gasVentingActive = true;
+
+    if (gasFlowCycle) {
+      gasVentingFactorAtClose =
+        GasFlow::ventingResidualFactorAtPressure(
+          ejectedPressure,
+          FMTData.ventingResidualCoefficientA,
+          FMTData.ventingResidualCoefficientB,
+          FMTData.ventingResidualCoefficientC
+        );
+
+      gasLoggedVentingOptimalSeconds = GasFlow::ventingSecondsForResidual(
+        0.001,
+        FMTData.FMTVolume,
+        FMTData.FMTReliefVolume,
+        gasVentingFactorAtClose
+      );
+
+      gasLoggedVentingFermenterOptimalSeconds =
+        GasFlow::ventingSecondsForResidual(
+          0.001,
+          FMTData.FMTVolume,
+          FMTData.FMTVolume,
+          gasVentingFactorAtClose
+        );
+    }
+
     accountExpansionTankVenting(millis());
     expansionTankResidualMoles = fmaxf(0.0f,
       (float)calculateExpansionTankRemainingMoles(millis()));
@@ -1670,6 +1768,7 @@ void processPressure(bool afterRelief) {
   recomputeDissolvedCO2MolsFromCurrentState();
   recomputeHeadspaceCO2MolsFromCurrentState();
   recomputeBeerCO2EvolutionFromCurrentState();
+  updateCO2MolsProducedPerLiter(beerVolumeBeforeEvent);
   
   //float lastTotalCO2MolsProceduced = CountersData.CO2InSolution + headSpaceCO2Mols + CountersData.totalMolsEjected; está sendo usado ou não?
 
@@ -1808,6 +1907,21 @@ void processPressure(bool afterRelief) {
     reliefLog.reliefsPerHour = reliefsPerHourValue;
     reliefLog.beerCO2EvolutionGramsPerLiterPerDay = beerCO2EvolutionGramsPerLiterPerDay;
     doReliefDataLog(reliefLog);
+
+    // The third relief was logged using the configured initial volume. Its
+    // pressure sample is now part of pressureDropFactor, so install the
+    // resulting estimate only for the next relief and later calculations.
+    if (CountersData.totalReliefCount == 3 &&
+        isfinite(BatchData.initialBeerVolume) &&
+        BatchData.initialBeerVolume > 0.0f &&
+        BatchData.initialBeerVolume <= FMTData.FMTVolume) {
+      const float estimatedHeadspace = volumeEstimationFromPressureDrop(pressureDropFactor);
+      if (isfinite(estimatedHeadspace) && estimatedHeadspace >= 0.0f &&
+          estimatedHeadspace <= FMTData.FMTVolume) {
+        CountersData.headSpaceVolume = estimatedHeadspace;
+        updateBeerVolumeFromHeadspace();
+      }
+    }
   }
 }
 
@@ -2776,6 +2890,11 @@ char *getPressureControlStatus(char *st) {
              "<br>CO2 moles accounting:<br>&nbsp;&nbsp;&nbsp;&nbsp;Headspace: %.3f<br>&nbsp;&nbsp;&nbsp;&nbsp;Dissolved: %.3f (if in equilibrium: %.3f)<br>&nbsp;&nbsp;&nbsp;&nbsp;Ejected: %.3f<br>&nbsp;&nbsp;&nbsp;&nbsp;Total: %.3f (%.2f g)<br>",
              headSpaceCO2Mols, CountersData.CO2InSolution, equilibriumCO2Mols,
              CountersData.totalMolsEjected, totalCO2Mols, CO2Mass());
+    strnncat(st, tmp, 2048);
+    snprintf(tmp, sizeof(tmp),
+             "&nbsp;&nbsp;&nbsp;&nbsp;CO2 progress: raw total %.6f; raw delta %+.6f; correction debt %.6f; credited %+.6f mol<br>",
+             co2ProducedDiagnosticTotalMols, co2ProducedDiagnosticRawDeltaMols,
+             co2ModelCorrectionDebtMols, co2ProducedDiagnosticCreditedDeltaMols);
     strnncat(st, tmp, 2048);
 
     strnncat(st, "<br>Expansions:<br>", 2048);

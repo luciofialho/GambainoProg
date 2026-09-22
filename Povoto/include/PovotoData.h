@@ -86,6 +86,7 @@ struct BatchData_t {
   char batchDate[11];
   float batchOG;
   float addedPlato;
+  float initialBeerVolume;
   float startPressure;
   float startTemperature;
 } __attribute__((packed));
@@ -125,6 +126,8 @@ struct CountersData_t {
   uint32_t totalReliefCount;
   double totalMolsEjected;
   double CO2InSolution;
+  // Integral of net produced CO2, normalized by the beer volume at each event.
+  double CO2MolsProducedPerLiter;
   float headSpaceVolume;
   float correctionPlato;
   long int totalChillTime; // seconds

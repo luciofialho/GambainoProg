@@ -48,6 +48,7 @@ BatchData_t BatchData = {
   .batchDate = {'0','0','/','0','0','/','0','0','0','0',0},
   .batchOG = 1.050f,
   .addedPlato = 0.0f,
+  .initialBeerVolume = 0.0f,
   .startPressure = 0.0f,
   .startTemperature = 0.0f
 };
@@ -84,6 +85,7 @@ CountersData_t CountersData = {
   .totalReliefCount = 0,
   .totalMolsEjected = 0.0,
   .CO2InSolution = 0.0,
+  .CO2MolsProducedPerLiter = 0.0,
   .headSpaceVolume = 0.0f,
   .correctionPlato = 0.0f,
   .totalChillTime = 0,
@@ -273,6 +275,9 @@ bool readBatchDataFromEEPROM() {
   if (!isfinite(BatchData.batchOG)) BatchData.batchOG = defaultBatchData.batchOG;
   BatchData.addedPlato = store.getFloat("addedPlato", defaultBatchData.addedPlato);
   if (!isfinite(BatchData.addedPlato)) BatchData.addedPlato = defaultBatchData.addedPlato;
+  BatchData.initialBeerVolume = store.getFloat("initialBeerVol", defaultBatchData.initialBeerVolume);
+  if (!isfinite(BatchData.initialBeerVolume) || BatchData.initialBeerVolume < 0.0f)
+    BatchData.initialBeerVolume = defaultBatchData.initialBeerVolume;
   BatchData.startPressure = store.getFloat("startPressure", defaultBatchData.startPressure);
   if (!isfinite(BatchData.startPressure)) BatchData.startPressure = defaultBatchData.startPressure;
   BatchData.startTemperature = store.getFloat("startTemp", defaultBatchData.startTemperature);
@@ -293,6 +298,7 @@ bool writeBatchDataToNIV() {
   saved = (store.putString("date", BatchData.batchDate) == strlen(BatchData.batchDate)) && saved;
   saved = (store.putFloat("og", BatchData.batchOG) == sizeof(BatchData.batchOG)) && saved;
   saved = (store.putFloat("addedPlato", BatchData.addedPlato) == sizeof(BatchData.addedPlato)) && saved;
+  saved = (store.putFloat("initialBeerVol", BatchData.initialBeerVolume) == sizeof(BatchData.initialBeerVolume)) && saved;
   saved = (store.putFloat("startPressure", BatchData.startPressure) == sizeof(BatchData.startPressure)) && saved;
   saved = (store.putFloat("startTemp", BatchData.startTemperature) == sizeof(BatchData.startTemperature)) && saved;
   store.end();
@@ -356,6 +362,10 @@ bool readCountersDataFromEEPROM() {
   if (!isfinite(CountersData.totalMolsEjected)) CountersData.totalMolsEjected = defaultCountersData.totalMolsEjected;
   CountersData.CO2InSolution = store.getDouble("co2Solution", defaultCountersData.CO2InSolution);
   if (!isfinite(CountersData.CO2InSolution)) CountersData.CO2InSolution = defaultCountersData.CO2InSolution;
+  CountersData.CO2MolsProducedPerLiter = store.getDouble("co2MolsPerLiter",
+    defaultCountersData.CO2MolsProducedPerLiter);
+  if (!isfinite(CountersData.CO2MolsProducedPerLiter) || CountersData.CO2MolsProducedPerLiter < 0.0)
+    CountersData.CO2MolsProducedPerLiter = defaultCountersData.CO2MolsProducedPerLiter;
   CountersData.headSpaceVolume = store.getFloat("headSpace", defaultCountersData.headSpaceVolume);
   if (!isfinite(CountersData.headSpaceVolume)) CountersData.headSpaceVolume = defaultCountersData.headSpaceVolume;
   CountersData.correctionPlato = store.getFloat("correctPlato", defaultCountersData.correctionPlato);
@@ -376,6 +386,8 @@ bool writeCountersDataToNIV() {
   saved = (store.putUInt("reliefCount", CountersData.totalReliefCount) == sizeof(CountersData.totalReliefCount)) && saved;
   saved = (store.putDouble("molsEjected", CountersData.totalMolsEjected) == sizeof(CountersData.totalMolsEjected)) && saved;
   saved = (store.putDouble("co2Solution", CountersData.CO2InSolution) == sizeof(CountersData.CO2InSolution)) && saved;
+  saved = (store.putDouble("co2MolsPerLiter", CountersData.CO2MolsProducedPerLiter) ==
+    sizeof(CountersData.CO2MolsProducedPerLiter)) && saved;
   saved = (store.putFloat("headSpace", CountersData.headSpaceVolume) == sizeof(CountersData.headSpaceVolume)) && saved;
   saved = (store.putFloat("correctPlato", CountersData.correctionPlato) == sizeof(CountersData.correctionPlato)) && saved;
   saved = (store.putInt("chillTime", CountersData.totalChillTime) == sizeof(CountersData.totalChillTime)) && saved;
@@ -488,9 +500,12 @@ void resetCountersForNewBatch() {
   CountersData.totalReliefCount = 0;
   CountersData.totalMolsEjected = 0.0;
   CountersData.CO2InSolution = 0.0;
+  CountersData.CO2MolsProducedPerLiter = 0.0;
   CountersData.headSpaceVolume = 0.0f;
   CountersData.totalChillTime = 0;
   CountersData.totalHeatTime = 0;
+
+  resetCO2MolsProducedPerLiterTracking();
 
   writeCountersDataToNIV();
 }

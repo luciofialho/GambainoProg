@@ -37,6 +37,7 @@ uint16_t getVolumeDeterminationIteration();
 float getVolumeDeterminationCalculatedSoFar();
 void applyDumpWindowHeadspaceRecalc(float headspaceBeforeL, float pressureBeforeBar, float pressureAfterBar);
 void requestDerivedStateRestoreFromCounters();
+void resetCO2MolsProducedPerLiterTracking();
 float CO2Mass(float mols=-1);
 // g CO2/L/day; presentation clamps negative evolution to zero.
 float getBeerCO2EvolutionGramsPerLiterPerDay();

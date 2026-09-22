@@ -928,6 +928,15 @@ void handleBatchDataPage(AsyncWebServerRequest *request) {
 
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='form-group'>"
+               "<label for='initialBeerVolume'>Initial beer volume (L):</label>", remaining);
+  sprintf(buffer, "<input type='number' id='initialBeerVolume' name='initialBeerVolume' value='%.2f' step='0.01' min='0' placeholder='0.00'>", BatchData.initialBeerVolume);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, buffer, remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "</div>", remaining);
+
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<div class='form-group'>"
                "<label for='startPressure'>Start Pressure (bar):</label>", remaining);
   sprintf(buffer, "<input type='number' id='startPressure' name='startPressure' value='%.1f' step='0.1' min='0' placeholder='0.0'>", BatchData.startPressure);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -983,6 +992,12 @@ void handleBatchDataUpdate(AsyncWebServerRequest *request) {
   }
   if (request->hasParam("addedPlato", true)) {
     BatchData.addedPlato = request->getParam("addedPlato", true)->value().toFloat();
+  }
+  if (request->hasParam("initialBeerVolume", true)) {
+    const float volume = request->getParam("initialBeerVolume", true)->value().toFloat();
+    if (isfinite(volume) && volume >= 0.0f) {
+      BatchData.initialBeerVolume = volume;
+    }
   }
   if (request->hasParam("startPressure", true)) {
     BatchData.startPressure = request->getParam("startPressure", true)->value().toFloat();
@@ -1067,9 +1082,10 @@ void handleCountersDataPage(AsyncWebServerRequest *request) {
   strncat(html, "<h1>Counters Data</h1>", remaining);
 
   snprintf(buffer, sizeof(buffer),
-           "<div class='summary'>Derived beer volume: %.2f L<br>Current dissolved CO2 estimate: %.3f mol</div>",
+           "<div class='summary'>Derived beer volume: %.2f L<br>Current dissolved CO2 estimate: %.3f mol<br>CO2 produced integral: %.6f mol/L</div>",
            beerVolume,
-           CountersData.CO2InSolution);
+           CountersData.CO2InSolution,
+           CountersData.CO2MolsProducedPerLiter);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
 
