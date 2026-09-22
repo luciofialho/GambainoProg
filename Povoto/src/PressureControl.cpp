@@ -59,6 +59,8 @@ float currentReading = 0.0; // Corrente em mA
 
 
 averageFloatVector lnPressureDropAvg(15);
+static float headspaceFiltered = NAN;
+static float headspaceFilterAlpha = 0.05f;
 float beerVolume = 0.0f;
 float beerSG = 0.0;
 float beerABV = 0.0;
@@ -351,6 +353,10 @@ static void updateBeerVolumeFromHeadspace() {
       BatchData.initialBeerVolume <= FMTData.FMTVolume) {
     beerVolume = BatchData.initialBeerVolume;
     CountersData.headSpaceVolume = FMTData.FMTVolume - beerVolume;
+    if (isfinite(FMTData.FMTReliefVolume) && FMTData.FMTReliefVolume > 0.0f) {
+      pressureDropFactor = CountersData.headSpaceVolume /
+        (CountersData.headSpaceVolume + FMTData.FMTReliefVolume);
+    }
     return;
   }
   beerVolume = FMTData.FMTVolume - CountersData.headSpaceVolume;
@@ -920,6 +926,28 @@ static void recomputeHeadspaceCO2MolsFromCurrentState() {
   }
 }
 
+static bool applyFilteredHeadspace(float headspace) {
+  if (!isfinite(headspace) || headspace <= 0.0f ||
+      !isfinite(FMTData.FMTVolume) || headspace >= FMTData.FMTVolume) {
+    return false;
+  }
+
+  headspaceFiltered = headspace;
+  CountersData.headSpaceVolume = headspaceFiltered;
+  beerVolume = FMTData.FMTVolume - headspaceFiltered;
+  if (isfinite(FMTData.FMTReliefVolume) && FMTData.FMTReliefVolume > 0.0f) {
+    pressureDropFactor = headspaceFiltered /
+      (headspaceFiltered + FMTData.FMTReliefVolume);
+  }
+  return true;
+}
+
+void resetHeadspaceFilterTracking() {
+  lnPressureDropAvg.clear();
+  headspaceFiltered = NAN;
+  headspaceFilterAlpha = 0.05f;
+}
+
 static void resetBeerCO2Evolution() {
   co2EvolutionStart = 0;
   co2EvolutionCount = 0;
@@ -1168,9 +1196,19 @@ float RealPlatoToSG(float realPlato) {
 static void restoreDerivedStateFromCounters() {
   if (CountersData.headSpaceVolume > 0.0f) {
     updateBeerVolumeFromHeadspace();
+    if (CountersData.totalReliefCount >= 3) {
+      if (applyFilteredHeadspace(CountersData.headSpaceVolume)) {
+        headspaceFilterAlpha = 0.05f;
+      } else {
+        resetHeadspaceFilterTracking();
+      }
+    } else {
+      resetHeadspaceFilterTracking();
+    }
     recomputeHeadspaceCO2MolsFromCurrentState();
   }
   else {
+    resetHeadspaceFilterTracking();
     CountersData.headSpaceVolume = 0.0f;
     beerVolume = 0.0f;
     headSpaceCO2Mols = 0.0f;
@@ -1201,19 +1239,10 @@ void applyDumpWindowHeadspaceRecalc(float headspaceBeforeL, float pressureBefore
     return;
   }
 
-  if (headAfter > FMTData.FMTVolume) {
-    headAfter = FMTData.FMTVolume;
-  }
-
   if (headAfter > headspaceBeforeL) {
-    CountersData.headSpaceVolume = headAfter;
-    updateBeerVolumeFromHeadspace();
-    lnPressureDropAvg.clear();
-    // Keep the internal factor coherent with the recalculated headspace.
-    if ((CountersData.headSpaceVolume + FMTData.FMTReliefVolume) > 0.0f) {
-      pressureDropFactor = CountersData.headSpaceVolume / (CountersData.headSpaceVolume + FMTData.FMTReliefVolume); // Lucio: rever
-      pressureDropFactor = fmaxf(0.001f, fminf(pressureDropFactor, 0.999f));
-      lnPressureDropAvg.add(logf(pressureDropFactor));
+    if (applyFilteredHeadspace(headAfter)) {
+      headspaceFilterAlpha = 0.5f;
+      lnPressureDropAvg.clear();
     }
   }
 
@@ -1643,6 +1672,7 @@ void processPressure(bool afterRelief) {
   const float reliefPressureReachedTarget = pressureReachedTarget;
   const unsigned long reliefPressureReachedTargetMillis = pressureReachedTargetMillis;
   float instantPressureDropFactor = NAN;
+  bool headspaceUpdated = false;
   float ejectedMols = 0.0f;
   float expansionTankResidualMoles = 0.0f;
   float ejectedMolsBeforeLiquidCorrection = 0.0f;
@@ -1683,14 +1713,31 @@ void processPressure(bool afterRelief) {
 
     if (isfinite(instantPressureDropFactor) && instantPressureDropFactor > 0.0f &&
         instantPressureDropFactor < 1.0f) {
-      lnPressureDropAvg.add(logf(instantPressureDropFactor));
-      pressureDropFactor = expf(lnPressureDropAvg.value());
-      pressureDropFactor = fmaxf(0.001f, fminf(pressureDropFactor, 0.999f));
-      CountersData.headSpaceVolume = volumeEstimationFromPressureDrop(pressureDropFactor);
-      updateBeerVolumeFromHeadspace();
-      if (gasFlowCycle) {
-        gasHeadspaceUpdateStatus = "updated_adjusted_equilibrium";
+      const float headspaceMeasured =
+        volumeEstimationFromPressureDrop(instantPressureDropFactor);
+      const bool validHeadspaceMeasured = isfinite(headspaceMeasured) &&
+        headspaceMeasured > 0.0f && headspaceMeasured < FMTData.FMTVolume;
+      if (validHeadspaceMeasured && CountersData.totalReliefCount < 3) {
+        // Keep the three initial factors only for the geometric initialization.
+        lnPressureDropAvg.add(logf(instantPressureDropFactor));
+      } else if (validHeadspaceMeasured) {
+        if (!isfinite(headspaceFiltered)) {
+          if (applyFilteredHeadspace(headspaceMeasured)) {
+            headspaceFilterAlpha = 0.05f;
+            headspaceUpdated = true;
+          }
+        } else {
+          headspaceFiltered += headspaceFilterAlpha *
+            (headspaceMeasured - headspaceFiltered);
+          headspaceFilterAlpha = fmaxf(0.05f,
+            headspaceFilterAlpha / (1.0f + headspaceFilterAlpha));
+          headspaceUpdated = applyFilteredHeadspace(headspaceFiltered);
+        }
       }
+    }
+
+    if (gasFlowCycle && headspaceUpdated) {
+      gasHeadspaceUpdateStatus = "updated_adjusted_equilibrium";
     } else if (gasFlowCycle &&
                strcmp(gasHeadspaceUpdateStatus, "missing_pressure_rise_reference") != 0 &&
                strcmp(gasHeadspaceUpdateStatus, "invalid_pressure_compensation") != 0) {
@@ -1909,17 +1956,18 @@ void processPressure(bool afterRelief) {
     doReliefDataLog(reliefLog);
 
     // The third relief was logged using the configured initial volume. Its
-    // pressure sample is now part of pressureDropFactor, so install the
-    // resulting estimate only for the next relief and later calculations.
+    // pressure sample completes the geometric initialization for the filter,
+    // which is installed only for the next relief and later calculations.
     if (CountersData.totalReliefCount == 3 &&
         isfinite(BatchData.initialBeerVolume) &&
         BatchData.initialBeerVolume > 0.0f &&
-        BatchData.initialBeerVolume <= FMTData.FMTVolume) {
-      const float estimatedHeadspace = volumeEstimationFromPressureDrop(pressureDropFactor);
-      if (isfinite(estimatedHeadspace) && estimatedHeadspace >= 0.0f &&
-          estimatedHeadspace <= FMTData.FMTVolume) {
-        CountersData.headSpaceVolume = estimatedHeadspace;
-        updateBeerVolumeFromHeadspace();
+        BatchData.initialBeerVolume <= FMTData.FMTVolume &&
+        !isfinite(headspaceFiltered)) {
+      const float initialFactor = expf(lnPressureDropAvg.value());
+      const float estimatedHeadspace = volumeEstimationFromPressureDrop(initialFactor);
+      if (applyFilteredHeadspace(estimatedHeadspace)) {
+        headspaceFilterAlpha = 0.05f;
+        lnPressureDropAvg.clear();
       }
     }
   }

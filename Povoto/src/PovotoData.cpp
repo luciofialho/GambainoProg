@@ -505,6 +505,7 @@ void resetCountersForNewBatch() {
   CountersData.totalChillTime = 0;
   CountersData.totalHeatTime = 0;
 
+  resetHeadspaceFilterTracking();
   resetCO2MolsProducedPerLiterTracking();
 
   writeCountersDataToNIV();
