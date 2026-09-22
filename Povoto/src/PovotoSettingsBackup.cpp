@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "PovotoData.h"
+#include "GasFlowModel.h"
 
 static void appendNumber(String &json, const char *name, double value,
                          uint8_t decimals, bool isLast = false) {
@@ -27,8 +28,16 @@ String savePovotoSettingsBackup() {
   json = "{\n  \"format\": \"povoto-settings\",\n  \"version\": 1,\n";
   appendNumber(json, "PovotoNum", FMTData.PovotoNum, 0);
   appendNumber(json, "FMTVolume", FMTData.FMTVolume, 6);
+  appendNumber(json, "expansionTimeCoefficientA", FMTData.expansionTimeCoefficientA, 6);
+  appendNumber(json, "expansionTimeCoefficientB", FMTData.expansionTimeCoefficientB, 6);
+  appendNumber(json, "targetResidualAfterReliefPercent", FMTData.targetResidualAfterReliefPercent, 6);
+  appendNumber(json, "liquidMassInGasVentingPercent", FMTData.liquidMassInGasVentingPercent, 6);
+  appendNumber(json, "ventingResidualCoefficientA", FMTData.ventingResidualCoefficientA, 6);
+  appendNumber(json, "ventingResidualCoefficientB", FMTData.ventingResidualCoefficientB, 6);
+  appendNumber(json, "ventingResidualCoefficientC", FMTData.ventingResidualCoefficientC, 6);
   appendNumber(json, "FMTReliefVolume", FMTData.FMTReliefVolume, 6);
   appendNumber(json, "FMTAltitude", FMTData.FMTAltitude, 6);
+  appendNumber(json, "dataLogIntervalSeconds", FMTData.dataLogIntervalSeconds, 0);
   appendNumber(json, "FMTEffectiveVentingExponent", FMTData.FMTEffectiveVentingExponent, 6);
   appendNumber(json, "pressure0Current", FMTData.pressure0Current, 6);
   appendNumber(json, "pressure1Bar", FMTData.pressure1Bar, 6);
@@ -143,8 +152,38 @@ bool loadPovotoSettingsBackup(const String &settings) {
   povotoNumber = loadedFmt.PovotoNum;
   if (hasKey(json, "PovotoNum") && !readInt(json, "PovotoNum", povotoNumber)) return false;
   READ_BACKUP_FLOAT("FMTVolume", loadedFmt.FMTVolume);
+  READ_BACKUP_FLOAT("expansionTimeCoefficientA", loadedFmt.expansionTimeCoefficientA);
+  READ_BACKUP_FLOAT("expansionTimeCoefficientB", loadedFmt.expansionTimeCoefficientB);
+  READ_BACKUP_FLOAT("targetResidualAfterReliefPercent", loadedFmt.targetResidualAfterReliefPercent);
+  READ_BACKUP_FLOAT("liquidMassInGasVentingPercent", loadedFmt.liquidMassInGasVentingPercent);
+  if (hasKey(json, "ventingResidualCoefficientA")) {
+    READ_BACKUP_FLOAT("ventingResidualCoefficientA", loadedFmt.ventingResidualCoefficientA);
+    READ_BACKUP_FLOAT("ventingResidualCoefficientB", loadedFmt.ventingResidualCoefficientB);
+    READ_BACKUP_FLOAT("ventingResidualCoefficientC", loadedFmt.ventingResidualCoefficientC);
+  } else {
+    float factorAt18Bar = loadedFmt.ventingResidualCoefficientC;
+    float factorAt05Bar = loadedFmt.ventingResidualCoefficientC;
+    if (hasKey(json, "ventingResidualFactorAt18Bar")) {
+      READ_BACKUP_FLOAT("ventingResidualFactorAt18Bar", factorAt18Bar);
+      READ_BACKUP_FLOAT("ventingResidualFactorAt05Bar", factorAt05Bar);
+    } else {
+      READ_BACKUP_FLOAT("ventingResidualFactor", factorAt18Bar);
+      factorAt05Bar = factorAt18Bar;
+    }
+    loadedFmt.ventingResidualCoefficientA = 0.0f;
+    loadedFmt.ventingResidualCoefficientB = (factorAt18Bar - factorAt05Bar) / 1.3f;
+    loadedFmt.ventingResidualCoefficientC = factorAt05Bar - 0.5f * loadedFmt.ventingResidualCoefficientB;
+  }
+  if (!GasFlow::validExpansionParameters(loadedFmt.expansionTimeCoefficientA, loadedFmt.expansionTimeCoefficientB, loadedFmt.maximumPressure) ||
+      !(loadedFmt.targetResidualAfterReliefPercent > 0.0f && loadedFmt.targetResidualAfterReliefPercent < 100.0f) ||
+      !(loadedFmt.liquidMassInGasVentingPercent >= 0.0f && loadedFmt.liquidMassInGasVentingPercent <= 100.0f) ||
+      !GasFlow::validVentingResidualCoefficients(loadedFmt.ventingResidualCoefficientA,
+                                                  loadedFmt.ventingResidualCoefficientB,
+                                                  loadedFmt.ventingResidualCoefficientC)) return false;
   READ_BACKUP_FLOAT("FMTReliefVolume", loadedFmt.FMTReliefVolume);
   READ_BACKUP_FLOAT("FMTAltitude", loadedFmt.FMTAltitude);
+  READ_BACKUP_INT("dataLogIntervalSeconds", loadedFmt.dataLogIntervalSeconds);
+  if (!isValidDataLogIntervalSeconds(loadedFmt.dataLogIntervalSeconds)) return false;
   READ_BACKUP_FLOAT("FMTEffectiveVentingExponent", loadedFmt.FMTEffectiveVentingExponent);
   READ_BACKUP_FLOAT("pressure0Current", loadedFmt.pressure0Current);
   READ_BACKUP_FLOAT("pressure1Bar", loadedFmt.pressure1Bar);

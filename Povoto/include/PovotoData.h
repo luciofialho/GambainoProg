@@ -14,6 +14,11 @@
 #define XSTR(x) #x
 #define TOSTR(x) XSTR(x)
 
+constexpr int DEFAULT_DATA_LOG_INTERVAL_SECONDS = 60;
+inline bool isValidDataLogIntervalSeconds(int seconds) {
+  return seconds == 30 || seconds == 60 || seconds == 120 || seconds == 300 || seconds == 600;
+}
+
 
 struct CoolingCyclePoint_t {
   float onMinutes;
@@ -36,7 +41,18 @@ struct FMTData_t {
   float FMTVolume;
   float FMTReliefVolume;
   float FMTAltitude;
+  int dataLogIntervalSeconds;
   float FMTEffectiveVentingExponent;
+  // t(R,P) = -ln(R) / (a - b*P), with P in gauge bar and R as a fraction.
+  float expansionTimeCoefficientA;
+  float expansionTimeCoefficientB;
+  float targetResidualAfterReliefPercent;
+  float liquidMassInGasVentingPercent;
+  // F(P) = c*P^2 + d*P + e: residual fraction after 20 s of venting at
+  // gauge pressure P (bar).
+  float ventingResidualCoefficientA;
+  float ventingResidualCoefficientB;
+  float ventingResidualCoefficientC;
   float pressure0Current;
   float pressure1Bar;
   float pressure1Current;

@@ -198,6 +198,7 @@ void setup() {
   server.on("/userConfig/update", HTTP_POST, handleUserConfigUpdate);
   
   server.on("/calibration/speed.csv", HTTP_GET, handleSpeedCalibrationCSV);
+  server.on("/calibration/fit-expansion", HTTP_GET, handleExpansionResidualFit);
   server.on("/calibration/speed", HTTP_POST, handleStartSpeedCalibration);
   server.on("/calibration", HTTP_GET, handleCalibrationDataPage);
   server.on("/calibration/refresh-current", HTTP_GET, handleCalibrationCurrentRefresh);
@@ -222,6 +223,7 @@ void setup() {
   server.on("/control/startvolume", HTTP_GET, handleStartVolume);
   server.on("/control", HTTP_GET, handleControlDataPage);
   server.on("/startvolume", HTTP_GET, handleStartVolume);
+  server.on("/startvolume", HTTP_POST, handleStartVolume);
 
   server.on("/debugparams", HTTP_GET, handleDebugParamsPage);
   server.on("/debugparams/update", HTTP_POST, handleDebugParamsUpdate);
@@ -355,7 +357,7 @@ void loop() {
   maybePersistCountersData();
 
   static unsigned long lastDataLog = 0;
-  if (MILLISDIFF(lastDataLog, 60000UL)) {
+  if (MILLISDIFF(lastDataLog, (unsigned long)FMTData.dataLogIntervalSeconds * 1000UL)) {
     lastDataLog = millis();
     doDataLog();
   }
@@ -431,4 +433,7 @@ o task de dump está jogando o volume lá para cima
  * 
  * a atualizacao dos campos na tela (temperatura, por exemplo), está deixando sujeira quando os caracteres ocupam menos espaço que a atualização anterior.
  * nao calcular as coisas (abv, volume, etc) quando estiver em off
+ * padronizar nomes de expansion e venting
+ * Futuramente, tratar casos de fermentações muito rapidas
+ * 
  */

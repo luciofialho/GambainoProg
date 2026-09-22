@@ -5,6 +5,7 @@
 #include "PovotoData.h"
 #include "PovotoCommon.h"
 #include "PressureControl.h"
+#include "GasFlowModel.h"
 #include "TemperatureControl.h"
 #include "GambainoCommon.h"
 #include "IOTK_GLog.h"
@@ -220,7 +221,7 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
                 ".form-group { margin-bottom: 15px; }"
                 "label { display: block; margin-bottom: 5px; font-weight: bold; color: #333; }"
                 ".heater-time label { text-align: center; }"
-                "input[type='number'], input[type='text'] { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }"
+                "input[type='number'], input[type='text'], select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }"
                 "button { background-color: #4CAF50; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 10px; }"
                 "button:hover { background-color: #45a049; }"
                 ".btn-secondary { background-color: #888; }"
@@ -240,6 +241,18 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "</div>", remaining);
+
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<div class='form-group'><label for='dataLogIntervalSeconds'>Log interval:</label>"
+    "<select id='dataLogIntervalSeconds' name='dataLogIntervalSeconds'>", remaining);
+  const int logIntervals[] = {30, 60, 120, 300, 600};
+  const char *logIntervalLabels[] = {"30 seconds", "1 minute", "2 minutes", "5 minutes", "10 minutes"};
+  for (uint8_t i = 0; i < sizeof(logIntervals) / sizeof(logIntervals[0]); ++i) {
+    snprintf(buffer, sizeof(buffer), "<option value='%d'%s>%s</option>", logIntervals[i],
+      FMTData.dataLogIntervalSeconds == logIntervals[i] ? " selected" : "", logIntervalLabels[i]);
+    strncat(html, buffer, BUFFER_SIZE - strlen(html) - 1);
+  }
+  strncat(html, "</select></div>", BUFFER_SIZE - strlen(html) - 1);
   
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='form-group'>"
@@ -390,6 +403,14 @@ void handleFMTDataUpdate(AsyncWebServerRequest *request) {
   }
   if (request->hasParam("FMTAltitude", true)) {
     FMTData.FMTAltitude = request->getParam("FMTAltitude", true)->value().toFloat();
+  }
+  if (request->hasParam("dataLogIntervalSeconds", true)) {
+    const int interval = request->getParam("dataLogIntervalSeconds", true)->value().toInt();
+    if (!isValidDataLogIntervalSeconds(interval)) {
+      request->send(400, "text/plain", "Log interval must be 30 seconds, 1, 2, 5, or 10 minutes.");
+      return;
+    }
+    FMTData.dataLogIntervalSeconds = interval;
   }
   if (request->hasParam("FMTEffectiveVentingExponent", true)) {
     const float exponent = request->getParam("FMTEffectiveVentingExponent", true)->value().toFloat();
@@ -679,6 +700,29 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
 
   String page(html);
   String volumeStatus = "Not running";
+  String gasFields = "<h2>Gas flow transfer speed</h2>"
+    "<p>Time to reach R% residual pressure at pressure P: t(R,P) = &minus;ln(R)/(a &minus; b &middot; P), with P in gauge bar and R as a fraction.</p>"
+    "<div class='form-group'><label for='targetResidualAfterReliefPercent'>Target residual pressure after relief (%)</label><input type='number' id='targetResidualAfterReliefPercent' name='targetResidualAfterReliefPercent' step='0.01' min='0.01' max='99.99' required value='" + String(FMTData.targetResidualAfterReliefPercent, 3) + "'></div>"
+    "<div style='display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px'>"
+    "<div class='form-group'><label for='expansionTimeCoefficientA'>Coefficient a</label><input type='number' id='expansionTimeCoefficientA' name='expansionTimeCoefficientA' step='any' required value='" + String(FMTData.expansionTimeCoefficientA, 6) + "'></div>"
+    "<div class='form-group'><label for='expansionTimeCoefficientB'>Coefficient b</label><input type='number' id='expansionTimeCoefficientB' name='expansionTimeCoefficientB' step='any' required value='" + String(FMTData.expansionTimeCoefficientB, 6) + "'></div></div>"
+    "<p>Expansion time for R = " + String(FMTData.targetResidualAfterReliefPercent, 3) + "% at 1 bar: " +
+    String(GasFlow::expansionTime(1.0, FMTData.targetResidualAfterReliefPercent / 100.0,
+      FMTData.expansionTimeCoefficientA, FMTData.expansionTimeCoefficientB), 2) + " s.</p>";
+  const double ventingFactorAtOneBar = GasFlow::ventingResidualFactorAtPressure(1.0,
+    FMTData.ventingResidualCoefficientA, FMTData.ventingResidualCoefficientB,
+    FMTData.ventingResidualCoefficientC);
+  const double ventingTimeAtOneBar = GasFlow::ventingSecondsForResidual(
+    FMTData.targetResidualAfterReliefPercent / 100.0,
+    FMTData.FMTVolume, FMTData.FMTReliefVolume, ventingFactorAtOneBar);
+  gasFields += "<p>Venting residual curve after 20 s: F(P) = c &middot; P<sup>2</sup> + d &middot; P + e (P in gauge bar)</p>"
+    "<div style='display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px'>"
+    "<div class='form-group'><label for='ventingResidualCoefficientA'>c</label><input type='number' id='ventingResidualCoefficientA' name='ventingResidualCoefficientA' step='any' required value='" + String(FMTData.ventingResidualCoefficientA, 6) + "'></div>"
+    "<div class='form-group'><label for='ventingResidualCoefficientB'>d</label><input type='number' id='ventingResidualCoefficientB' name='ventingResidualCoefficientB' step='any' required value='" + String(FMTData.ventingResidualCoefficientB, 6) + "'></div>"
+    "<div class='form-group'><label for='ventingResidualCoefficientC'>e</label><input type='number' id='ventingResidualCoefficientC' name='ventingResidualCoefficientC' step='any' required value='" + String(FMTData.ventingResidualCoefficientC, 6) + "'></div></div>"
+    "<p>Venting time for R = " + String(FMTData.targetResidualAfterReliefPercent, 3) + "% at 1 bar: " + String(ventingTimeAtOneBar, 2) + " s.</p>"
+    "<div class='form-group'><label for='liquidMassInGasVentingPercent'>Liquid mass in gas venting (%)</label><input type='number' id='liquidMassInGasVentingPercent' name='liquidMassInGasVentingPercent' step='0.01' min='0' max='100' required value='" + String(FMTData.liquidMassInGasVentingPercent, 3) + "'></div>";
+  page.replace("<button type='submit'>Save</button>", gasFields + "<button type='submit'>Save</button>");
   if (isVolumeDeterminationActive()) {
     volumeStatus = "Running - relief cycles: " + String(getVolumeDeterminationIteration()) + "/35";
   } else {
@@ -692,16 +736,16 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
     "<p>Requirements: Mode OFF; initial pressure at least 1.9 bar.</p><p>No pressure target.</p>" +
     "<hr><h3>FMT volume determination</h3>" +
     "<p>Determines the fermenter total volume from the pressure reduction produced by repeated expansions into the configured relief volume. " +
-    "The first five cycles stabilize the system. Each following expansion stays open for three minutes, then pressure is read four minutes after closing. " +
+    "Slow mode keeps the existing three-minute expansion and four-minute settling time. Fast mode uses t(R,P) for each expansion and waits two minutes after closing. " +
     "The test stops when the volume estimates converge, or after 35 relief cycles. It reports both the initial-to-final-pressure and full-series-fit results, compensated for temperature.</p>" +
     "<p>Convergence requires at least 10 valid expansions: the last five fitted estimates must span less than 0.5%, with a trend below 0.05% per cycle and settled pressure. " +
     "The endpoint and full-series results must agree within 1%, and the fit of the last 10 readings must agree with the full-series fit within 0.5%. The CSV includes these diagnostics.</p>" +
-    "<form action='/startvolume'><button>Volume determination</button></form><p>" + volumeStatus + "</p>" +
+    "<form action='/startvolume' method='POST'><button name='mode' value='slow'>Volume determination (slow)</button> <button name='mode' value='fast'>Volume determination (fast)</button></form><p>" + volumeStatus + "</p>" +
     "<p>Download results: <a href='/pressurehistory'>Pressure history</a> | " +
     "<a href='/pressuredump'>Pressure dump</a></p>" +
     "<hr><h3>Gas transfer speed determination</h3>" +
-    "<p>Expansion speed: 5 cycles of 1, 2, 4, 6, 8, 10, 12, 14, 16 and 30 seconds. Venting speed: 5 cycles of 1, 2, 4, 6 and 8 seconds. Wait 3 minutes after closing (10 seconds in debug mode).</p>" +
-    "<p>For venting, the actual opening time is multiplied by fermenter volume / expansion volume; the CSV keeps the nominal test times and also reports the actual opening time. Venting requires the valve outlet connected to atmosphere.</p>" +
+    "<p>Expansion speed: 5 cycles of 1, 2, 4, 6, 8, 10, 12, 14, 16 and 30 seconds. Venting speed: 10 successive releases of 20 seconds, without repressurization. Wait 3 minutes after closing (10 seconds in debug mode) before each pressure reading.</p>" +
+    "<p>Venting speed records pressureAfter / pressureBefore for each 20-second release; it does not change the calibration fields. The test stops after ten releases or when the measured pressure falls below 0.4 bar. Venting requires the valve outlet connected to atmosphere.</p>" +
     "<form action='/calibration/speed' method='POST'><button name='type' value='expansion'>Expansion speed</button> " +
     "<button name='type' value='venting'>Venting speed</button></form><p>" + getSpeedCalibrationStatus() + "</p>" +
     "<p>Download results: <a href='/calibration/speed.csv?type=expansion'>Expansion CSV</a> | " +
@@ -713,6 +757,13 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
 }
 
 void handleCalibrationDataUpdate(AsyncWebServerRequest *request) {
+  const float curveA = request->hasParam("expansionTimeCoefficientA", true) ? request->getParam("expansionTimeCoefficientA", true)->value().toFloat() : FMTData.expansionTimeCoefficientA;
+  const float curveB = request->hasParam("expansionTimeCoefficientB", true) ? request->getParam("expansionTimeCoefficientB", true)->value().toFloat() : FMTData.expansionTimeCoefficientB;
+  const float targetResidual = request->hasParam("targetResidualAfterReliefPercent", true) ? request->getParam("targetResidualAfterReliefPercent", true)->value().toFloat() : FMTData.targetResidualAfterReliefPercent;
+  const float liquidMass = request->hasParam("liquidMassInGasVentingPercent", true) ? request->getParam("liquidMassInGasVentingPercent", true)->value().toFloat() : FMTData.liquidMassInGasVentingPercent;
+  const float ventingResidualCoefficientA = request->hasParam("ventingResidualCoefficientA", true) ? request->getParam("ventingResidualCoefficientA", true)->value().toFloat() : FMTData.ventingResidualCoefficientA;
+  const float ventingResidualCoefficientB = request->hasParam("ventingResidualCoefficientB", true) ? request->getParam("ventingResidualCoefficientB", true)->value().toFloat() : FMTData.ventingResidualCoefficientB;
+  const float ventingResidualCoefficientC = request->hasParam("ventingResidualCoefficientC", true) ? request->getParam("ventingResidualCoefficientC", true)->value().toFloat() : FMTData.ventingResidualCoefficientC;
   const float p1 = request->hasParam("pressure1Bar", true) ? request->getParam("pressure1Bar", true)->value().toFloat() : FMTData.pressure1Bar;
   const float p2 = request->hasParam("pressure2Bar", true) ? request->getParam("pressure2Bar", true)->value().toFloat() : FMTData.pressure2Bar;
   const float c0 = request->hasParam("pressure0Current", true) ? request->getParam("pressure0Current", true)->value().toFloat() : FMTData.pressure0Current;
@@ -720,6 +771,13 @@ void handleCalibrationDataUpdate(AsyncWebServerRequest *request) {
   const float c2 = request->hasParam("pressure2Current", true) ? request->getParam("pressure2Current", true)->value().toFloat() : FMTData.pressure2Current;
   const float maxP = request->hasParam("maximumPressure", true) ? request->getParam("maximumPressure", true)->value().toFloat() : FMTData.maximumPressure;
   const bool threePoint = request->hasParam("threePoint", true);
+  if (!GasFlow::validExpansionParameters(curveA, curveB, maxP) ||
+      !(targetResidual > 0.0f && targetResidual < 100.0f) || !(liquidMass >= 0.0f && liquidMass <= 100.0f) ||
+      !GasFlow::validVentingResidualCurve(ventingResidualCoefficientA, ventingResidualCoefficientB,
+                                           ventingResidualCoefficientC, maxP)) {
+    request->send(400, "text/plain", "Invalid gas-flow parameters. a - b*P must remain positive through maximum pressure, and residual/liquid mass must be percentages between 0 and 100.");
+    return;
+  }
   if (!(p1 > 0.5f && p1 < maxP) || (threePoint && p2 != 0.0f && !(p2 > p1 + 0.5f && p2 < maxP)) || !(c1 > c0) || (threePoint && p2 != 0.0f && !(c2 > c1)) || !(maxP > 2.0f && maxP < 3.0f)) {
     request->send(400, "text/plain", "Invalid calibration values. Check pressure, current and maximum pressure limits.");
     return;
@@ -753,6 +811,13 @@ void handleCalibrationDataUpdate(AsyncWebServerRequest *request) {
     FMTData.nucleationWindow = request->getParam("nucleationWindow", true)->value().toInt();
   }
   
+  FMTData.expansionTimeCoefficientA = curveA;
+  FMTData.expansionTimeCoefficientB = curveB;
+  FMTData.targetResidualAfterReliefPercent = targetResidual;
+  FMTData.liquidMassInGasVentingPercent = liquidMass;
+  FMTData.ventingResidualCoefficientA = ventingResidualCoefficientA;
+  FMTData.ventingResidualCoefficientB = ventingResidualCoefficientB;
+  FMTData.ventingResidualCoefficientC = ventingResidualCoefficientC;
   writeFMTDataToNIV();
   
   String html = "<!DOCTYPE html><html><head>";
@@ -1518,7 +1583,8 @@ void handleStartSpeedCalibration(AsyncWebServerRequest *request) {
 void handleStartVolume(AsyncWebServerRequest *request) {
   char reason[80];
   
-  bool started = startVolumeDetermination(reason, sizeof(reason));
+  const bool fast = request->hasParam("mode", true) && request->getParam("mode", true)->value() == "fast";
+  bool started = startVolumeDetermination(fast, reason, sizeof(reason));
   if (started) {
     request->redirect("/calibration?volume=1");
   } else {
