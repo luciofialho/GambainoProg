@@ -379,6 +379,11 @@ void doReliefDataLog(const ReliefLogData &data) {
     GLogAddData("GasCalculatedPressureCompensation");
     GLogAddData("GasAppliedPressureCompensation");
     GLogAddData("GasHeadspaceUpdateStatus");
+    GLogAddData("PolytropicSourceReliefNumber");
+    GLogAddData("PolytropicSampleCount");
+    GLogAddData("PolytropicBackExtrapolatedPressure");
+    GLogAddData("PolytropicFitSlopeBarPerMinute");
+    GLogAddData("PolytropicEstimatedExponent");
     GLogSend();
     headerWritten = true;
   }
@@ -448,5 +453,10 @@ void doReliefDataLog(const ReliefLogData &data) {
   GLogAddData(data.gasCalculatedPressureCompensation, 6);
   GLogAddData(data.gasAppliedPressureCompensation, 6);
   GLogAddData(data.gasHeadspaceUpdateStatus);
+  GLogAddData(data.polytropicSourceReliefNumber);
+  GLogAddData(data.polytropicSampleCount);
+  GLogAddData(data.polytropicBackExtrapolatedPressure, 6);
+  GLogAddData(data.polytropicFitSlopeBarPerMinute, 8);
+  GLogAddData(data.polytropicEstimatedExponent, 6);
   GLogSend();
 }

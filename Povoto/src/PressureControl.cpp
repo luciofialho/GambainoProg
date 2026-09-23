@@ -92,6 +92,21 @@ static unsigned long int timeToFinishExpansion    = 0;
 static unsigned long int timeToRegisterPressure = 0; // after a relief event
 static unsigned long int noPressureReadUntil = 0;
 static unsigned long reliefValveOpenedMillis = 0;
+static unsigned long reliefValveClosedMillis = 0;
+static constexpr unsigned long POLYTROPIC_SETTLE_MS = 3UL * MINUTESms;
+static constexpr unsigned long POLYTROPIC_SAMPLE_INTERVAL_MS = 500UL;
+static constexpr uint8_t POLYTROPIC_SAMPLE_COUNT = 8;
+struct PolytropicPressureSample { unsigned long millisStamp; float pressure; };
+static PolytropicPressureSample polytropicSamples[POLYTROPIC_SAMPLE_COUNT];
+static uint8_t polytropicSampleCount = 0, polytropicSampleNext = 0;
+static unsigned long polytropicLastSampleMillis = 0;
+static unsigned long polytropicReferenceCloseMillis = 0;
+static unsigned long polytropicReferenceReliefNumber = 0;
+static float polytropicReferencePressureBefore = NAN, polytropicReferencePressureAfter = NAN;
+static unsigned long polytropicSourceReliefNumber = 0;
+static uint8_t polytropicResultSampleCount = 0;
+static float polytropicBackExtrapolatedPressure = NAN;
+static float polytropicFitSlopeBarPerMinute = NAN, polytropicEstimatedExponent = NAN;
 static float currentOnReliefMeasured = 0.0f;
 
 float  adjustedPressureAfterRelief;
@@ -1670,6 +1685,73 @@ static float adjustedEquilibriumPressureForPostRelief(float postReliefPressure,
   return pressureOnReliefMeas - (pressureOnReliefMeas - adjusted) / (1.0f - residual);
 }
 
+static void clearPolytropicSamples() {
+  polytropicSampleCount = polytropicSampleNext = 0;
+  polytropicLastSampleMillis = 0;
+}
+
+static void collectPolytropicPressureSample(unsigned long now) {
+  if (!polytropicReferenceCloseMillis || ControlData.transferValve ||
+      !isfinite(ControlData.pressure) || ControlData.pressure <= 0.0f ||
+      !MILLISDIFF(polytropicReferenceCloseMillis, POLYTROPIC_SETTLE_MS) ||
+      !MILLISDIFF(noPressureReadUntil, 0) || inPressureNoiseWindow()) return;
+  if (polytropicLastSampleMillis &&
+      now - polytropicLastSampleMillis < POLYTROPIC_SAMPLE_INTERVAL_MS) return;
+  if (polytropicLastSampleMillis &&
+      now - polytropicLastSampleMillis > 1500UL) clearPolytropicSamples();
+  polytropicSamples[polytropicSampleNext] = {now, ControlData.pressure};
+  polytropicSampleNext = (polytropicSampleNext + 1) % POLYTROPIC_SAMPLE_COUNT;
+  if (polytropicSampleCount < POLYTROPIC_SAMPLE_COUNT) ++polytropicSampleCount;
+  polytropicLastSampleMillis = now;
+}
+
+static void estimatePreviousReliefPolytropicExponent() {
+  polytropicSourceReliefNumber = polytropicReferenceReliefNumber;
+  polytropicResultSampleCount = polytropicSampleCount;
+  polytropicBackExtrapolatedPressure = NAN;
+  polytropicFitSlopeBarPerMinute = NAN;
+  polytropicEstimatedExponent = NAN;
+  if (!polytropicReferenceCloseMillis ||
+      polytropicSampleCount != POLYTROPIC_SAMPLE_COUNT ||
+      !isfinite(polytropicReferencePressureBefore) ||
+      !isfinite(polytropicReferencePressureAfter)) return;
+
+  double sx = 0, sy = 0, sxx = 0, sxy = 0;
+  unsigned long previousElapsed = 0;
+  for (uint8_t i = 0; i < POLYTROPIC_SAMPLE_COUNT; ++i) {
+    const uint8_t idx = (polytropicSampleNext + POLYTROPIC_SAMPLE_COUNT -
+                         POLYTROPIC_SAMPLE_COUNT + i) % POLYTROPIC_SAMPLE_COUNT;
+    const PolytropicPressureSample &sample = polytropicSamples[idx];
+    const unsigned long elapsedMs = sample.millisStamp - polytropicReferenceCloseMillis;
+    if (elapsedMs < POLYTROPIC_SETTLE_MS ||
+        (i && (elapsedMs <= previousElapsed ||
+               elapsedMs - previousElapsed < 250UL ||
+               elapsedMs - previousElapsed > 1500UL))) return;
+    previousElapsed = elapsedMs;
+    const double x = elapsedMs / 1000.0;
+    const double y = sample.pressure;
+    sx += x; sy += y; sxx += x*x; sxy += x*y;
+  }
+
+  const double n = POLYTROPIC_SAMPLE_COUNT;
+  const double denominator = n*sxx - sx*sx;
+  if (denominator <= 0) return;
+  const double slope = (n*sxy - sx*sy) / denominator;
+  const double intercept = (sy - slope*sx) / n;
+  polytropicBackExtrapolatedPressure = intercept;
+  polytropicFitSlopeBarPerMinute = slope * 60.0;
+
+  const double pBeforeAbs = polytropicReferencePressureBefore + Patm;
+  const double pAfterAbs = polytropicReferencePressureAfter + Patm;
+  const double pAdjustedAbs = intercept + Patm;
+  if (!(pAfterAbs > 0 && pAdjustedAbs > pAfterAbs &&
+        pBeforeAbs > pAdjustedAbs)) return;
+  const double exponent = log(pAfterAbs / pBeforeAbs) /
+                          log(pAdjustedAbs / pBeforeAbs);
+  if (isfinite(exponent) && exponent >= 0.5 && exponent <= 2.0)
+    polytropicEstimatedExponent = exponent;
+}
+
 void processPressure(bool afterRelief) {
   // Capture the old volume before a relief can update headspace below.
   const float beerVolumeBeforeEvent = beerVolume;
@@ -1819,6 +1901,10 @@ void processPressure(bool afterRelief) {
       (1.0f - FMTData.liquidMassInGasVentingPercent / 100.0f);
     
     CountersData.totalReliefCount += 1;    
+    polytropicReferenceCloseMillis = reliefValveClosedMillis;
+    polytropicReferenceReliefNumber = CountersData.totalReliefCount;
+    polytropicReferencePressureBefore = pressureOnReliefMeas;
+    polytropicReferencePressureAfter = pressureAfterRelief;
 
   }
 
@@ -1963,6 +2049,11 @@ void processPressure(bool afterRelief) {
     reliefLog.totalReliefCount = CountersData.totalReliefCount;
     reliefLog.reliefsPerHour = reliefsPerHourValue;
     reliefLog.beerCO2EvolutionGramsPerLiterPerDay = beerCO2EvolutionGramsPerLiterPerDay;
+    reliefLog.polytropicSourceReliefNumber = polytropicSourceReliefNumber;
+    reliefLog.polytropicSampleCount = polytropicResultSampleCount;
+    reliefLog.polytropicBackExtrapolatedPressure = polytropicBackExtrapolatedPressure;
+    reliefLog.polytropicFitSlopeBarPerMinute = polytropicFitSlopeBarPerMinute;
+    reliefLog.polytropicEstimatedExponent = polytropicEstimatedExponent;
     doReliefDataLog(reliefLog);
 
     // The third relief was logged using the configured initial volume. Its
@@ -1993,6 +2084,7 @@ bool processReliefCycle() {
       }
       else {
         //;Serial.printf("[PRESSURE] %lu / %lu: Abrindo transfer valve. Pressure=%.2f bar\n", millis(), timeToStartExpansion, ControlData.pressure);
+        estimatePreviousReliefPolytropicExponent();
         pressureOnReliefMeas = ControlData.pressure;
         currentOnReliefMeasured = currentReading;
         ReliefStartPressureTime = millis();
@@ -2045,6 +2137,8 @@ bool processReliefCycle() {
         markSolenoidToggle();
         ControlData.transferValve = false;
         const unsigned long transferClosedMillis = millis();
+        reliefValveClosedMillis = transferClosedMillis;
+        clearPolytropicSamples();
         // The measured inventory is installed at the post-relief reading, but
         // its venting clock starts when the transfer valve actually closes.
         gasClosedMillis = transferClosedMillis;
@@ -2859,6 +2953,8 @@ void pressureControl() {
     pressureReachedTarget = ControlData.pressure;
     pressureReachedTargetMillis = millis();
   }
+
+  collectPolytropicPressureSample(millis());
 
   if (volumeDeterminationActive) {
     if (volumeConverged || volumeIteration >= VOLUME_DETERMINATION_RECORD_END_CYCLE) {

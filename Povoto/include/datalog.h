@@ -70,6 +70,11 @@ struct ReliefLogData {
   unsigned long totalReliefCount;
   float reliefsPerHour;
   float beerCO2EvolutionGramsPerLiterPerDay;
+  unsigned long polytropicSourceReliefNumber;
+  uint8_t polytropicSampleCount;
+  float polytropicBackExtrapolatedPressure;
+  float polytropicFitSlopeBarPerMinute;
+  float polytropicEstimatedExponent;
 };
 
 void doDataLog();
