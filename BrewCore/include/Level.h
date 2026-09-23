@@ -1,5 +1,6 @@
 #ifndef Level_h
 #include "Todo.h"
+#include <stddef.h>
 
 #define Level_h
 
@@ -49,6 +50,6 @@ void startCalibration(byte mode);
 
 void stopCalibration();
 
-char *getCalibration(char *buf);
+char *getCalibration(char *buf, size_t bufSize);
 
 #endif

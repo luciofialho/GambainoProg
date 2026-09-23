@@ -6,9 +6,16 @@
 #include <WaterHeatControl.h>
 #include <Status.h>
 #include <UI.h>
-#include "__NumFilters.h"
 
 unsigned long int lastMillis = 0; // used to any kind of time control in this file
+
+const char * const CircStatusNames[NUMCIRCSTATUS] = {
+  "Circ: None",
+  "Circ: Heat",
+  "Circ: SPARGE",
+  "Circ: HLT to MLT",
+  "Circ: CIP"
+};
 
 void HLTTempVolControl()
 {
@@ -187,23 +194,6 @@ void tempVolControl()
 {
   HLTTempVolControl();
   BKTempControl();    
-
-
-  static unsigned long int lastTempAvg = 0;
-  #define TEMPAVGINTERVAL (2*DALLASREQUESTINTERVAL)
-  static averageFloatVector HLTavg(8);
-  static averageFloatVector BKavg (8);
-  if (MILLISDIFF(lastTempAvg,TEMPAVGINTERVAL)) {
-    static float lastHLTTemp;
-    static float lastBKTemp;
-    
-    int factor = int((100*MINUTESms)/(millis()-lastTempAvg));
-    lastTempAvg = millis();
-    HLTavg.add((HLTTemp - lastHLTTemp)*factor);
-    BKavg .add((BKTemp  - lastBKTemp )*factor);
-    lastHLTTemp = HLTTemp;
-    lastBKTemp  = BKTemp;
-  } 
 }
 
 float HLTTargetTempForMLTHeating(bool evaluateCoilEfficiency) {

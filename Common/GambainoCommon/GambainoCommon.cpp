@@ -122,7 +122,7 @@ void peerUpdateOwnAddress() {
     case PEERTYPE_BREWCORE: peerBrewCore = self; break;
     case PEERTYPE_SIDEKICK: peerSideKick = self; break;
     case PEERTYPE_POVOTO:
-      if (ownPeerIndex >= 0 && ownPeerIndex < MAXFMTS)
+      if (ownPeerIndex >= 1 && ownPeerIndex <= MAXFMTS)
         peerPovotos[ownPeerIndex-1] = self;
       break;
   }
@@ -132,6 +132,16 @@ void peerUpdateOwnAddress() {
 }
 
 // ---- HTML page helpers ----
+
+static void appendPeerText(char *st, size_t capacity, const char *text) {
+  if (!st || capacity == 0) return;
+  const size_t used = strnlen(st, capacity);
+  if (used >= capacity) {
+    st[capacity - 1] = '\0';
+    return;
+  }
+  strncat(st, text, capacity - used - 1);
+}
 
 static void appendPeerRow(char *st, size_t maxLen, const char *label, const char *keyMac, const char *keyIp, const GambainoPeer &p) {
   char macStr[18] = "";
@@ -146,19 +156,19 @@ static void appendPeerRow(char *st, size_t maxLen, const char *label, const char
     "<td><input name='%s' value='%s' size='15' placeholder='192.168.1.x'></td>"
     "</tr>",
     label, keyMac, macStr, keyIp, ipStr);
-  strncat(st, row, maxLen - strlen(st) - 1);
+  appendPeerText(st, maxLen, row);
 }
 
 void getPeerStatus(char *st, size_t maxLen) {
   char row[256];
-  strncat(st, "<br><b>Peer Addresses</b> (<a href='/peersetup'>edit</a>)<br>", maxLen - strlen(st) - 1);
+  appendPeerText(st, maxLen, "<br><b>Peer Addresses</b> (<a href='/peersetup'>edit</a>)<br>");
 
   auto fmt = [&](const char *name, const GambainoPeer &p) {
     char mac[18] = "", ip[16] = "";
     formatMacAddress(p.mac, mac, sizeof(mac));
     snprintf(ip, sizeof(ip), "%d.%d.%d.%d", p.ip[0], p.ip[1], p.ip[2], p.ip[3]);
     snprintf(row, sizeof(row), "&nbsp;&nbsp;%s: MAC=%s IP=%s<br>", name, mac, ip);
-    strncat(st, row, maxLen - strlen(st) - 1);
+    appendPeerText(st, maxLen, row);
   };
 
   fmt("BrewCore", peerBrewCore);
@@ -226,14 +236,21 @@ static void handlePeerSetupGet(AsyncWebServerRequest *request) {
 }
 
 static bool parseIp(const String &s, uint8_t ip[4]) {
-  int idx = 0, start = 0;
-  for (int i = 0; i <= (int)s.length() && idx < 4; i++) {
-    if (i == (int)s.length() || s[i] == '.') {
-      ip[idx++] = (uint8_t)s.substring(start, i).toInt();
-      start = i + 1;
+  uint8_t parsed[4];
+  size_t pos = 0;
+  for (int idx = 0; idx < 4; ++idx) {
+    unsigned value = 0, digits = 0;
+    while (pos < s.length() && s[pos] >= '0' && s[pos] <= '9') {
+      value = value * 10 + (s[pos++] - '0');
+      if (++digits > 3 || value > 255) return false;
     }
+    if (!digits) return false;
+    parsed[idx] = value;
+    if (idx < 3 && (pos >= s.length() || s[pos++] != '.')) return false;
   }
-  return idx == 4;
+  if (pos != s.length()) return false;
+  memcpy(ip, parsed, sizeof(parsed));
+  return true;
 }
 
 static void handlePeerSetupPost(AsyncWebServerRequest *request) {
@@ -241,20 +258,29 @@ static void handlePeerSetupPost(AsyncWebServerRequest *request) {
     return request->hasParam(key, true) ? request->getParam(key, true)->value() : String("");
   };
 
-  auto applyPeer = [&](const char *km, const char *ki, GambainoPeer &p) {
+  auto applyPeer = [&](const char *km, const char *ki, GambainoPeer &p) -> bool {
     String sm = getStr(km); String si = getStr(ki);
-    if (sm.length() >= 17) parseMacAddress(sm, p.mac);
-    if (si.length() >= 7)  parseIp(si, p.ip);
+    return parseMacAddress(sm, p.mac) && parseIp(si, p.ip);
   };
 
-  applyPeer("bc_mac", "bc_ip", peerBrewCore);
-  applyPeer("sk_mac", "sk_ip", peerSideKick);
+  GambainoPeer brewCore = peerBrewCore, sideKick = peerSideKick;
+  GambainoPeer povotos[MAXFMTS];
+  memcpy(povotos, peerPovotos, sizeof(povotos));
+  bool valid = applyPeer("bc_mac", "bc_ip", brewCore);
+  valid = applyPeer("sk_mac", "sk_ip", sideKick) && valid;
   for (int i = 0; i < MAXFMTS; i++) {
     char km[12], ki[12];
     snprintf(km, sizeof(km), "p%d_mac", i);
     snprintf(ki, sizeof(ki), "p%d_ip",  i);
-    applyPeer(km, ki, peerPovotos[i]);
+    valid = applyPeer(km, ki, povotos[i]) && valid;
   }
+  if (!valid) {
+    request->send(400, "text/plain", "Invalid MAC or IPv4 address. No changes saved.");
+    return;
+  }
+  peerBrewCore = brewCore;
+  peerSideKick = sideKick;
+  memcpy(peerPovotos, povotos, sizeof(povotos));
   savePeers();
   request->redirect("/peersetup");
 }
@@ -277,28 +303,45 @@ static void buildOwnPeerPayload(char *buf, size_t bufLen) {
 static void applyPeerPayload(const char *payload, const uint8_t *senderMac) {
   // payload format: "<type>,<index>,<mac>,<ip>,<debug>"
   char buf[120];
+  if (!payload || strnlen(payload, sizeof(buf)) >= sizeof(buf)) return;
   strncpy(buf, payload, sizeof(buf) - 1);
   buf[sizeof(buf) - 1] = '\0';
 
-  char *tok = strtok(buf, ",");
+  unsigned fields = 1;
+  for (size_t i = 0; buf[i]; ++i) {
+    if (buf[i] != ',') continue;
+    if (i == 0 || buf[i - 1] == ',' || buf[i + 1] == '\0') return;
+    ++fields;
+  }
+  if (fields != 5) return;
+  char *context = nullptr;
+  char *tok = strtok_r(buf, ",", &context);
   if (!tok) return;
+  if (strlen(tok) != 1) return;
   char ptype = tok[0];
 
-  tok = strtok(NULL, ",");
+  tok = strtok_r(NULL, ",", &context);
   if (!tok) return;
-  int pidx = atoi(tok);
+  char *end = nullptr;
+  long pidx = strtol(tok, &end, 10);
+  if (*end || pidx < 0 || pidx > MAXFMTS) return;
+  if (ptype != PEERTYPE_BREWCORE && ptype != PEERTYPE_SIDEKICK && ptype != PEERTYPE_POVOTO) return;
+  if (ptype == PEERTYPE_POVOTO && pidx < 1) return;
 
-  tok = strtok(NULL, ",");
+  tok = strtok_r(NULL, ",", &context);
   if (!tok) return;
-  char macStr[18]; strncpy(macStr, tok, sizeof(macStr) - 1);
+  GambainoPeer p = {};
+  if (!parseMacAddress(String(tok), p.mac)) return;
 
-  tok = strtok(NULL, ",");
+  tok = strtok_r(NULL, ",", &context);
   if (!tok) return;
-  char ipStr[16]; strncpy(ipStr, tok, sizeof(ipStr) - 1);
+  if (!parseIp(String(tok), p.ip)) return;
 
-  tok = strtok(NULL, ",");
+  tok = strtok_r(NULL, ",", &context);
   if (!tok) return;
-  bool remoteDebug = (atoi(tok) != 0);
+  if (strcmp(tok, "0") != 0 && strcmp(tok, "1") != 0) return;
+  bool remoteDebug = tok[0] == '1';
+  if (strtok_r(NULL, ",", &context)) return;
 
   // Only accept replies matching our own debug mode
   if (remoteDebug != debugging) {
@@ -306,10 +349,6 @@ static void applyPeerPayload(const char *payload, const uint8_t *senderMac) {
                   (int)remoteDebug, (int)debugging);
     return;
   }
-
-  GambainoPeer p;
-  parseMacAddress(String(macStr), p.mac);
-  parseIp(String(ipStr), p.ip);
 
   switch (ptype) {
     case PEERTYPE_BREWCORE: peerBrewCore = p; break;
@@ -319,7 +358,7 @@ static void applyPeerPayload(const char *payload, const uint8_t *senderMac) {
       break;
   }
   savePeers();
-  Serial.printf("Peer auto-detect: applied %c[%d] from payload\n", ptype, pidx);
+  Serial.printf("Peer auto-detect: applied %c[%ld] from payload\n", ptype, pidx);
 }
 
 // Broadcast MAC (ESP-NOW)
@@ -752,6 +791,7 @@ char readSerial2(char *buf, int bufsize) {
 }
 
 bool parseMacAddress(const String &value, uint8_t mac[6]) {
+  uint8_t parsed[6];
   int index = 0;
   int len = value.length();
   int i = 0;
@@ -771,9 +811,11 @@ bool parseMacAddress(const String &value, uint8_t mac[6]) {
     int n1 = hexToNibble(c1);
     int n2 = hexToNibble(c2);
     if (n1 < 0 || n2 < 0) return false;
-    mac[index++] = (uint8_t)((n1 << 4) | n2);
+    parsed[index++] = (uint8_t)((n1 << 4) | n2);
   }
-  return index == 6;
+  if (index != 6 || i != len) return false;
+  memcpy(mac, parsed, sizeof(parsed));
+  return true;
 }
 
 void formatMacAddress(const uint8_t mac[6], char *out, size_t outSize) {
@@ -848,6 +890,7 @@ esp_err_t sendEspNow(const uint8_t *mac, uint8_t channel, bool encrypt, uint8_t 
 
   const size_t   maxData = ESPNOW_MAX_CHUNK;
   const size_t   len     = strlen(payload);
+  if (len > MAXPACKETSIZE) return ESP_ERR_ESPNOW_ARG;
   const uint16_t total   = (uint16_t)((len + maxData - 1) / maxData);
   if (total == 0) return ESP_OK;
 
@@ -974,7 +1017,7 @@ bool processEspNowData(const uint8_t *data, int len, const uint8_t *senderMac,
   }
 
   if (packetType != entry->packetType || total != entry->expectedTotal || seq != entry->nextSeq ||
-      entry->offset + chunkLen >= MAXPACKETSIZE) {
+      entry->offset + chunkLen > MAXPACKETSIZE) {
     espnowDrops_++;
     espnowResetCount_++;
     resetEspNowReassembly(*entry);

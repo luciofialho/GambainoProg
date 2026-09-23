@@ -62,6 +62,7 @@ DECL('C',Status,                             ,MODEFLOAT,            PROCESSPERSI
 DECL('C',SubStatus,                          ,MODEFLOAT,            PROCESSPERSISTENCE, 0,        NOPIN,               DATALOGOFF,     JSONPROCESS,  NOTINVERTED, NORMALOVERRIDE, NODALLAS)
 DECL('C',IPCStatus,                          ,MODEFLOAT,            PROCESSPERSISTENCE, 0,        NOPIN,               DATALOGOFF,     JSONPROCESS,  NOTINVERTED, NORMALOVERRIDE, NODALLAS)
 DECL('C',EndStatus,                          ,MODEFLOAT,            PROCESSPERSISTENCE, 0,        NOPIN,               DATALOGOFF,     NOJSON,       NOTINVERTED, NORMALOVERRIDE, NODALLAS)
+DECL('C',TopUpHydrationCompletedProcedure,THC,MODEFLOAT,            PROCESSPERSISTENCE, 0,        NOPIN,               DATALOGOFF,     JSONPROCESS,  NOTINVERTED, NORMALOVERRIDE, NODALLAS)
 DECL('C',SkipToNextStatus,                   ,MODEFLOAT,            NOTPERSISTENT,      0,        NOPIN,               DATALOGOFF,     NOJSON,       NOTINVERTED, NORMALOVERRIDE, NODALLAS)
 DECL('C',CirculationMode,                    ,MODEFLOAT,            PROCESSPERSISTENCE, 0,        NOPIN,               DATALOGPROCESS, JSONPROCESS,  NOTINVERTED, NORMALOVERRIDE, NODALLAS)
 DECL('C',LineConfiguration,                  ,MODEFLOAT,            PROCESSPERSISTENCE, 3,        NOPIN,               DATALOGOFF,     JSONPROCESS,  NOTINVERTED, NORMALOVERRIDE, NODALLAS)

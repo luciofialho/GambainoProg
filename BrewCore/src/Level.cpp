@@ -22,6 +22,7 @@ float totalHLTWaterIntake = 0;
 #define HLT2MLTPCNTUnit PCNT_UNIT_1
 #define transferPCNTUnit PCNT_UNIT_2
 //#define kegDetergPCNTUnit PCNT_UNIT_3
+static constexpr int16_t PCNT_COUNTER_HIGH_LIMIT = 30000;
 
 byte calibrMode = 0;
 unsigned long int calibrStartTime = 0;
@@ -29,6 +30,14 @@ float calibrFrequency[4][3] ={{0,0,0},{0,0,0},{0,0,0},{0,0,0}};
 unsigned long int calibrPulses[4][3] = {{0,0,0},{0,0,0},{0,0,0},{0,0,0}};
 float calibrVolume[4][3] = {{0,0,0},{0,0,0},{0,0,0},{0,0,0}};
 float calibrTotalTime[4] = {0,0,0,0};
+
+// Keep the short post-target valve-open interval, but let a new request
+// explicitly replace a pending delayed stop.
+static float lastWaterTarget = 0;
+static byte closingCycleCounter = 0;
+static int16_t lastWaterInRaw = 0;
+static int16_t lastHLT2MLTRaw = 0;
+static int16_t lastTransferRaw = 0;
 
 void configPCNT(byte pin, pcnt_unit_t unit, uint16_t filterValue = 100) {
   pcnt_config_t pcnt_config = {
@@ -38,7 +47,7 @@ void configPCNT(byte pin, pcnt_unit_t unit, uint16_t filterValue = 100) {
     .hctrl_mode     = PCNT_MODE_KEEP,
     .pos_mode       = PCNT_COUNT_INC,
     .neg_mode       = PCNT_COUNT_DIS,
-    .counter_h_lim  = 30000,
+    .counter_h_lim  = PCNT_COUNTER_HIGH_LIMIT,
     .counter_l_lim  = 0,
     .unit           = unit,
     .channel        = PCNT_CHANNEL_0
@@ -74,28 +83,50 @@ void configPCNTs() {
   configPCNT(PINHLTTOMLTMETER,      HLT2MLTPCNTUnit,  512);
   configPCNT(PINTRANSFERFLOWMETER,  transferPCNTUnit, 512);
   //configPCNT(PINKEGDETERGENTFLOW, kegDetergPCNTUnit);
+  lastWaterInRaw = 0;
+  lastHLT2MLTRaw = 0;
+  lastTransferRaw = 0;
 }
 
-int16_t PCNTReadAndClear(pcnt_unit_t unit) {
-  int16_t v = 0;
-  esp_err_t err = pcnt_get_counter_value(unit, &v);
+// The hardware counter resets itself at PCNT_COUNTER_HIGH_LIMIT. Reading the
+// delta between consecutive raw values avoids pausing it on every sample.
+static int16_t PCNTReadDelta(pcnt_unit_t unit, int16_t &previousRaw) {
+  int16_t currentRaw = 0;
+  const esp_err_t err = pcnt_get_counter_value(unit, &currentRaw);
   if (err != ESP_OK) {
     Serial.printf("PCNT read error for unit %d: %d\n", unit, err);
     return 0;
   }
-  pcnt_counter_clear(unit);
-  return v;
+
+  int32_t delta = int32_t(currentRaw) - previousRaw;
+  if (delta < 0) {
+    // One hardware reset occurred between samples.
+    delta += PCNT_COUNTER_HIGH_LIMIT;
+  }
+  previousRaw = currentRaw;
+  return static_cast<int16_t>(delta);
 }
 
 void waterInStart(float liters, byte target, bool isHot) {
   WaterInTarget = liters;    
 
   if (liters>0) {
+    // A new fill request may arrive while the previous target is in its two
+    // measurement-cycle delayed-close interval. It must own the state rather
+    // than being stopped by that previous request's pending close.
+    closingCycleCounter = 0;
+    lastWaterTarget = WaterInTarget;
+
     char buf[100];
     if (isHot) 
       HotWaterIn = OPEN;
     else
       ColdWaterIn        = OPEN;
+
+    if (isHot)
+      ColdWaterIn = CLOSED;
+    else
+      HotWaterIn = CLOSED;
 
     say("Starting water in: %.1f L to target %s (%s)", liters, 
            WaterTargetLabels[target-1], 
@@ -113,6 +144,9 @@ void waterInStart(float liters, byte target, bool isHot) {
 }
 
 void waterInStop() {
+  closingCycleCounter = 0;
+  lastWaterTarget = 0;
+
   if (WaterInTarget!=0) {
     WaterInTarget = 0;
     say("Stopping water in");
@@ -203,10 +237,10 @@ void manageHydrometers()
       int lastDuration = millis() - lastFlowSum;
       lastFlowSum = millis();
 
-      WIParcel       = PCNTReadAndClear(waterInPCNTUnit);
-      HLTParcel      = PCNTReadAndClear(HLT2MLTPCNTUnit);
-      transferParcel = PCNTReadAndClear(transferPCNTUnit);
-      //kegDetergParcel = PCNTReadAndClear(kegDetergPCNTUnit);
+      WIParcel       = PCNTReadDelta(waterInPCNTUnit, lastWaterInRaw);
+      HLTParcel      = PCNTReadDelta(HLT2MLTPCNTUnit, lastHLT2MLTRaw);
+      transferParcel = PCNTReadDelta(transferPCNTUnit, lastTransferRaw);
+      // Keg-detergent meter is currently not configured.
       
       // Filtro de ruído: ignora contagens muito baixas (provavelmente ruído)
       #define MIN_PULSES_THRESHOLD 3  // mínimo de pulsos para considerar válido
@@ -311,8 +345,6 @@ void manageHydrometers()
         HLTAvg.clear();
 
       //--------------------------------------- Water in target control
-      static float lastWaterTarget = 0; 
-      static byte closingCycleCounter = 0;
       if (lastWaterTarget>0) {
         WaterInTarget = float(WaterInTarget - WIVolAddition);
         if (WaterInTarget<=0)  {
@@ -353,7 +385,7 @@ void manageLevel() {
         MLTTopLevel = TOPLEVELBOTHDRY;  
     }
 
-    static unsigned long int lastChangeHLT=0, lastChangeBK=0;
+    static unsigned long int lastChangeBK=0;
     static int lastBKLevel=-1;
     static int newBKLevel; // these are statics because of debugging mode
 
@@ -433,31 +465,45 @@ void stopCalibration() {
   calibrTotalTime[mode] = elapsedTime / 1000.0;
 }
 
-char *getCalibration(char *buf) {
+static bool appendCalibrationText(char *destination, size_t destinationSize,
+                                  size_t &used, const char *text) {
+  if (used >= destinationSize || !text) return false;
+  const size_t available = destinationSize - used;
+  const size_t textLength = strlen(text);
+  const size_t copied = textLength < available ? textLength : available - 1;
+  memcpy(destination + used, text, copied);
+  used += copied;
+  destination[used] = '\0';
+  return copied == textLength;
+}
+
+char *getCalibration(char *buf, size_t bufSize) {
+  if (!buf || bufSize == 0) return buf;
   char b[200];
   buf[0]=0;
+  size_t used = 0;
   for (byte mode=0; mode<4; mode++) {
-    sprintf(b,"mode %d - total time: %.2f sec\n\n",mode+1, calibrTotalTime[mode]);
-    strcat(buf, b);
-    sprintf(b, "Mode %d - frequency:\n  WaterIn: %.2f pulses/sec\n  HLT2MLT: %.2f pulses/sec\n  Transfer: %.2f pulses/sec\n\n", 
+    snprintf(b, sizeof(b), "mode %d - total time: %.2f sec\n\n",mode+1, calibrTotalTime[mode]);
+    if (!appendCalibrationText(buf, bufSize, used, b)) break;
+    snprintf(b, sizeof(b), "Mode %d - frequency:\n  WaterIn: %.2f pulses/sec\n  HLT2MLT: %.2f pulses/sec\n  Transfer: %.2f pulses/sec\n\n",
             mode+1,
             calibrFrequency[mode][0],
             calibrFrequency[mode][1],
             calibrFrequency[mode][2]);
-    strcat(buf, b);
-    sprintf(b, "Mode %d - pulses:\n  WaterIn: %lu\n  HLT2MLT: %lu\n  Transfer: %lu\n\n", 
+    if (!appendCalibrationText(buf, bufSize, used, b)) break;
+    snprintf(b, sizeof(b), "Mode %d - pulses:\n  WaterIn: %lu\n  HLT2MLT: %lu\n  Transfer: %lu\n\n",
             mode+1,
             (unsigned long)calibrPulses[mode][0],
             (unsigned long)calibrPulses[mode][1],
             (unsigned long)calibrPulses[mode][2]);
-    strcat(buf, b);
+    if (!appendCalibrationText(buf, bufSize, used, b)) break;
 
-    sprintf(b, "Mode %d - volumes:\n  WaterIn: %.2f\n  HLT2MLT: %.2f\n  Transfer: %.2f\n\n", 
+    snprintf(b, sizeof(b), "Mode %d - volumes:\n  WaterIn: %.2f\n  HLT2MLT: %.2f\n  Transfer: %.2f\n\n",
             mode+1,
             calibrVolume[mode][0],
             calibrVolume[mode][1],
             calibrVolume[mode][2]);
-    strcat(buf, b);
+    if (!appendCalibrationText(buf, bufSize, used, b)) break;
 
   }
   return buf;

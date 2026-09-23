@@ -135,11 +135,11 @@ void IPCStatusMachine()
             break;
 
           case 3: // drain
-            if ((IPCTimeInStatus - clock) > (FMTDRAINTIME + WAITFORVALVE * (Status==IPCPREBREWFMTRINSE3 ? 2 : 1))) { 
+            if ((IPCTimeInStatus - clock) > (FMTDRAINTIME + WAITFORVALVE * (IPCStatus==IPCPREBREWFMTRINSE3 ? 2 : 1))) { 
               GoToNextStatus = true;
             }
             else
-              setCountDownMessage("Draining FMT: remaining %s:%s",FMTDRAINTIME+WAITFORVALVE * (Status==IPCPREBREWFMTRINSE3 ? 2 : 1) - (IPCTimeInStatus-clock));
+              setCountDownMessage("Draining FMT: remaining %s:%s",FMTDRAINTIME+WAITFORVALVE * (IPCStatus==IPCPREBREWFMTRINSE3 ? 2 : 1) - (IPCTimeInStatus-clock));
             break;
         }
       }
@@ -256,7 +256,7 @@ void IPCStatusMachine()
         FMTWaterIn = CLOSED;
       }
       else 
-        if (LineConfiguration == LINEBREW && setupLineIsReady) 
+        if (LineConfiguration == LINEBREW && setupLineIsReady()) 
           GoToNextStatus = true;
       break;
 

@@ -5,4 +5,4 @@ void sendTransferStartPacket();
 void sendTransferEndPacket();
 void brewCoreHandleFermTemp(char type, const char *payload);
 void checkFermTempTimeout();
-void sendEnvTempPacket();  // broadcast EnvironmentTemp every 60s
+void sendEnvTempPacket();  // broadcast EnvironmentTemp periodically

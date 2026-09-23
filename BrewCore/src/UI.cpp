@@ -1245,8 +1245,9 @@ void commandHelp(AsyncWebServerRequest *request) {
 void calibrResultPage(AsyncWebServerRequest *request) {
   strcpy(bigBuffer,"<html><head><style>pre { white-space: pre-wrap; font-family: Arial, sans-serif; }</style></head><body>");
   strcat(bigBuffer,"<h2>Calibration results:</h2><pre>");
-  getCalibration(bigBuffer + strlen(bigBuffer));
-  strcat(bigBuffer,"</pre></body></html>");
+  const size_t used = strlen(bigBuffer);
+  getCalibration(bigBuffer + used, BIGBUFFERSIZE + 1 - used);
+  strnncat(bigBuffer,"</pre></body></html>", BIGBUFFERSIZE);
 
   request->send(200,"text/html",bigBuffer);
 }

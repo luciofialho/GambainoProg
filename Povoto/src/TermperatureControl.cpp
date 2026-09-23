@@ -273,8 +273,9 @@ void temperatureControl() {
     }
 
     lastModeChange = millis();
-    mode = newMode;
+    // Calculate the rest time while mode still identifies the cycle just ended.
     nextModeChange = millis() + fermenterOnOffCycle(ControlData.temperature,newMode);
+    mode = newMode;
     if (nextModeChange < lastModeChange)  // overflow in millis()
       millisOverflowWindow = true;
     else

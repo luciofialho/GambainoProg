@@ -351,15 +351,17 @@ void loop() {
   if (rf.available()) {
     // Obtém o valor recebido
     unsigned long value = rf.getReceivedValue();
+    const unsigned int bitLength = rf.getReceivedBitlength();
+    const bool validRFFrame = value != 0 && bitLength == 24;
     
-    if (value == 0 || rf.getReceivedBitlength() != 24 ) {
+    if (!validRFFrame) {
       //Serial.println("Código desconhecido recebido");
     } else {
       Serial.println("=============================");
       Serial.print("Código recebido: ");
       Serial.println(value);
       Serial.print("Bits: ");
-      Serial.println(rf.getReceivedBitlength());
+      Serial.println(bitLength);
       Serial.print("Protocolo: ");
       Serial.println(rf.getReceivedProtocol());
       Serial.print("Delay: ");
@@ -373,7 +375,7 @@ void loop() {
     // Anti-bouncing: ignora o mesmo código repetido dentro de 1 segundo
     static unsigned long lastRFMillis = 0;
     static unsigned long lastRFValue  = 0;
-    if (value != 0 && (value != lastRFValue || millis() - lastRFMillis >= 1000)) {
+    if (validRFFrame && (value != lastRFValue || millis() - lastRFMillis >= 1000)) {
       lastRFValue  = value;
       lastRFMillis = millis();
       switch (value) {

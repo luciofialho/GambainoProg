@@ -21,6 +21,7 @@ extern ProcVar
   SubStatus,
   IPCStatus,           
   EndStatus,                 
+  TopUpHydrationCompletedProcedure,
   SkipToNextStatus,          
   CirculationMode,           
   LineConfiguration,         

@@ -32,6 +32,7 @@ int diagParameters = 0;
 
 // private Variables
 float stopTimer;
+static byte diagMotorValvesIdx = 0;
 
 void startProgram(int pgm) {
   if (pgm > 100) {
@@ -180,6 +181,9 @@ bool FMTCIPCycleIsWarm() {
     isWarm = int(ProgramParams) / 10 == 2;
   else if (FMTCIPCycle[FMTCIPCurrentStep] == 2) 
     isWarm = int(ProgramParams) % 10 == 2;
+  else
+    isWarm = false;
+    
   //;Serial.println("FMTCIPCycleIsWarm - FMTCIPCurrentStep: " + String(FMTCIPCurrentStep) + " FMTCIPCycle: " + String(FMTCIPCycle[FMTCIPCurrentStep])+" ProgramParams: " + String(int(ProgramParams)) + " isWarm: " + String(isWarm));    
   return isWarm;
 }
@@ -222,29 +226,40 @@ int dataLogInterval() {
   return 0;
 }
 
-void topUpAndHydrationControl(byte procedureToStart=99) { // 1 = yeast ydration, 2 = top up water
+// procedureToStart: 0 = reset/cancel, 1 = yeast hydration, 2 = top-up
+// water, 99 = no new request (the normal periodic call).
+void topUpAndHydrationControl(byte procedureToStart=99) {
   static byte procedure = 0;
   static byte pass = 0;
   static float boilEnd = 0;
   static float lastTimeInStatusSeen = 0;
   static int lastStatusSeen = 0;
 
-  if (procedureToStart!=99) {
+  if (procedureToStart == 0) {
+    procedure = 0;
+    pass = 0;
+    boilEnd = 0;
+    TopUpHydrationCompletedProcedure = 0;
+    lastTimeInStatusSeen = TimeInStatus;
+    lastStatusSeen = int(Status);
+    TopUpHeater = OFF;
+    return;
+  }
+
+  if (procedureToStart != 99) {
     procedure = procedureToStart;
     pass = 0;
   }
 
-  if (procedure != 1 && procedure != 2)
-    return;
+  if (procedure == 1 || procedure == 2) {
+    if (lastStatusSeen != int(Status)) {
+      lastStatusSeen  = int(Status);
+      if (boilEnd != 0)
+        boilEnd -= lastTimeInStatusSeen + TimeInStatus;
+    }
+    lastTimeInStatusSeen = TimeInStatus;
 
-  if (lastStatusSeen != int(Status)) {
-    lastStatusSeen  = int(Status);
-    if (boilEnd != 0)
-      boilEnd -= lastTimeInStatusSeen + TimeInStatus;
-  }
-  lastTimeInStatusSeen = TimeInStatus;
-
-  switch (pass) {
+    switch (pass) {
     case 0: // start todo
       if (procedure==1) 
         Todo_PrepareYeastHydrationWater.start();
@@ -290,9 +305,11 @@ void topUpAndHydrationControl(byte procedureToStart=99) { // 1 = yeast ydration,
       if (TimeInStatus >= boilEnd) {
         TopUpHeater = OFF;
         if (procedure == 1)
-          procedure = 2;
+          TopUpHydrationCompletedProcedure = 1;
         else
-          procedure = 0;
+          TopUpHydrationCompletedProcedure = 2;
+        ProcVar::writeToEEPROM(PROCESSPERSISTENCE);
+        procedure = 0;
         boilEnd = 0;
         pass = 0;
       }
@@ -300,7 +317,7 @@ void topUpAndHydrationControl(byte procedureToStart=99) { // 1 = yeast ydration,
         if (!TopUpHeater.asBoolean() && TopUpWaterTemp < WATERBOILTEMP-TOPUPWATERTEMPBOILOFFSET) {
           TopUpHeater = ON;
         }
-        else if (TopUpHeater.asBoolean() && TopUpWaterTemp >= WATERBOILTEMP-1) {  
+        else if (TopUpHeater.asBoolean() && TopUpWaterTemp >= WATERBOILTEMP-1) {
           TopUpHeater = OFF;
         }
 
@@ -309,7 +326,17 @@ void topUpAndHydrationControl(byte procedureToStart=99) { // 1 = yeast ydration,
         else
           setCountDownMessage("Boiling top-up water ends in %s:%s", (boilEnd - TimeInStatus));
       }
-      break;    
+      break;
+    }
+  }
+
+  // Both procedures share the same pot/heater. Top-up may begin only in the
+  // boil status and, when requested, only after hydration has fully finished.
+  if (procedure == 0 && TopUpHydrationCompletedProcedure < 2 &&
+      RcpTopupWater.asBoolean() && Status == BOIL &&
+      (!RcpYeastHydration.asBoolean() || TopUpHydrationCompletedProcedure >= 1)) {
+    procedure = 2;
+    pass = 0;
   }
 }
 
@@ -378,7 +405,7 @@ void MainStateMachine() {
     startProgram(programToStart);
     EnteringStatus = true;
     programToStart = 99;
-    topUpAndHydrationControl(99); // reset top up and yeast hydration control
+    topUpAndHydrationControl(0); // reset top-up and yeast-hydration control
   }
 
   bool isRestoring = restoringState;
@@ -453,7 +480,7 @@ void MainStateMachine() {
     case STANDBY:
       if (!EnteringStatus)
         if (TimeInStatus > 5*MINUTES) {
-          float timeToAlarm = 1*MINUTES;
+          static float timeToAlarm = 1*MINUTES;
           static float possibleLeakStart = 0;
           if (WaterInFlow > 0.1 ) {
             if (possibleLeakStart != 0) {
@@ -652,7 +679,8 @@ void MainStateMachine() {
       if (EnteringStatus) {
         if (RcpFirstWortHopping.asBoolean()) 
           Todo_FirstWortHopping.start();
-        if (RcpYeastHydration.asBoolean())
+        if (RcpYeastHydration.asBoolean() &&
+            TopUpHydrationCompletedProcedure == 0)
           topUpAndHydrationControl(1); // start yeast hydration water preparation
         MLTTargetTemp = NOHEAT;
         stopTimer = 0;
@@ -1094,9 +1122,15 @@ void MainStateMachine() {
               lastVolumeInBK = vb;
               totalTempVol = totalTempVol + deltaVol * float(Chiller2Temp);
 
-              TransferAvgTemp = totalTempVol / vb;
+              if (vb > 0)
+                TransferAvgTemp = totalTempVol / vb;
+              else
+                TransferAvgTemp = 0;
 
-              float consideredTemp = BKLevel>=2 ? TransferAvgTemp : FermenterTemp / 2;
+              const bool fermenterTemperatureAvailable = FermenterTemp != NOTaTEMP;
+              float consideredTemp = (BKLevel >= 2 || !fermenterTemperatureAvailable)
+                  ? TransferAvgTemp
+                  : (FermenterTemp + TransferAvgTemp) / 2;
 
               float tempAdjust = consideredTemp - RcpInoculationTemp; // how much needs to cool to reach inoculation temp
               if (tempAdjust > INOCULATIONTEMPALLOWEDOFFSET)
@@ -1164,9 +1198,6 @@ void MainStateMachine() {
       }
       break;
     }
-        
-        if (CIPLineMode() != 0)
-
 
     case CIPDCIRCULATION1:
     case CIPDCIRCULATION2:
@@ -1920,6 +1951,7 @@ void MainStateMachine() {
 
         case DIAGMOTORVALVESCOMMAND:
           if (EnteringStatus) {
+            diagMotorValvesIdx = 0;
             if (valveCurrentMonitorIsOn) {
               diagEntry(1,"Motor Valves Command (current and time)");
               setSubStatus(4,"Waiting for valve stabilization");
@@ -1934,7 +1966,6 @@ void MainStateMachine() {
           else {
             static float currentSum = 0;
             static int currentCount = 0;
-            static byte idx=0;
 
             switch (int(SubStatus)) {
               case 0:
@@ -1948,7 +1979,7 @@ void MainStateMachine() {
               case 3:
                 if (TimeInStatus >= stopTimer + 4) {
                   setSubStatus(SubStatus+1,"Moving valves");
-                  ProcVar *pv = ProcVar::ProcVarByIndex(idx);
+                  ProcVar *pv = ProcVar::ProcVarByIndex(diagMotorValvesIdx);
                   *pv = (!pv->asBoolean());
                   currentSum = 0;
                   currentCount = 0;
@@ -1961,8 +1992,8 @@ void MainStateMachine() {
               case 4: 
                 {
                   bool nextVar = false;
-                  if (idx != 0) { 
-                    ProcVar *pv = ProcVar::ProcVarByIndex(idx);                
+                  if (diagMotorValvesIdx != 0) {
+                    ProcVar *pv = ProcVar::ProcVarByIndex(diagMotorValvesIdx);
                     if (waitForValve((TimeInStatus-stopTimer)/2))  { // make it wait for the double of max time
                       char buf[80];
                       snprintf(buf,80,"%s - %s",pv->tag(),pv->asBoolean() ? "Open" : "Close");
@@ -1976,22 +2007,22 @@ void MainStateMachine() {
                       delay(20);
                     }
                   }
-                  if (nextVar || idx==0)
+                  if (nextVar || diagMotorValvesIdx == 0)
                     if (SubStatus == 2) {
                       setSubStatus(3,"Valve rest");
                       stopTimer = TimeInStatus;
                     }
                     else {
-                      idx++;
-                      while (idx < ProcVar::numVars() && ProcVar::ProcVarByIndex(idx)->I2CCluster()!=VALVESJ_ADDR
-                                                      && ProcVar::ProcVarByIndex(idx)->I2CCluster()!=VALVESK_ADDR
-                                                      && ProcVar::ProcVarByIndex(idx)->I2CCluster()!=VALVESL_ADDR
-                                                      && ProcVar::ProcVarByIndex(idx)->I2CCluster()!=VALVESM_ADDR
-                                                      && ProcVar::ProcVarByIndex(idx)->I2CCluster()!=VALVESN_ADDR
-                                                      && ProcVar::ProcVarByIndex(idx) != &DrainBlock
-                                                      && ProcVar::ProcVarByIndex(idx) != &BKDrain) 
-                        idx++;
-                      if (idx < ProcVar::numVars()) {
+                      diagMotorValvesIdx++;
+                      while (diagMotorValvesIdx < ProcVar::numVars() && ProcVar::ProcVarByIndex(diagMotorValvesIdx)->I2CCluster()!=VALVESJ_ADDR
+                                                      && ProcVar::ProcVarByIndex(diagMotorValvesIdx)->I2CCluster()!=VALVESK_ADDR
+                                                      && ProcVar::ProcVarByIndex(diagMotorValvesIdx)->I2CCluster()!=VALVESL_ADDR
+                                                      && ProcVar::ProcVarByIndex(diagMotorValvesIdx)->I2CCluster()!=VALVESM_ADDR
+                                                      && ProcVar::ProcVarByIndex(diagMotorValvesIdx)->I2CCluster()!=VALVESN_ADDR
+                                                      && ProcVar::ProcVarByIndex(diagMotorValvesIdx) != &DrainBlock
+                                                      && ProcVar::ProcVarByIndex(diagMotorValvesIdx) != &BKDrain)
+                        diagMotorValvesIdx++;
+                      if (diagMotorValvesIdx < ProcVar::numVars()) {
                         stopTimer = TimeInStatus;
                         setSubStatus(1,"Valve rest");
                       }
@@ -2453,6 +2484,15 @@ void MainStateMachine() {
   if (Status >= PREBREWHOTWATERPREP && Status <= MASHMASHING)
     IPCStatusMachine();  
 
+  // On a restored brew, an unfinished hydration is deliberately restarted
+  // through its existing Todo; heating remains off until the operator
+  // dismisses that Todo.
+  if (isRestoring && RcpYeastHydration.asBoolean() &&
+      TopUpHydrationCompletedProcedure == 0 &&
+      Status > MASHFIRSTRUN && Status <= BOIL) {
+    topUpAndHydrationControl(1);
+  }
+
   topUpAndHydrationControl();
 
   if (GoToNextStatus || NextStatus || forceNextStatus) {
@@ -2477,7 +2517,7 @@ void MainStateMachine() {
         say("...");
         say("Entering standby mode...");
         say();
-        topUpAndHydrationControl(99); // reset top up and yeast hydration control
+        topUpAndHydrationControl(0); // reset top-up and yeast-hydration control
       }
     }
   }
@@ -2491,6 +2531,3 @@ void setSubStatus(byte subStatus, const char *subStatusLabel, ...) {
   vsnprintf(SubStatusLabel, sizeof(SubStatusLabel), subStatusLabel, args);
   va_end(args);
 }
-
-   
-  

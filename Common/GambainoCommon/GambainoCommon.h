@@ -53,7 +53,8 @@ extern GambainoPeer peerPovotos[MAXFMTS];
 
 // Call once after WiFi is up to register own MAC+IP in the correct peer slot.
 // peerType: PEERTYPE_BREWCORE / PEERTYPE_SIDEKICK / PEERTYPE_POVOTO
-// povotoIndex: only used when peerType == PEERTYPE_POVOTO (0-based)
+// povotoIndex: only used when peerType == PEERTYPE_POVOTO (1..MAXFMTS).
+// Zero means unconfigured and must never be used as an array index.
 void registerOwnPeer(char peerType, int povotoIndex = 0);
 void peerUpdateOwnAddress();   // call after WiFi gets IP (done automatically via checkDebugMode)
 
