@@ -182,10 +182,12 @@ void doDataLog() {
     GLogBegin(datalogFolderNameInUse, batchStr, "Cold");
     GLogAddTimeStamp();
     GLogAddData("FMT");
+    GLogAddData("ReliefCount");
     GLogAddData("Temperature");
     GLogAddData("TempTarget");
     GLogAddData("Pressure");
     GLogAddData("PressureTarget");
+    GLogAddData("gCO2/L/d");
     GLogAddData("HeadSpaceVolume");
     GLogAddData("BeerVolume");
     GLogAddData("SG");
@@ -195,8 +197,6 @@ void doDataLog() {
     GLogAddData("CO2MolsSol");
     GLogAddData("CO2MolSolIfEq");
     GLogAddData("CO2MolsEjected");
-    GLogAddData("ReliefCount");
-    GLogAddData("gCO2/L/d");
     GLogAddData("PressureDropFactor");
     GLogAddData("TemperatureMode");
     GLogAddData("taskWindowType");
@@ -233,10 +233,12 @@ void doDataLog() {
     GLogBegin(datalogFolderNameInUse, batchStr, "Cold");
     GLogAddTimeStamp();
     GLogAddData(FMTData.PovotoNum);
+    GLogAddData(CountersData.totalReliefCount,0);
     GLogAddData(ControlData.temperature, 2);
     GLogAddData(SetPointData.setPointTemp, 2);
     GLogAddData(ControlData.pressure, 3);
     GLogAddData(SetPointData.setPointPressure, 3);
+    GLogAddData(beerCO2EvolutionGramsPerLiterPerDay,3);
     GLogAddData(CountersData.headSpaceVolume, 3);
     GLogAddData(beerVolume, 3);
     GLogAddData(beerSG,5);
@@ -246,8 +248,6 @@ void doDataLog() {
     GLogAddData(CountersData.CO2InSolution,3);
     GLogAddData(CO2DissolvedMols(ControlData.pressure, beerSG, ControlData.temperature, beerVolume),3);
     GLogAddData(CountersData.totalMolsEjected,3);
-    GLogAddData(CountersData.totalReliefCount,0);
-    GLogAddData(beerCO2EvolutionGramsPerLiterPerDay,3);
     GLogAddData(pressureDropFactor,5);
     GLogAddData(getTemperatureModeLabel());
     GLogAddData(taskWindowTypeToText(taskWindowType));
@@ -379,10 +379,6 @@ void doReliefDataLog(const ReliefLogData &data) {
     GLogAddData("GasCalculatedPressureCompensation");
     GLogAddData("GasAppliedPressureCompensation");
     GLogAddData("GasHeadspaceUpdateStatus");
-    GLogAddData("PolytropicSourceReliefNumber");
-    GLogAddData("PolytropicSampleCount");
-    GLogAddData("PolytropicBackExtrapolatedPressure");
-    GLogAddData("PolytropicFitSlopeBarPerMinute");
     GLogAddData("PolytropicEstimatedExponent");
     GLogSend();
     headerWritten = true;
@@ -453,10 +449,6 @@ void doReliefDataLog(const ReliefLogData &data) {
   GLogAddData(data.gasCalculatedPressureCompensation, 6);
   GLogAddData(data.gasAppliedPressureCompensation, 6);
   GLogAddData(data.gasHeadspaceUpdateStatus);
-  GLogAddData(data.polytropicSourceReliefNumber);
-  GLogAddData(data.polytropicSampleCount);
-  GLogAddData(data.polytropicBackExtrapolatedPressure, 6);
-  GLogAddData(data.polytropicFitSlopeBarPerMinute, 8);
   GLogAddData(data.polytropicEstimatedExponent, 6);
   GLogSend();
 }

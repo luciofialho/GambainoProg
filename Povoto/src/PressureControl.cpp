@@ -94,7 +94,9 @@ static unsigned long int noPressureReadUntil = 0;
 static unsigned long reliefValveOpenedMillis = 0;
 static unsigned long reliefValveClosedMillis = 0;
 static constexpr unsigned long POLYTROPIC_SETTLE_MS = 3UL * MINUTESms;
-static constexpr unsigned long POLYTROPIC_SAMPLE_INTERVAL_MS = 500UL;
+static constexpr unsigned long POLYTROPIC_SAMPLE_INTERVAL_MS = 30UL * 1000UL;
+// Allow up to one second of loop/sensor delay beyond the sampling interval.
+static constexpr unsigned long POLYTROPIC_MAX_SAMPLE_GAP_MS = POLYTROPIC_SAMPLE_INTERVAL_MS + 1000UL;
 static constexpr uint8_t POLYTROPIC_SAMPLE_COUNT = 8;
 struct PolytropicPressureSample { unsigned long millisStamp; float pressure; };
 static PolytropicPressureSample polytropicSamples[POLYTROPIC_SAMPLE_COUNT];
@@ -103,6 +105,9 @@ static unsigned long polytropicLastSampleMillis = 0;
 static unsigned long polytropicReferenceCloseMillis = 0;
 static unsigned long polytropicReferenceReliefNumber = 0;
 static float polytropicReferencePressureBefore = NAN, polytropicReferencePressureAfter = NAN;
+// The fitted pressure must be evaluated at the same instant as the measured
+// post-relief pressure used to determine the exponent.
+static unsigned long polytropicReferencePressureAfterMillis = 0;
 static unsigned long polytropicSourceReliefNumber = 0;
 static uint8_t polytropicResultSampleCount = 0;
 static float polytropicBackExtrapolatedPressure = NAN;
@@ -114,9 +119,13 @@ static float adjustedEquilibriumPressure = NAN;
 static float ejectedPressure = NAN;
 
 float pressureOnReliefMeas = 0.0f;
+static unsigned long pressureOnReliefMeasuredMillis = 0;
 float pressureOnReliefExtrap = 0;
 float pressureAfterRelief = 0;
 unsigned long pressureAfterReliefMillis = 0;
+// Acquisition time of the latest filtered pressure, not its processing time.
+static unsigned long pressureAcquiredMillis = 0;
+static bool pressureAcquisitionValid = false;
 float pressureReachedTarget = 0;
 unsigned long int pressureReachedTargetMillis = 0;
 
@@ -1448,11 +1457,15 @@ void readPressure() {
 
       if (!(debugging && currentReading == 0.0f)) {
         ControlData.pressure = convertCurrentToPressure(currentReading);
+        pressureAcquiredMillis = lastCurrentMedianSampleMillis;
+        pressureAcquisitionValid = isfinite(ControlData.pressure);
         return;
       }
     }
 
     if (debugging && (!pressureSensorConnected || currentReading == 0.0f)) {
+      pressureAcquiredMillis = millis();
+      pressureAcquisitionValid = true;
       static unsigned long lastPressureIncrease = 0;
       if (sgPointGenerationTime != 0 && !inTheMiddleOfRelief() && beerSG > 1.010f) {
         if (MILLISDIFF(lastPressureIncrease,1000*sgPointGenerationTime))  {
@@ -1462,6 +1475,7 @@ void readPressure() {
       }
     }
     else if (!pressureSensorConnected) {
+    pressureAcquisitionValid = false;
     // Se não tem sensor, zera a pressão - Lucio urgente - precisar alertar
     ControlData.pressure = 0.0;
     currentReading = 0.0;
@@ -1671,16 +1685,27 @@ void calculateFermentationState() {
     0.78924f;
 }
 
-static float adjustedPressureForPostRelief(float postReliefPressure) {
+static float adjustedPressureForPostRelief(float postReliefPressure,
+                                          unsigned long postReliefMillis) {
+  // This correction estimates equilibrium pressure at the acquisition time
+  // of postReliefPressure, exactly as the diagnostic regression does. It
+  // does not move that pressure back to valve closing.
+  if ((int32_t)(postReliefMillis - reliefValveClosedMillis) < 0 ||
+      (int32_t)(reliefValveOpenedMillis - pressureOnReliefMeasuredMillis) < 0 ||
+      !isfinite(postReliefPressure) || !isfinite(pressureOnReliefMeas) ||
+      postReliefPressure + Patm <= 0.0f || pressureOnReliefMeas + Patm <= 0.0f ||
+      !isfinite(FMTData.FMTEffectiveVentingExponent) ||
+      FMTData.FMTEffectiveVentingExponent <= 0.0f) return NAN;
   return (pressureOnReliefMeas + Patm) * powf(
     (postReliefPressure + Patm) / (pressureOnReliefMeas + Patm),
     1.0f / FMTData.FMTEffectiveVentingExponent) - Patm;
 }
 
 static float adjustedEquilibriumPressureForPostRelief(float postReliefPressure,
+                                                       unsigned long postReliefMillis,
                                                        bool usePolytropicCorrection = true) {
   const float adjusted = usePolytropicCorrection
-    ? adjustedPressureForPostRelief(postReliefPressure) : postReliefPressure;
+    ? adjustedPressureForPostRelief(postReliefPressure, postReliefMillis) : postReliefPressure;
   const float residual = FMTData.targetResidualAfterReliefPercent / 100.0f;
   return pressureOnReliefMeas - (pressureOnReliefMeas - adjusted) / (1.0f - residual);
 }
@@ -1690,15 +1715,17 @@ static void clearPolytropicSamples() {
   polytropicLastSampleMillis = 0;
 }
 
-static void collectPolytropicPressureSample(unsigned long now) {
-  if (!polytropicReferenceCloseMillis || ControlData.transferValve ||
+static void collectPolytropicPressureSample() {
+  const unsigned long now = pressureAcquiredMillis;
+  if (!pressureAcquisitionValid || timeToRegisterPressure ||
+      !polytropicReferenceCloseMillis || ControlData.transferValve ||
       !isfinite(ControlData.pressure) || ControlData.pressure <= 0.0f ||
-      !MILLISDIFF(polytropicReferenceCloseMillis, POLYTROPIC_SETTLE_MS) ||
+      now - polytropicReferenceCloseMillis < POLYTROPIC_SETTLE_MS ||
       !MILLISDIFF(noPressureReadUntil, 0) || inPressureNoiseWindow()) return;
   if (polytropicLastSampleMillis &&
       now - polytropicLastSampleMillis < POLYTROPIC_SAMPLE_INTERVAL_MS) return;
   if (polytropicLastSampleMillis &&
-      now - polytropicLastSampleMillis > 1500UL) clearPolytropicSamples();
+      now - polytropicLastSampleMillis > POLYTROPIC_MAX_SAMPLE_GAP_MS) clearPolytropicSamples();
   polytropicSamples[polytropicSampleNext] = {now, ControlData.pressure};
   polytropicSampleNext = (polytropicSampleNext + 1) % POLYTROPIC_SAMPLE_COUNT;
   if (polytropicSampleCount < POLYTROPIC_SAMPLE_COUNT) ++polytropicSampleCount;
@@ -1714,7 +1741,8 @@ static void estimatePreviousReliefPolytropicExponent() {
   if (!polytropicReferenceCloseMillis ||
       polytropicSampleCount != POLYTROPIC_SAMPLE_COUNT ||
       !isfinite(polytropicReferencePressureBefore) ||
-      !isfinite(polytropicReferencePressureAfter)) return;
+      !isfinite(polytropicReferencePressureAfter) ||
+      (int32_t)(polytropicReferencePressureAfterMillis - polytropicReferenceCloseMillis) < 0) return;
 
   double sx = 0, sy = 0, sxx = 0, sxy = 0;
   unsigned long previousElapsed = 0;
@@ -1724,11 +1752,15 @@ static void estimatePreviousReliefPolytropicExponent() {
     const PolytropicPressureSample &sample = polytropicSamples[idx];
     const unsigned long elapsedMs = sample.millisStamp - polytropicReferenceCloseMillis;
     if (elapsedMs < POLYTROPIC_SETTLE_MS ||
+        (int32_t)(sample.millisStamp - polytropicReferencePressureAfterMillis) < 0 ||
         (i && (elapsedMs <= previousElapsed ||
-               elapsedMs - previousElapsed < 250UL ||
-               elapsedMs - previousElapsed > 1500UL))) return;
+               elapsedMs - previousElapsed < POLYTROPIC_SAMPLE_INTERVAL_MS ||
+               elapsedMs - previousElapsed > POLYTROPIC_MAX_SAMPLE_GAP_MS))) return;
     previousElapsed = elapsedMs;
-    const double x = elapsedMs / 1000.0;
+    // Fit against the post-relief measurement timestamp, rather than valve
+    // closing.  The extrapolated pressure and pressureAfter are then
+    // temporally comparable in the exponent calculation below.
+    const double x = (sample.millisStamp - polytropicReferencePressureAfterMillis) / 1000.0;
     const double y = sample.pressure;
     sx += x; sy += y; sxx += x*x; sxy += x*y;
   }
@@ -1776,18 +1808,18 @@ void processPressure(bool afterRelief) {
   
   if  (afterRelief) {
     pressureAfterRelief = ControlData.pressure;
-    pressureAfterReliefMillis = millis();
+    pressureAfterReliefMillis = pressureAcquiredMillis;
     // These belong to the relief being completed. Preserve them for its log
     // before clearing the live values used to detect the next relief cycle.
     pressureReachedTarget = 0;
     pressureReachedTargetMillis = 0;
     adjustedPressureAfterRelief = volumeDeterminationActive
-      ? pressureAfterRelief : adjustedPressureForPostRelief(pressureAfterRelief);
+      ? pressureAfterRelief : adjustedPressureForPostRelief(pressureAfterRelief, pressureAfterReliefMillis);
        // Todo: tentar fazer esse expoente ser determinado dinamicamente ou entao apurar o fator de queda de pressao ao na ejeçao (talvez so sirva para fermentacao  estavel e intensa)
 
     const float targetResidual = FMTData.targetResidualAfterReliefPercent / 100.0f;
     adjustedEquilibriumPressure = adjustedEquilibriumPressureForPostRelief(
-      pressureAfterRelief, !volumeDeterminationActive);
+      pressureAfterRelief, pressureAfterReliefMillis, !volumeDeterminationActive);
     if (volumeDeterminationActive && isfinite(volumeAdjustedEquilibriumSnapshot))
       adjustedEquilibriumPressure = volumeAdjustedEquilibriumSnapshot;
     ejectedPressure = pressureOnReliefMeas -
@@ -1905,6 +1937,7 @@ void processPressure(bool afterRelief) {
     polytropicReferenceReliefNumber = CountersData.totalReliefCount;
     polytropicReferencePressureBefore = pressureOnReliefMeas;
     polytropicReferencePressureAfter = pressureAfterRelief;
+    polytropicReferencePressureAfterMillis = pressureAfterReliefMillis;
 
   }
 
@@ -2084,8 +2117,13 @@ bool processReliefCycle() {
       }
       else {
         //;Serial.printf("[PRESSURE] %lu / %lu: Abrindo transfer valve. Pressure=%.2f bar\n", millis(), timeToStartExpansion, ControlData.pressure);
+        // Use an acquisition at/after the scheduled opening for the common
+        // pre-relief reference used by both correction and diagnostic fit.
+        if (!pressureAcquisitionValid || inPressureNoiseWindow() ||
+            (int32_t)(pressureAcquiredMillis - timeToStartExpansion) < 0) return true;
         estimatePreviousReliefPolytropicExponent();
         pressureOnReliefMeas = ControlData.pressure;
+        pressureOnReliefMeasuredMillis = pressureAcquiredMillis;
         currentOnReliefMeasured = currentReading;
         ReliefStartPressureTime = millis();
         reliefValveOpenedMillis = ReliefStartPressureTime;
@@ -2138,6 +2176,7 @@ bool processReliefCycle() {
         ControlData.transferValve = false;
         const unsigned long transferClosedMillis = millis();
         reliefValveClosedMillis = transferClosedMillis;
+        pressureAcquisitionValid = false;
         clearPolytropicSamples();
         // The measured inventory is installed at the post-relief reading, but
         // its venting clock starts when the transfer valve actually closes.
@@ -2168,16 +2207,18 @@ bool processReliefCycle() {
     }*/
 
     if (volumeAdjustedEquilibriumCaptureMillis &&
-        MILLISDIFF(volumeAdjustedEquilibriumCaptureMillis, 0)) {
+        pressureAcquisitionValid &&
+        (int32_t)(pressureAcquiredMillis - volumeAdjustedEquilibriumCaptureMillis) >= 0) {
       // Capture the equilibrium pressure in the same post-close window used
       // by a normal relief, independently from the later volume reading.
       volumeAdjustedEquilibriumSnapshot =
-        adjustedEquilibriumPressureForPostRelief(ControlData.pressure, false);
+        adjustedEquilibriumPressureForPostRelief(ControlData.pressure, pressureAcquiredMillis, false);
       volumeAdjustedEquilibriumCaptureMillis = 0;
     }
 
     if (timeToRegisterPressure) {
-      if (MILLISDIFF(timeToRegisterPressure, 0)) {
+      if (pressureAcquisitionValid &&
+          (int32_t)(pressureAcquiredMillis - timeToRegisterPressure) >= 0) {
         //;Serial.printf("[PRESSURE] %lu / %lu: Registrando pressão. Pressure=%.2f bar\n", millis(), timeToRegisterPressure, ControlData.pressure);
         timeToRegisterPressure = 0;
         if (volumeDeterminationActive) volumePressureSettled = true;
@@ -2954,7 +2995,7 @@ void pressureControl() {
     pressureReachedTargetMillis = millis();
   }
 
-  collectPolytropicPressureSample(millis());
+  collectPolytropicPressureSample();
 
   if (volumeDeterminationActive) {
     if (volumeConverged || volumeIteration >= VOLUME_DETERMINATION_RECORD_END_CYCLE) {
