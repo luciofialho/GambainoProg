@@ -230,7 +230,11 @@ void temperatureControl() {
             newMode = FMTCHILL;
           }
         }
-        else if (FMTData.heater.enabled && ControlData.temperature < minTarget - 2*FMTOFFSET) { // Lucio: melhorar isso
+        // Keep the wide threshold when starting a new heating episode. After a
+        // timed heating pulse, resume closer to target once its rest has elapsed.
+        if (newMode != FMTCHILL && FMTData.heater.enabled &&
+            ControlData.temperature < (interruptedHeating
+                ? minTarget : minTarget - 2 * FMTOFFSET)) {
           if (lastModeChange==0 || (!millisOverflowWindow && MILLISPAST(nextModeChange))) // anti boucing Constante
             newMode = FMTHEAT; 
         }
