@@ -236,8 +236,8 @@ void doDataLog() {
     GLogAddData(CountersData.totalReliefCount,0);
     GLogAddData(ControlData.temperature, 2);
     GLogAddData(SetPointData.setPointTemp, 2);
-    GLogAddData(ControlData.pressure, 3);
-    GLogAddData(SetPointData.setPointPressure, 3);
+    GLogAddData(ControlData.pressure, 6);
+    GLogAddData(SetPointData.setPointPressure, 6);
     GLogAddData(beerCO2EvolutionGramsPerLiterPerDay,3);
     GLogAddData(CountersData.headSpaceVolume, 3);
     GLogAddData(beerVolume, 3);
@@ -254,15 +254,15 @@ void doDataLog() {
     GLogAddData(CountersData.totalChillTime/3600.,2);
     GLogAddData(CountersData.totalHeatTime /3600.,2);
     GLogAddData(millis());
-    GLogAddData(pressureOnReliefExtrap,3);
-    GLogAddData(pressureAfterRelief,3);
+    GLogAddData(pressureOnReliefExtrap,6);
+    GLogAddData(pressureAfterRelief,6);
     GLogAddData(pressureAfterReliefMillis);
-    GLogAddData(adjustedPressureAfterRelief,3);
-    GLogAddData(pressureReachedTarget,3);
+    GLogAddData(adjustedPressureAfterRelief,6);
+    GLogAddData(pressureReachedTarget,6);
     GLogAddData(pressureReachedTargetMillis);
     const DissolvedCO2LogData co2 = getDissolvedCO2LogData();
     GLogAddData(co2.mode);
-    GLogAddData(co2.calculationPressure, 3);
+    GLogAddData(co2.calculationPressure, 6);
     GLogAddData(co2.equilibriumMols, 6);
     GLogAddData(co2.criteriaState);
     GLogAddData(co2.criteriaElapsedMillis);
@@ -271,12 +271,12 @@ void doDataLog() {
     GLogAddData(co2.withReliefsElapsedMillis);
     GLogAddData(co2.withoutReliefsState);
     GLogAddData(co2.withoutReliefsElapsedMillis);
-    GLogAddData(co2.previousPressure, 3);
+    GLogAddData(co2.previousPressure, 6);
     GLogAddData(co2.reliefIntervalSeconds, 3);
     GLogAddData(co2.sinceLastReliefSeconds, 3);
     GLogAddData(lastTaskMillis);
     GLogAddData((int)SetPointData.mode);
-    GLogAddData(Patm, 3);
+    GLogAddData(Patm, 6);
     GLogSend();
   }
 }
@@ -380,6 +380,8 @@ void doReliefDataLog(const ReliefLogData &data) {
     GLogAddData("GasAppliedPressureCompensation");
     GLogAddData("GasHeadspaceUpdateStatus");
     GLogAddData("PolytropicEstimatedExponent");
+    GLogAddData("PolytropicSampleCount");
+    GLogAddData("PolytropicFitRMSEBar");
     GLogSend();
     headerWritten = true;
   }
@@ -392,21 +394,21 @@ void doReliefDataLog(const ReliefLogData &data) {
   GLogAddData(data.valveOpenedMillis);
   GLogAddData(data.volumeDeterminationActive ? "yes" : "no");
   GLogAddData(data.temperature, 2);
-  GLogAddData(data.targetPressure, 3);
-  GLogAddData(data.atmosphericPressure, 3);
+  GLogAddData(data.targetPressure, 6);
+  GLogAddData(data.atmosphericPressure, 6);
   GLogAddData(data.reliefVolume, 3);
   GLogAddData(data.effectiveVentingExponent, 3);
-  GLogAddData(data.pressureOnReliefMeasured, 3);
+  GLogAddData(data.pressureOnReliefMeasured, 6);
   GLogAddData(data.currentOnReliefMeasured, 3);
-  GLogAddData(data.pressureReachedTarget, 3);
+  GLogAddData(data.pressureReachedTarget, 6);
   GLogAddData(data.pressureReachedTargetMillis);
-  GLogAddData(data.pressureOnReliefExtrapolated, 3);
-  GLogAddData(data.pressureAfterRelief, 3);
+  GLogAddData(data.pressureOnReliefExtrapolated, 6);
+  GLogAddData(data.pressureAfterRelief, 6);
   GLogAddData(data.pressureAfterReliefMillis);
   GLogAddData(data.currentAfterRelief, 3);
-  GLogAddData(data.adjustedPressureAfterRelief, 3);
-  GLogAddData(data.adjustedEquilibriumPressure, 3);
-  GLogAddData(data.ejectedPressure, 3);
+  GLogAddData(data.adjustedPressureAfterRelief, 6);
+  GLogAddData(data.adjustedEquilibriumPressure, 6);
+  GLogAddData(data.ejectedPressure, 6);
   GLogAddData(data.liquidMassInGasVentingPercent, 3);
   GLogAddData(data.expansionTankResidualMoles, 6);
   GLogAddData(data.ejectedMolsBeforeLiquidCorrection, 6);
@@ -450,5 +452,7 @@ void doReliefDataLog(const ReliefLogData &data) {
   GLogAddData(data.gasAppliedPressureCompensation, 6);
   GLogAddData(data.gasHeadspaceUpdateStatus);
   GLogAddData(data.polytropicEstimatedExponent, 6);
+  GLogAddData(data.polytropicSampleCount);
+  GLogAddData(data.polytropicFitRMSEBar, 6);
   GLogSend();
 }

@@ -75,6 +75,7 @@ struct ReliefLogData {
   float polytropicBackExtrapolatedPressure;
   float polytropicFitSlopeBarPerMinute;
   float polytropicEstimatedExponent;
+  float polytropicFitRMSEBar;
 };
 
 void doDataLog();

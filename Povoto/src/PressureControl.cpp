@@ -97,7 +97,8 @@ static constexpr unsigned long POLYTROPIC_SETTLE_MS = 3UL * MINUTESms;
 static constexpr unsigned long POLYTROPIC_SAMPLE_INTERVAL_MS = 30UL * 1000UL;
 // Allow up to one second of loop/sensor delay beyond the sampling interval.
 static constexpr unsigned long POLYTROPIC_MAX_SAMPLE_GAP_MS = POLYTROPIC_SAMPLE_INTERVAL_MS + 1000UL;
-static constexpr uint8_t POLYTROPIC_SAMPLE_COUNT = 8;
+static constexpr uint8_t POLYTROPIC_SAMPLE_COUNT = 16;
+static constexpr uint8_t POLYTROPIC_MIN_SAMPLES = 8;
 struct PolytropicPressureSample { unsigned long millisStamp; float pressure; };
 static PolytropicPressureSample polytropicSamples[POLYTROPIC_SAMPLE_COUNT];
 static uint8_t polytropicSampleCount = 0, polytropicSampleNext = 0;
@@ -112,6 +113,7 @@ static unsigned long polytropicSourceReliefNumber = 0;
 static uint8_t polytropicResultSampleCount = 0;
 static float polytropicBackExtrapolatedPressure = NAN;
 static float polytropicFitSlopeBarPerMinute = NAN, polytropicEstimatedExponent = NAN;
+static float polytropicFitRMSEBar = NAN;
 static float currentOnReliefMeasured = 0.0f;
 
 float  adjustedPressureAfterRelief;
@@ -1738,20 +1740,21 @@ static void estimatePreviousReliefPolytropicExponent() {
   polytropicBackExtrapolatedPressure = NAN;
   polytropicFitSlopeBarPerMinute = NAN;
   polytropicEstimatedExponent = NAN;
+  polytropicFitRMSEBar = NAN;
   if (!polytropicReferenceCloseMillis ||
-      polytropicSampleCount != POLYTROPIC_SAMPLE_COUNT ||
+      polytropicSampleCount < POLYTROPIC_MIN_SAMPLES ||
       !isfinite(polytropicReferencePressureBefore) ||
       !isfinite(polytropicReferencePressureAfter) ||
       (int32_t)(polytropicReferencePressureAfterMillis - polytropicReferenceCloseMillis) < 0) return;
 
   double sx = 0, sy = 0, sxx = 0, sxy = 0;
   unsigned long previousElapsed = 0;
-  for (uint8_t i = 0; i < POLYTROPIC_SAMPLE_COUNT; ++i) {
+  for (uint8_t i = 0; i < polytropicSampleCount; ++i) {
     const uint8_t idx = (polytropicSampleNext + POLYTROPIC_SAMPLE_COUNT -
-                         POLYTROPIC_SAMPLE_COUNT + i) % POLYTROPIC_SAMPLE_COUNT;
+                         polytropicSampleCount + i) % POLYTROPIC_SAMPLE_COUNT;
     const PolytropicPressureSample &sample = polytropicSamples[idx];
     const unsigned long elapsedMs = sample.millisStamp - polytropicReferenceCloseMillis;
-    if (elapsedMs < POLYTROPIC_SETTLE_MS ||
+    if (!isfinite(sample.pressure) || elapsedMs < POLYTROPIC_SETTLE_MS ||
         (int32_t)(sample.millisStamp - polytropicReferencePressureAfterMillis) < 0 ||
         (i && (elapsedMs <= previousElapsed ||
                elapsedMs - previousElapsed < POLYTROPIC_SAMPLE_INTERVAL_MS ||
@@ -1765,11 +1768,24 @@ static void estimatePreviousReliefPolytropicExponent() {
     sx += x; sy += y; sxx += x*x; sxy += x*y;
   }
 
-  const double n = POLYTROPIC_SAMPLE_COUNT;
+  const double n = polytropicSampleCount;
   const double denominator = n*sxx - sx*sx;
   if (denominator <= 0) return;
   const double slope = (n*sxy - sx*sy) / denominator;
   const double intercept = (sy - slope*sx) / n;
+  if (!isfinite(slope) || !isfinite(intercept)) return;
+  // Normalize by the actual count so 8- and 16-point windows are comparable.
+  // This measures fit residuals inside the window, not extrapolation error.
+  double squaredResiduals = 0;
+  for (uint8_t i = 0; i < polytropicSampleCount; ++i) {
+    const uint8_t idx = (polytropicSampleNext + POLYTROPIC_SAMPLE_COUNT -
+                         polytropicSampleCount + i) % POLYTROPIC_SAMPLE_COUNT;
+    const PolytropicPressureSample &sample = polytropicSamples[idx];
+    const double x = (sample.millisStamp - polytropicReferencePressureAfterMillis) / 1000.0;
+    const double residual = sample.pressure - (intercept + slope*x);
+    squaredResiduals += residual*residual;
+  }
+  polytropicFitRMSEBar = sqrt(squaredResiduals / n);
   polytropicBackExtrapolatedPressure = intercept;
   polytropicFitSlopeBarPerMinute = slope * 60.0;
 
@@ -2087,6 +2103,7 @@ void processPressure(bool afterRelief) {
     reliefLog.polytropicBackExtrapolatedPressure = polytropicBackExtrapolatedPressure;
     reliefLog.polytropicFitSlopeBarPerMinute = polytropicFitSlopeBarPerMinute;
     reliefLog.polytropicEstimatedExponent = polytropicEstimatedExponent;
+    reliefLog.polytropicFitRMSEBar = polytropicFitRMSEBar;
     doReliefDataLog(reliefLog);
 
     // The third relief was logged using the configured initial volume. Its
