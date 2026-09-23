@@ -1141,9 +1141,14 @@ float getReliefsPerHourValue() {
   return reliefsPerHourValue;
 }
 
+float getTotalCO2Mols() {
+  return CountersData.totalMolsEjected + CountersData.CO2InSolution +
+    headSpaceCO2Mols + expansionTankInventoryMoles();
+}
+
 float CO2Mass(float mols) {
-  if (mols == -1) 
-    return (CountersData.totalMolsEjected + CountersData.CO2InSolution + headSpaceCO2Mols + expansionTankInventoryMoles()) * CO2MOLAR_MASS;
+  if (mols == -1)
+    return getTotalCO2Mols() * CO2MOLAR_MASS;
   else
     return mols * CO2MOLAR_MASS;
 }

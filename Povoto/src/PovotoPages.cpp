@@ -1036,6 +1036,7 @@ void handleCountersDataPage(AsyncWebServerRequest *request) {
 
   size_t remaining;
   char buffer[220];
+  const float totalCO2MolsProduced = getTotalCO2Mols();
 
   strcpy(html, "<!DOCTYPE html><html><head>");
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -1082,10 +1083,10 @@ void handleCountersDataPage(AsyncWebServerRequest *request) {
   strncat(html, "<h1>Counters Data</h1>", remaining);
 
   snprintf(buffer, sizeof(buffer),
-           "<div class='summary'>Derived beer volume: %.2f L<br>Current dissolved CO2 estimate: %.3f mol<br>CO2 produced integral: %.6f mol/L</div>",
+           "<div class='summary'>Derived beer volume: %.2f L<br>Current dissolved CO2 estimate: %.3f mol<br>Total CO2 produced: %.3f mol</div>",
            beerVolume,
            CountersData.CO2InSolution,
-           CountersData.CO2MolsProducedPerLiter);
+           totalCO2MolsProduced);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
 
@@ -1152,6 +1153,14 @@ void handleCountersDataPage(AsyncWebServerRequest *request) {
   strncat(html, "</div>", remaining);
 
   remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<div class='form-group'><label for='CO2MolsProducedPerLiter'>CO2 Mols Produced Per Liter (mol/L):</label>", remaining);
+  snprintf(buffer, sizeof(buffer), "<input type='number' id='CO2MolsProducedPerLiter' name='CO2MolsProducedPerLiter' value='%.6f' step='0.000001' min='0'>", CountersData.CO2MolsProducedPerLiter);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, buffer, remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<small>Manual changes become the new accumulated value.</small></div>", remaining);
+
+  remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='form-group'><label for='headSpaceVolume'>Headspace Volume (L):</label>", remaining);
   snprintf(buffer, sizeof(buffer), "<input type='number' id='headSpaceVolume' name='headSpaceVolume' value='%.2f' step='0.01' min='0'>", CountersData.headSpaceVolume);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -1192,6 +1201,7 @@ void handleCountersDataPage(AsyncWebServerRequest *request) {
 
 void handleCountersDataUpdate(AsyncWebServerRequest *request) {
   bool co2StateChanged = false;
+  bool co2ProducedPerLiterChanged = false;
   if (request->hasParam("totalReliefCount", true)) {
     const uint32_t value = (uint32_t)request->getParam("totalReliefCount", true)->value().toInt();
     co2StateChanged |= value != CountersData.totalReliefCount;
@@ -1206,6 +1216,13 @@ void handleCountersDataUpdate(AsyncWebServerRequest *request) {
     const float value = request->getParam("CO2InSolution", true)->value().toFloat();
     co2StateChanged |= value != CountersData.CO2InSolution;
     CountersData.CO2InSolution = value;
+  }
+  if (request->hasParam("CO2MolsProducedPerLiter", true)) {
+    const double value = request->getParam("CO2MolsProducedPerLiter", true)->value().toFloat();
+    if (isfinite(value) && value >= 0.0) {
+      co2ProducedPerLiterChanged = value != CountersData.CO2MolsProducedPerLiter;
+      CountersData.CO2MolsProducedPerLiter = value;
+    }
   }
   if (request->hasParam("headSpaceVolume", true)) {
     const float value = request->getParam("headSpaceVolume", true)->value().toFloat();
@@ -1223,6 +1240,9 @@ void handleCountersDataUpdate(AsyncWebServerRequest *request) {
   }
 
   writeCountersDataToNIV();
+  if (co2ProducedPerLiterChanged) {
+    resetCO2MolsProducedPerLiterTracking();
+  }
   if (co2StateChanged) {
     requestDerivedStateRestoreFromCounters();
   }

@@ -40,6 +40,7 @@ void requestDerivedStateRestoreFromCounters();
 void resetHeadspaceFilterTracking();
 void resetCO2MolsProducedPerLiterTracking();
 float CO2Mass(float mols=-1);
+float getTotalCO2Mols();
 // g CO2/L/day; presentation clamps negative evolution to zero.
 float getBeerCO2EvolutionGramsPerLiterPerDay();
 float CO2DissolvedMols(float pressureBar, float sg, float temperatureC, float volumeL);
