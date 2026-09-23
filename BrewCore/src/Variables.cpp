@@ -134,8 +134,8 @@ DECL('H',Dehumidifier,                  DH   ,MODEOUTPUT,           NOTPERSISTEN
 
 
 // Mash temperature control 
-DECL('H',HeatAdditiveCorrection,             ,MODEFLOAT,            CONFIGPERSISTENCE,  2,        NOPIN,               DATALOGPROCESS, JSONPROCESS,  NOTINVERTED, AUTOOVERRIDE,   NODALLAS)
-DECL('H',HeatDampeningFactor,                ,MODEFLOAT,            CONFIGPERSISTENCE,  0.8,      NOPIN,               DATALOGPROCESS, JSONPROCESS,  NOTINVERTED, AUTOOVERRIDE,   NODALLAS)
+DECL('H',HeatAdditiveCorrection,             ,MODEFLOAT,            CONFIGPERSISTENCE,  1.0,      NOPIN,               DATALOGPROCESS, JSONPROCESS,  NOTINVERTED, AUTOOVERRIDE,   NODALLAS)
+DECL('H',HeatDampeningFactor,                ,MODEFLOAT,            CONFIGPERSISTENCE,  1.0,      NOPIN,               DATALOGPROCESS, JSONPROCESS,  NOTINVERTED, AUTOOVERRIDE,   NODALLAS)
 DECL('H',HeatCoilEfficiency,                 ,MODEFLOAT,            NOTPERSISTENT,      0.8,      NOPIN,               DATALOGPROCESS, JSONPROCESS,  NOTINVERTED, NORMALOVERRIDE, NODALLAS)
 
 // Hot side valves 

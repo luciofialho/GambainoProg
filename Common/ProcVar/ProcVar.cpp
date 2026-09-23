@@ -37,7 +37,7 @@ SemaphoreHandle_t mutexLog;
 
 uint8_t NODALLAS                 [] = {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00};
 
-#define MAXPROCVARS 120
+#define MAXPROCVARS 160
 uint8_t    numProcVars = 0;
 uint8_t    numI2CClusters_;
 uint8_t    I2CClusters [MAXI2CCTRL];
@@ -121,7 +121,8 @@ void ProcVar::initProcVarLib() {
     uint8_t numDallasVar = 0;
     uint8_t numTimeCtrlVar = 0;
 
-    for (int i = 0; i<numProcVars; i++) { // for each ProcVar
+    uint8_t validProcVars = numProcVars < MAXPROCVARS ? numProcVars : MAXPROCVARS; // avoid reading past ProcVars[] when numProcVars overflows
+    for (int i = 0; i<validProcVars; i++) { // for each ProcVar
         ProcVar *x = ProcVars[i];
         x->overrided = NOTOVERRIDED;
 //        x->count     = 0;

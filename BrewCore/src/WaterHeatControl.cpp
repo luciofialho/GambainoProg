@@ -237,7 +237,7 @@ float HLTTargetTempForMLTHeating(bool evaluateCoilEfficiency) {
   }
 
   if (error==0 || error==1) {
-    float tempMLT = (5*tempTop + tempMid) / 6;
+    float tempMLT = weightedMLTTemperatureForHeating();
     float deltaMLT = targMLT - tempMLT;
 
     if (evaluateCoilEfficiency) {
@@ -286,6 +286,15 @@ float HLTTargetTempForMLTHeating(bool evaluateCoilEfficiency) {
   if (targHLT<0)
     targHLT = NOHEAT;
   return targHLT;
+}
+
+float weightedMLTTemperatureForHeating() {
+  float tempTop = MLTTopTemp;
+  float tempMid = MLTTemp;
+  if (tempTop == NOTaTEMP) tempTop = tempMid;
+  if (tempMid == NOTaTEMP) tempMid = tempTop;
+  return (tempTop == NOTaTEMP || tempMid == NOTaTEMP)
+    ? NOTaTEMP : (5.0f * tempTop + tempMid) / 6.0f;
 }
 
 void CircControl()

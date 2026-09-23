@@ -14,5 +14,6 @@ extern const char * const CircStatusNames[NUMCIRCSTATUS];
 
 void tempVolControl(); 
 void CircControl();
+float weightedMLTTemperatureForHeating();
 
 #endif

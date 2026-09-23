@@ -11,6 +11,7 @@
 #include <WaterHeatControl.h>
 #include "IOTK.h"
 #include "IOTK_NTP.h"
+#include "HeatExchangePage.h"
 #include "IOTK_ESPAsyncServer.h"
 #include <SPIFFS.h>
 #include <ff.h>
@@ -1150,6 +1151,8 @@ void UI_SETUP() {
   setStatusSource(getGambainoStatus);
   registerPeerSetupRoute();
   server.on("/cold",HTTP_GET, [](AsyncWebServerRequest *request){ColdSideWebPage(request);});
+  server.on("/heat/data",HTTP_GET, [](AsyncWebServerRequest *request){heatExchangeData(request);});
+  server.on("/heat",HTTP_GET, [](AsyncWebServerRequest *request){heatExchangeWebPage(request);});
   server.on("/saveColdSide",HTTP_GET, [](AsyncWebServerRequest *request){saveColdSide(request);});
   server.on("/recipe",HTTP_GET, [](AsyncWebServerRequest *request){recipeWebPage(request);});
   server.on("/favicon",HTTP_GET, [](AsyncWebServerRequest *request){ethernetProcessPage(request,"/www/img/favicon.ico");});
