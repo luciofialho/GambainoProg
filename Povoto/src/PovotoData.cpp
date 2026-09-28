@@ -87,6 +87,7 @@ CountersData_t CountersData = {
   .CO2InSolution = 0.0,
   .CO2MolsProducedPerLiter = 0.0,
   .headSpaceVolume = 0.0f,
+  .dumpedVolume = 0.0f,
   .correctionPlato = 0.0f,
   .totalChillTime = 0,
   .totalHeatTime = 0
@@ -368,6 +369,9 @@ bool readCountersDataFromEEPROM() {
     CountersData.CO2MolsProducedPerLiter = defaultCountersData.CO2MolsProducedPerLiter;
   CountersData.headSpaceVolume = store.getFloat("headSpace", defaultCountersData.headSpaceVolume);
   if (!isfinite(CountersData.headSpaceVolume)) CountersData.headSpaceVolume = defaultCountersData.headSpaceVolume;
+  CountersData.dumpedVolume = store.getFloat("dumpedVolume", defaultCountersData.dumpedVolume);
+  if (!isfinite(CountersData.dumpedVolume) || CountersData.dumpedVolume < 0.0f)
+    CountersData.dumpedVolume = defaultCountersData.dumpedVolume;
   CountersData.correctionPlato = store.getFloat("correctPlato", defaultCountersData.correctionPlato);
   if (!isfinite(CountersData.correctionPlato)) CountersData.correctionPlato = defaultCountersData.correctionPlato;
   CountersData.totalChillTime = store.getInt("chillTime", defaultCountersData.totalChillTime);
@@ -389,6 +393,7 @@ bool writeCountersDataToNIV() {
   saved = (store.putDouble("co2MolsPerLiter", CountersData.CO2MolsProducedPerLiter) ==
     sizeof(CountersData.CO2MolsProducedPerLiter)) && saved;
   saved = (store.putFloat("headSpace", CountersData.headSpaceVolume) == sizeof(CountersData.headSpaceVolume)) && saved;
+  saved = (store.putFloat("dumpedVolume", CountersData.dumpedVolume) == sizeof(CountersData.dumpedVolume)) && saved;
   saved = (store.putFloat("correctPlato", CountersData.correctionPlato) == sizeof(CountersData.correctionPlato)) && saved;
   saved = (store.putInt("chillTime", CountersData.totalChillTime) == sizeof(CountersData.totalChillTime)) && saved;
   saved = (store.putInt("heatTime", CountersData.totalHeatTime) == sizeof(CountersData.totalHeatTime)) && saved;
@@ -502,6 +507,7 @@ void resetCountersForNewBatch() {
   CountersData.CO2InSolution = 0.0;
   CountersData.CO2MolsProducedPerLiter = 0.0;
   CountersData.headSpaceVolume = 0.0f;
+  CountersData.dumpedVolume = 0.0f;
   CountersData.totalChillTime = 0;
   CountersData.totalHeatTime = 0;
 

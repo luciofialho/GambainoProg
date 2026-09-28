@@ -11,6 +11,7 @@ unsigned long taskWindowEndTime = 0;
 unsigned long lastTaskMillis = 0;
 static float dumpStartPressureBar = 0.0f;
 static float dumpStartHeadspaceL = 0.0f;
+static float dumpStartBeerVolumeL = 0.0f;
 static bool taskRestWindowActive = false;
 
 static void startTask(byte type) {
@@ -37,6 +38,7 @@ static void endTask(unsigned long restWindowMinutes) {
 void startDumpTask() {
   dumpStartPressureBar = ControlData.pressure;
   dumpStartHeadspaceL = CountersData.headSpaceVolume;
+  dumpStartBeerVolumeL = beerVolume;
   startTask(1);
 }
 void startGasTask()            { startTask(2); }
@@ -46,6 +48,13 @@ void startDynamicHoppingTask() { startTask(5); }
 
 void endDumpTask() {
   applyDumpWindowHeadspaceRecalc(dumpStartHeadspaceL, dumpStartPressureBar, ControlData.pressure);
+  // The headspace recalculation treats the pressure loss during a dump as
+  // liquid removal. Accumulate only a validated, positive inferred loss.
+  const float dumpedThisTask = dumpStartBeerVolumeL - beerVolume;
+  if (isfinite(dumpedThisTask) && dumpedThisTask > 0.0f) {
+    CountersData.dumpedVolume += dumpedThisTask;
+    writeCountersDataToNIV();
+  }
   endTask(0);
 }
 

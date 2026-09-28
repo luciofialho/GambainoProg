@@ -12,10 +12,10 @@ struct ReliefLogData {
   unsigned long valveOpenedMillis;
   unsigned long pressureReachedTargetMillis;
   unsigned long pressureAfterReliefMillis;
-  bool volumeDeterminationActive;
   float temperature;
   float targetPressure;
   float atmosphericPressure;
+  float environmentTemperature;
   float reliefVolume;
   float effectiveVentingExponent;
   float pressureOnReliefMeasured;
@@ -28,7 +28,15 @@ struct ReliefLogData {
   float adjustedEquilibriumPressure;
   float ejectedPressure;
   float liquidMassInGasVentingPercent;
+  // Final residual of the previous tank cycle, sampled at this relief's opening.
   float expansionTankResidualMoles;
+  float ventingElapsedAtLogSeconds;
+  unsigned long previousReliefNumber;
+  float previousTankPressureAtCloseBar;
+  float previousTankMolesAtClose;
+  float previousTankPressureAtOpenBar;
+  float previousTankEjectedMolesBeforeLiquidCorrection;
+  float previousTankEjectedMoles;
   float ejectedMolsBeforeLiquidCorrection;
   float instantaneousPressureDropFactor;
   float pressureDropFactor;
@@ -36,8 +44,6 @@ struct ReliefLogData {
   float beerVolume;
   float ejectedMols;
   bool gasFlowModelActive;
-  float gasRiseRateBarPerSecond;
-  float gasAvailableSeconds;
   float gasOpeningSeconds;
   float gasPreviousVentingSeconds;
   float gasExpansionResidual;

@@ -224,21 +224,35 @@ void temperatureControl() {
       minTarget -= FMTOFFSET;
     
     switch (mode) {
-      case FMTIDLE:
+      case FMTIDLE: {
         if (ControlData.temperature > maxTarget  || (ControlData.temperature>minTarget && interruptedCooling)) {
           if (!millisOverflowWindow && MILLISPAST(nextModeChange)) {
             newMode = FMTCHILL;
           }
         }
-        // Keep the wide threshold when starting a new heating episode. After a
-        // timed heating pulse, resume closer to target once its rest has elapsed.
+        // Avoid switching rapidly from cooling to heating: after a short idle
+        // period require a 3*OFFSET drop. Relax this linearly to OFFSET over
+        // twenty minutes of idle time.
+        constexpr unsigned long shortIdleMs = 5UL * 60000UL;
+        constexpr unsigned long longIdleMs = 20UL * 60000UL;
+        const unsigned long idleElapsedMs = millis() - lastModeChange;
+        float heatRestartAlpha = 1.0f;
+        if (idleElapsedMs <= shortIdleMs) {
+          heatRestartAlpha = 3.0f;
+        } else if (idleElapsedMs < longIdleMs) {
+          const float progress = float(idleElapsedMs - shortIdleMs) /
+              float(longIdleMs - shortIdleMs);
+          heatRestartAlpha = 3.0f - 2.0f * progress;
+        }
+        const float heatRestartThreshold = SetPointData.setPointTemp -
+            heatRestartAlpha * FMTOFFSET;
         if (newMode != FMTCHILL && FMTData.heater.enabled &&
-            ControlData.temperature < (interruptedHeating
-                ? minTarget : minTarget - 2 * FMTOFFSET)) {
+            ControlData.temperature < heatRestartThreshold) {
           if (lastModeChange==0 || (!millisOverflowWindow && MILLISPAST(nextModeChange))) // anti boucing Constante
             newMode = FMTHEAT; 
         }
       break;
+      }
 
       case FMTCHILL: 
         if (ControlData.temperature <= minTarget) {

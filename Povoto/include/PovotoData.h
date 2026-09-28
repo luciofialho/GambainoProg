@@ -129,6 +129,8 @@ struct CountersData_t {
   // Integral of net produced CO2, normalized by the beer volume at each event.
   double CO2MolsProducedPerLiter;
   float headSpaceVolume;
+  // Beer volume removed through completed manual Dump tasks (L).
+  float dumpedVolume;
   float correctionPlato;
   long int totalChillTime; // seconds
   long int totalHeatTime;  // seconds

@@ -190,6 +190,7 @@ void doDataLog() {
     GLogAddData("gCO2/L/d");
     GLogAddData("HeadSpaceVolume");
     GLogAddData("BeerVolume");
+    GLogAddData("DumpedVolume");
     GLogAddData("SG");
     GLogAddData("RE (Plato)");
     GLogAddData("ABV");
@@ -225,6 +226,7 @@ void doDataLog() {
     GLogAddData("LastTaskMillis");
     GLogAddData("OperatingMode");
     GLogAddData("AtmosphericPressure");
+    GLogAddData("EnvironmentTemperature");
 
     GLogSend();
     headerWritten = true;
@@ -241,6 +243,7 @@ void doDataLog() {
     GLogAddData(beerCO2EvolutionGramsPerLiterPerDay,3);
     GLogAddData(CountersData.headSpaceVolume, 3);
     GLogAddData(beerVolume, 3);
+    GLogAddData(CountersData.dumpedVolume, 3);
     GLogAddData(beerSG,5);
     GLogAddData(SGToRealPlato(beerSG),3);
     GLogAddData(beerABV,2);
@@ -277,6 +280,7 @@ void doDataLog() {
     GLogAddData(lastTaskMillis);
     GLogAddData((int)SetPointData.mode);
     GLogAddData(Patm, 6);
+    GLogAddData(environmentTemp, 2);
     GLogSend();
   }
 }
@@ -320,10 +324,10 @@ void doReliefDataLog(const ReliefLogData &data) {
     GLogAddData("FMT");
     GLogAddData("ReliefNumber");
     GLogAddData("ValveOpenedMillis");
-    GLogAddData("VolumeDetermination");
     GLogAddData("Temperature");
     GLogAddData("PressureTarget");
     GLogAddData("AtmosphericPressure");
+    GLogAddData("EnvironmentTemperature");
     GLogAddData("ReliefVolume");
     GLogAddData("EffectiveVentingExponent");
     GLogAddData("PressureOnReliefMeasured");
@@ -338,13 +342,13 @@ void doReliefDataLog(const ReliefLogData &data) {
     GLogAddData("AdjustedEquilibriumPressure");
     GLogAddData("EjectedPressure");
     GLogAddData("LiquidMassInGasVentingPercent");
-    GLogAddData("ExpansionTankResidualMoles");
-    GLogAddData("EjectedMolsBeforeLiquidCorrection");
+    GLogAddData("ExpansionTankResidualMoles"); // Previous cycle, at this relief's opening.
+    GLogAddData("EjectedMolsBeforeLiquidCorrectionAtLog");
     GLogAddData("InstantPressureDropFactor");
     GLogAddData("PressureDropFactor");
     GLogAddData("HeadSpaceVolume");
     GLogAddData("BeerVolume");
-    GLogAddData("EjectedMols");
+    GLogAddData("EjectedMolsAtLog");
     GLogAddData("TotalEjectedMols");
     GLogAddData("HeadSpaceCO2Mols");
     GLogAddData("DissolvedCO2Mols");
@@ -356,8 +360,6 @@ void doReliefDataLog(const ReliefLogData &data) {
     GLogAddData("ReliefsPerHour");
     GLogAddData("gCO2/L/d");
     GLogAddData("GasFlowModelActive");
-    GLogAddData("GasRiseRateBarPerSecond");
-    GLogAddData("GasAvailableSeconds");
     GLogAddData("GasOpeningSeconds");
     GLogAddData("GasPreviousVentingSeconds");
     GLogAddData("GasExpansionResidual");
@@ -382,6 +384,13 @@ void doReliefDataLog(const ReliefLogData &data) {
     GLogAddData("PolytropicEstimatedExponent");
     GLogAddData("PolytropicSampleCount");
     GLogAddData("PolytropicFitRMSEBar");
+    GLogAddData("ResidualFromReliefNumber");
+    GLogAddData("PreviousTankPressureAtCloseBar");
+    GLogAddData("PreviousTankMolesAtClose");
+    GLogAddData("PreviousTankPressureAtOpenBar");
+    GLogAddData("PreviousTankEjectedMolesBeforeLiquidCorrection");
+    GLogAddData("PreviousTankEjectedMoles");
+    GLogAddData("VentingElapsedAtLogSeconds");
     GLogSend();
     headerWritten = true;
   }
@@ -392,10 +401,10 @@ void doReliefDataLog(const ReliefLogData &data) {
   GLogAddData(data.povotoNumber);
   GLogAddData(data.reliefNumber);
   GLogAddData(data.valveOpenedMillis);
-  GLogAddData(data.volumeDeterminationActive ? "yes" : "no");
   GLogAddData(data.temperature, 2);
   GLogAddData(data.targetPressure, 6);
   GLogAddData(data.atmosphericPressure, 6);
+  GLogAddData(data.environmentTemperature, 2);
   GLogAddData(data.reliefVolume, 3);
   GLogAddData(data.effectiveVentingExponent, 3);
   GLogAddData(data.pressureOnReliefMeasured, 6);
@@ -410,7 +419,7 @@ void doReliefDataLog(const ReliefLogData &data) {
   GLogAddData(data.adjustedEquilibriumPressure, 6);
   GLogAddData(data.ejectedPressure, 6);
   GLogAddData(data.liquidMassInGasVentingPercent, 3);
-  GLogAddData(data.expansionTankResidualMoles, 6);
+  GLogAddData(data.expansionTankResidualMoles, 9);
   GLogAddData(data.ejectedMolsBeforeLiquidCorrection, 6);
   GLogAddData(data.instantaneousPressureDropFactor, 6);
   GLogAddData(data.pressureDropFactor, 6);
@@ -428,8 +437,6 @@ void doReliefDataLog(const ReliefLogData &data) {
   GLogAddData(data.reliefsPerHour, 3);
   GLogAddData(data.beerCO2EvolutionGramsPerLiterPerDay, 3);
   GLogAddData(data.gasFlowModelActive ? "yes" : "no");
-  GLogAddData(data.gasRiseRateBarPerSecond, 8);
-  GLogAddData(data.gasAvailableSeconds, 3);
   GLogAddData(data.gasOpeningSeconds, 3);
   GLogAddData(data.gasPreviousVentingSeconds, 3);
   GLogAddData(data.gasExpansionResidual, 6);
@@ -454,5 +461,15 @@ void doReliefDataLog(const ReliefLogData &data) {
   GLogAddData(data.polytropicEstimatedExponent, 6);
   GLogAddData(data.polytropicSampleCount);
   GLogAddData(data.polytropicFitRMSEBar, 6);
+  if (data.previousTankMolesAtClose >= 0.0f && isfinite(data.previousTankMolesAtClose))
+    GLogAddData(data.previousReliefNumber);
+  else
+    GLogAddData("");
+  GLogAddData(data.previousTankPressureAtCloseBar, 6);
+  GLogAddData(data.previousTankMolesAtClose, 8);
+  GLogAddData(data.previousTankPressureAtOpenBar, 9);
+  GLogAddData(data.previousTankEjectedMolesBeforeLiquidCorrection, 8);
+  GLogAddData(data.previousTankEjectedMoles, 8);
+  GLogAddData(data.ventingElapsedAtLogSeconds, 3);
   GLogSend();
 }
