@@ -5,6 +5,7 @@ Firmware ESP32 que monitora e controla fermentação de cerveja (pressão e temp
 ## Arquivos principais
 - `PressureControl.cpp`: leitura de pressão (INA226, shunt 3 Ω, sensor 4–20 mA 0–2 bar YD6080), ciclo de relief/expansão, headspace, CO2 dissolvido e SG.
 - `datalog.cpp`: logs "Cold" (periódico, 30 s), "Relief" (um por relief) e "Recovery" (diagnóstico, marcado com [DIAG]).
+- `AutoSetpoints.cpp` (+ `PovotoMail.cpp`): ações automáticas (regras, estabilidade de temperatura/pressão, e-mail). Documentação: `docs/automatic-actions.md`.
 
 ## Regras de trabalho
 - Há fermentação em andamento com o equipamento em produção. Nunca gravar na placa (upload/OTA) sem confirmação explícita.
