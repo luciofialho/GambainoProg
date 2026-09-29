@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <math.h>
+#include <stdlib.h>
 #include <PovotoCommon.h>
 #include <PovotoData.h>
 #include <IOTK.h>
@@ -12,8 +13,25 @@
 
 // sensor readigs
 float dallasTemperature = 0;
-float environmentTemp = 25;
+float environmentTemp = NOTaTEMP;
+static constexpr unsigned long ENVIRONMENT_TEMP_TIMEOUT_MS = 10UL * 60UL * 1000UL;
+static unsigned long lastEnvironmentTempReceivedMillis = 0;
+static bool environmentTempReceived = false;
 bool  debugTemperatureOverride = false;  // when true, ControlData.temperature is not overwritten by Dallas
+
+void setEnvironmentTemperatureFromPacket(const char *payload) {
+  char *end = nullptr;
+  const float received = payload ? strtof(payload, &end) : NAN;
+  if (!payload || end == payload || *end != '\0' ||
+      !isfinite(received) || received == NOTaTEMP || received == 85.0f) {
+    environmentTemp = NOTaTEMP;
+    environmentTempReceived = false;
+    return;
+  }
+  environmentTemp = received;
+  lastEnvironmentTempReceivedMillis = millis();
+  environmentTempReceived = true;
+}
 
 // FMT control variables
 byte  ChillHeatMode = FMTIDLE;
@@ -121,6 +139,12 @@ void temperatureControl() {
   if (!(MILLISDIFF(lastRun,100))) 
     return;
   lastRun = millis();
+
+  if (environmentTempReceived &&
+      (unsigned long)(lastRun - lastEnvironmentTempReceivedMillis) >= ENVIRONMENT_TEMP_TIMEOUT_MS) {
+    environmentTemp = NOTaTEMP;
+    environmentTempReceived = false;
+  }
 
   
   byte newMode = FMTIDLE;  

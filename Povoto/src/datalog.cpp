@@ -14,7 +14,7 @@
 #define BREWFATHER_RETRY_INTERVAL_MS 30000UL  // 15 segundos entre tentativas
 
 static bool isValidTemp(float value) {
-  return (value != NOTaTEMP && value != 85);
+  return isfinite(value) && value != NOTaTEMP && value != 85;
 }
 
 static bool isZeroMac(const uint8_t *mac) {
@@ -56,22 +56,23 @@ static bool buildBrewfatherPayload(char *out, size_t outSize) {
   escapeJsonString(BatchData.batchName, batchNameEsc, sizeof(batchNameEsc));
 
   const float temp = isValidTemp(ControlData.temperature) ? ControlData.temperature : NAN;
+  const float extTemp = isValidTemp(environmentTemp) ? environmentTemp : NAN;
   const float targetTemp = isValidTemp(SetPointData.setPointTemp) ? SetPointData.setPointTemp : NAN;
   const float gravity = (beerSG >= 0.0f && beerSG <= 1.1f) ? beerSG : NAN;
   const float pressure = (ControlData.pressure >= 0.0f && ControlData.pressure <= 3.0f) ? ControlData.pressure : NAN;
   const float bpm = getBeerCO2EvolutionGramsPerLiterPerDay();
 
-  char tempField[24];
-  char extTempField[24];
+  char tempField[40] = "";
+  char extTempField[40] = "";
+  char targetTempField[40] = "";
   char gravityField[24];
   char pressureField[24];
-  char bpmField[24];
+  char bpmField[40] = "";
 
-  if (isnan(temp)) snprintf(tempField, sizeof(tempField), "null");
-  else snprintf(tempField, sizeof(tempField), "%.2f", temp);
-
-  if (isnan(targetTemp)) snprintf(extTempField, sizeof(extTempField), "null");
-  else snprintf(extTempField, sizeof(extTempField), "%.2f", targetTemp);
+  if (isfinite(temp)) snprintf(tempField, sizeof(tempField), ",\"temp\":%.2f", temp);
+  if (isfinite(extTemp)) snprintf(extTempField, sizeof(extTempField), ",\"ext_temp\":%.2f", extTemp);
+  if (isfinite(targetTemp))
+    snprintf(targetTempField, sizeof(targetTempField), ",\"temp_target\":%.2f", targetTemp);
 
   if (isnan(gravity)) snprintf(gravityField, sizeof(gravityField), "null");
   else snprintf(gravityField, sizeof(gravityField), "%.5f", gravity);
@@ -79,17 +80,18 @@ static bool buildBrewfatherPayload(char *out, size_t outSize) {
   if (isnan(pressure)) snprintf(pressureField, sizeof(pressureField), "null");
   else snprintf(pressureField, sizeof(pressureField), "%.3f", pressure);
 
-  if (isnan(bpm)) snprintf(bpmField, sizeof(bpmField), "null");
-  else snprintf(bpmField, sizeof(bpmField), "%.2f", bpm);
+  if (isfinite(bpm) && bpm > 0.0f)
+    snprintf(bpmField, sizeof(bpmField), ",\"bpm\":%.2f", bpm);
 
   int written = snprintf(
     out,
     outSize,
-    "{\"name\":\"%s%d\",\"temp_unit\":\"C\",\"pressure_unit\":\"BAR\",\"temp\":%s,\"ext_temp\":%s,\"gravity\":%s,\"gravity_unit\":\"G\",\"pressure\":%s,\"bpm\":%s,\"beer\":\"%s\"}",
+    "{\"name\":\"%s%d\",\"temp_unit\":\"C\",\"pressure_unit\":\"BAR\"%s%s%s,\"gravity\":%s,\"gravity_unit\":\"G\",\"pressure\":%s%s,\"beer\":\"%s\"}",
     debugging ? "Debfmt" : "Fmt",
     (int)FMTData.PovotoNum,
     tempField,
     extTempField,
+    targetTempField,
     gravityField,
     pressureField,
     bpmField,
@@ -280,7 +282,7 @@ void doDataLog() {
     GLogAddData(lastTaskMillis);
     GLogAddData((int)SetPointData.mode);
     GLogAddData(Patm, 6);
-    GLogAddData(environmentTemp, 2);
+    GLogAddData(isValidTemp(environmentTemp) ? environmentTemp : NAN, 2);
     GLogSend();
   }
 }
@@ -404,7 +406,7 @@ void doReliefDataLog(const ReliefLogData &data) {
   GLogAddData(data.temperature, 2);
   GLogAddData(data.targetPressure, 6);
   GLogAddData(data.atmosphericPressure, 6);
-  GLogAddData(data.environmentTemperature, 2);
+  GLogAddData(isValidTemp(data.environmentTemperature) ? data.environmentTemperature : NAN, 2);
   GLogAddData(data.reliefVolume, 3);
   GLogAddData(data.effectiveVentingExponent, 3);
   GLogAddData(data.pressureOnReliefMeasured, 6);
@@ -517,7 +519,7 @@ void doRecoveryDataLog(unsigned long reliefNumber, float p1, float p1Extrap,
   GLogAddData(reliefNumber);
   GLogAddData(p1, 6);
   GLogAddData(p1Extrap, 6);
-  GLogAddData(envTemp, 2);
+  GLogAddData(isValidTemp(envTemp) ? envTemp : NAN, 2);
   GLogAddData(beerTemp, 2);
   GLogAddData(openSeconds, 3);
   GLogAddData(shadowExponent, 4);

@@ -163,13 +163,14 @@ static void handlePovotoEspNow(char type, const char *payload) {
     Serial.println("TransferEnd: mode set to fermenting");
   }
   else if (type == ENVTEMPPACKET) {
-    environmentTemp = atof(payload);
+    setEnvironmentTemperatureFromPacket(payload);
   }
 }
 
 void setup() {
   Serial.begin(115200);
   delay(50);
+  NTPBegin(-3);   // antes de WiFi/servidor: nenhum sync NTP pode ocorrer com fuso 0
 
 
   povotoDataInit();
@@ -272,7 +273,6 @@ void setup() {
     Serial.printf("Touch FocalTech nao detectado no I2C (addr 0x%02X, SDA=%d SCL=%d)\n", FT_ADDR, PINSDA, PINSCL);
   }
 
-  NTPBegin(-3);
   
   // Teste de inicialização do touch SPI
   //Serial.println("Inicializando touch SPI...");

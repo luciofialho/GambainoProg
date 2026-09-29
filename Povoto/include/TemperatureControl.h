@@ -4,6 +4,7 @@ extern bool interruptedCooling;
 extern bool interruptedHeating;
 
 void temperatureControl();
+void setEnvironmentTemperatureFromPacket(const char *payload);
 void resetChillHeatCycle();
 char *getTemperatureModeLabel();
 char *getTemperatureControlStatus(char *st);
