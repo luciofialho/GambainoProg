@@ -78,6 +78,11 @@ enum CO2DissolvedEstimationMode : uint8_t {
 static CO2DissolvedEstimationMode co2DissolvedEstimationMode = CO2_DISSOLVED_HALF_LIFE;
 static unsigned long co2ActiveFermentationCriteriaSinceMillis = 0;
 static unsigned long co2FermentationConfirmationMs = CO2_IMMEDIATE_PERCEPTION_DELAY_MS;
+// After a reboot, keep a restored immediate mode while the criteria rebuild
+// their history (observation window + relief confirmation).
+static constexpr unsigned long CO2_RESTORED_MODE_GRACE_MS = 30UL * MINUTESms;
+// Mode seen by the last dissolved-CO2 update; detects the half-life->immediate step.
+static bool co2PreviousModeImmediate = false;
 struct CO2EvolutionSample {
   unsigned long millisStamp;
   double totalMols;
@@ -115,6 +120,30 @@ static float polytropicBackExtrapolatedPressure = NAN;
 static float polytropicFitSlopeBarPerMinute = NAN, polytropicEstimatedExponent = NAN;
 static float polytropicFitRMSEBar = NAN;
 static float currentOnReliefMeasured = 0.0f;
+
+// ===== [DIAG] recuperação pós-relief + headspace sombra (somente log) =====
+static constexpr float SHADOW_EXPONENT_SLOPE_PER_C = 0.0078f;  // empírico (fermentação 160)
+static constexpr float SHADOW_EXPONENT_HINGE_C     = 21.0f;    // abaixo disso, sem correção
+static float shadowExponent = NAN;
+static float shadowHeadspaceInstant = NAN;
+static float shadowHeadspaceFiltered = NAN;
+
+static const unsigned long RECOVERY_OFFSETS_MS[] = {
+  360, 500, 750, 1000, 1500, 2000, 3000, 5000, 7500,
+  10000, 15000, 20000, 30000, 45000, 60000
+};
+static constexpr uint8_t RECOVERY_POINTS =
+  sizeof(RECOVERY_OFFSETS_MS) / sizeof(RECOVERY_OFFSETS_MS[0]);
+static float recoveryPressure[RECOVERY_POINTS];
+static unsigned long recoveryActualMs[RECOVERY_POINTS];
+static uint8_t recoveryNext = 0;
+static bool recoveryActive = false;
+static unsigned long recoveryCloseMillis = 0;
+static unsigned long recoveryReliefNumber = 0;
+static float recoveryP1 = NAN, recoveryP1Extrap = NAN;
+static float recoveryEnvTemp = NAN, recoveryBeerTemp = NAN;
+static float recoveryOpenSeconds = NAN;
+// ===== [DIAG] fim =====
 
 float  adjustedPressureAfterRelief;
 static float adjustedEquilibriumPressure = NAN;
@@ -821,10 +850,22 @@ static void finishGasExpansion(unsigned long now) {
 
 static void updateCO2DissolvedEstimationMode() {
   fermentationCriteria = hasActiveFermentationCriteria();
+  CO2DissolvedEstimationMode nextMode = co2DissolvedEstimationMode;
   if (fermentationCriteria == FermentationCriteria::Inactive) {
-    co2DissolvedEstimationMode = CO2_DISSOLVED_HALF_LIFE;
+    // A mode restored as immediate survives the post-boot rebuild of the criteria.
+    const bool restoredImmediateGrace =
+        co2DissolvedEstimationMode == CO2_DISSOLVED_IMMEDIATE &&
+        CountersData.co2DissolvedMode == 1 &&
+        SetPointData.mode == MODE_FERMENTING &&
+        millis() < CO2_RESTORED_MODE_GRACE_MS;
+    if (!restoredImmediateGrace) nextMode = CO2_DISSOLVED_HALF_LIFE;
   } else if (fermentationCriteria == FermentationCriteria::Active) {
-    co2DissolvedEstimationMode = CO2_DISSOLVED_IMMEDIATE;
+    nextMode = CO2_DISSOLVED_IMMEDIATE;
+  }
+  if (nextMode != co2DissolvedEstimationMode) {
+    co2DissolvedEstimationMode = nextMode;
+    CountersData.co2DissolvedMode = nextMode == CO2_DISSOLVED_IMMEDIATE ? 1 : 0;
+    writeCountersDataToNIV();
   }
 }
 
@@ -871,6 +912,15 @@ DissolvedCO2LogData getDissolvedCO2LogData() {
   return data;
 }
 
+// Shifts the stored CO2 totals by a model step so the rate window ignores it.
+// Called only when the dissolved-CO2 mode changes to immediate.
+static void rebaseCO2Evolution(double deltaMols) {
+  if (!isfinite(deltaMols) || deltaMols == 0.0) return;
+  for (uint16_t i = 0; i < co2EvolutionCount; ++i) {
+    co2EvolutionHistory[(co2EvolutionStart + i) % CO2_EVOLUTION_HISTORY_SIZE].totalMols += deltaMols;
+  }
+}
+
 static void recomputeDissolvedCO2MolsFromCurrentState() {
     static unsigned long lastUpdateMillis = 0;
 
@@ -894,10 +944,20 @@ static void recomputeDissolvedCO2MolsFromCurrentState() {
         calculationPressure, beerSG, ControlData.temperature, beerVolume);
 
     if (co2DissolvedEstimationMode == CO2_DISSOLVED_IMMEDIATE) {
+      const double previousMols = CountersData.CO2InSolution;
       CountersData.CO2InSolution = equilibriumMols;
+      if (!co2PreviousModeImmediate) {
+        // The step corrects the model, it is not production: keep it out of gCO2/L/d.
+        const double stepMols = CountersData.CO2InSolution - previousMols;
+        rebaseCO2Evolution(stepMols);
+        Serial.printf("[CO2 REBASE] half-life->immediate step=%.3f mol, samples=%u\n",
+                      stepMols, (unsigned)co2EvolutionCount);
+        co2PreviousModeImmediate = true;
+      }
       lastUpdateMillis = now;
       return;
     }
+    co2PreviousModeImmediate = false;
 
     if (!MILLISDIFF(lastUpdateMillis, 30000UL)) 
       return;
@@ -1213,6 +1273,11 @@ float RealPlatoToSG(float realPlato) {
 
 
 static void restoreDerivedStateFromCounters() {
+  // Restore the dissolved-CO2 mode saved before the reboot.
+  co2DissolvedEstimationMode = CountersData.co2DissolvedMode == 1
+      ? CO2_DISSOLVED_IMMEDIATE : CO2_DISSOLVED_HALF_LIFE;
+  co2PreviousModeImmediate = co2DissolvedEstimationMode == CO2_DISSOLVED_IMMEDIATE;
+
   if (CountersData.headSpaceVolume > 0.0f) {
     updateBeerVolumeFromHeadspace();
     if (CountersData.totalReliefCount >= 3) {
@@ -1788,6 +1853,86 @@ static void estimatePreviousReliefPolytropicExponent() {
     polytropicEstimatedExponent = exponent;
 }
 
+// ===== [DIAG] funções (somente log) =====
+// [DIAG] Definida em datalog.cpp (pode ser movida para datalog.h).
+void doRecoveryDataLog(unsigned long reliefNumber, float p1, float p1Extrap,
+                       float envTemp, float beerTemp, float openSeconds,
+                       float shadowExponent, float shadowHsInstant, float shadowHsFiltered,
+                       uint8_t points, const unsigned long *ms, const float *pressure);
+
+static bool ENV_TEMP_VALID(float t) {
+  // TODO: trocar por "recebido há menos de X min" quando houver timestamp.
+  return isfinite(t) && t > -20.0f && t < 60.0f && t != NOTaTEMP;
+}
+
+static float shadowExponentNow() {
+  float e = FMTData.FMTEffectiveVentingExponent;
+  if (ENV_TEMP_VALID(environmentTemp))
+    e += SHADOW_EXPONENT_SLOPE_PER_C * fmaxf(0.0f, environmentTemp - SHADOW_EXPONENT_HINGE_C);
+  return e;
+}
+
+// Mesmo cálculo de adjustedEquilibriumPressureForPostRelief(), com expoente explícito.
+static float shadowHeadspaceFromRelief(float exponent) {
+  if (!isfinite(exponent) || exponent <= 0.0f ||
+      !isfinite(pressureAfterRelief) || !isfinite(pressureOnReliefMeas) ||
+      !isfinite(pressureOnReliefExtrap) || pressureOnReliefExtrap <= 0.01f ||
+      pressureAfterRelief + Patm <= 0.0f || pressureOnReliefMeas + Patm <= 0.0f) return NAN;
+  const float adj = (pressureOnReliefMeas + Patm) *
+    powf((pressureAfterRelief + Patm) / (pressureOnReliefMeas + Patm), 1.0f / exponent) - Patm;
+  const float residual = FMTData.targetResidualAfterReliefPercent / 100.0f;
+  const float peq = pressureOnReliefMeas - (pressureOnReliefMeas - adj) / (1.0f - residual);
+  const float f = peq / pressureOnReliefExtrap;
+  if (!(f > 0.0f && f < 1.0f)) return NAN;
+  return volumeEstimationFromPressureDrop(f);
+}
+
+static void startRecoveryCapture(unsigned long closeMillis, float openSeconds) {
+  recoveryActive = true;
+  recoveryNext = 0;
+  recoveryCloseMillis = closeMillis;
+  recoveryReliefNumber = CountersData.totalReliefCount + 1;  // incrementado em processPressure(true)
+  recoveryP1 = pressureOnReliefMeas;
+  recoveryP1Extrap = pressureOnReliefExtrap;
+  recoveryEnvTemp = environmentTemp;
+  recoveryBeerTemp = ControlData.temperature;
+  recoveryOpenSeconds = openSeconds;
+  for (uint8_t i = 0; i < RECOVERY_POINTS; ++i) {
+    recoveryPressure[i] = NAN;
+    recoveryActualMs[i] = 0;
+  }
+}
+
+static void finishRecoveryCapture() {
+  if (!recoveryActive) return;
+  recoveryActive = false;
+  doRecoveryDataLog(recoveryReliefNumber, recoveryP1, recoveryP1Extrap,
+                    recoveryEnvTemp, recoveryBeerTemp, recoveryOpenSeconds,
+                    shadowExponent, shadowHeadspaceInstant, shadowHeadspaceFiltered,
+                    RECOVERY_POINTS, recoveryActualMs, recoveryPressure);
+}
+
+// Chamar a cada loop (ver [E]). Um ponto por chamada, com o tempo real registrado.
+static void collectRecoverySample() {
+  if (!recoveryActive) return;
+  if (ControlData.transferValve) {          // novo relief começou antes de 60 s
+    finishRecoveryCapture();
+    return;
+  }
+  if (!pressureAcquisitionValid || inPressureNoiseWindow() ||
+      !isfinite(ControlData.pressure)) return;
+  const long elapsed = (long)(pressureAcquiredMillis - recoveryCloseMillis);
+  if (elapsed < 0) return;
+  if (recoveryNext < RECOVERY_POINTS &&
+      (unsigned long)elapsed >= RECOVERY_OFFSETS_MS[recoveryNext]) {
+    recoveryPressure[recoveryNext] = ControlData.pressure;
+    recoveryActualMs[recoveryNext] = (unsigned long)elapsed;
+    ++recoveryNext;
+  }
+  if (recoveryNext >= RECOVERY_POINTS) finishRecoveryCapture();
+}
+// ===== [DIAG] fim =====
+
 void processPressure(bool afterRelief) {
   // Capture the old volume before a relief can update headspace below.
   const float beerVolumeBeforeEvent = beerVolume;
@@ -1833,6 +1978,17 @@ void processPressure(bool afterRelief) {
     if (isfinite(pressureOnReliefExtrap) && pressureOnReliefExtrap > 0.01f &&
         isfinite(adjustedEquilibriumPressure)) {
       instantPressureDropFactor = adjustedEquilibriumPressure / pressureOnReliefExtrap;
+    }
+
+    // [DIAG] headspace sombra com expoente dependente da T ambiente (somente log)
+    if (!volumeDeterminationActive) {
+      shadowExponent = shadowExponentNow();
+      shadowHeadspaceInstant = shadowHeadspaceFromRelief(shadowExponent);
+      if (isfinite(shadowHeadspaceInstant)) {
+        shadowHeadspaceFiltered = isfinite(shadowHeadspaceFiltered)
+          ? shadowHeadspaceFiltered + 0.05f * (shadowHeadspaceInstant - shadowHeadspaceFiltered)
+          : shadowHeadspaceInstant;
+      }
     }
 
     if (isfinite(instantPressureDropFactor) && instantPressureDropFactor > 0.0f &&
@@ -2191,6 +2347,10 @@ bool processReliefCycle() {
         ControlData.transferValve = false;
         const unsigned long transferClosedMillis = millis();
         reliefValveClosedMillis = transferClosedMillis;
+        // [DIAG] inicia a captura da recuperação pós-relief (somente log)
+        if (!volumeDeterminationActive)
+          startRecoveryCapture(transferClosedMillis,
+                               (transferClosedMillis - reliefValveOpenedMillis) / 1000.0f);
         pressureAcquisitionValid = false;
         clearPolytropicSamples();
         // The measured inventory is installed at the post-relief reading, but
@@ -3006,6 +3166,7 @@ void pressureControl() {
   }
 
   collectPolytropicPressureSample();
+  collectRecoverySample();  // [DIAG]
 
   if (volumeDeterminationActive) {
     if (volumeConverged || volumeIteration >= VOLUME_DETERMINATION_RECORD_END_CYCLE) {

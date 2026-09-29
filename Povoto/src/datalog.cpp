@@ -473,3 +473,59 @@ void doReliefDataLog(const ReliefLogData &data) {
   GLogAddData(data.ventingElapsedAtLogSeconds, 3);
   GLogSend();
 }
+
+// ===== [DIAG] log da recuperação pós-relief + headspace sombra =====
+void doRecoveryDataLog(unsigned long reliefNumber, float p1, float p1Extrap,
+                       float envTemp, float beerTemp, float openSeconds,
+                       float shadowExponent, float shadowHsInstant, float shadowHsFiltered,
+                       uint8_t points, const unsigned long *ms, const float *pressure) {
+  if (!datalogFolderNameInUse[0] || BatchData.batchNumber == 0) return;
+
+  static bool headerWritten = false;
+  static int lastBatchNum = -1;
+  const int batchNum = (int)BatchData.batchNumber;
+  if (batchNum != lastBatchNum) { lastBatchNum = batchNum; headerWritten = false; }
+
+  char batchStr[6];
+  snprintf(batchStr, sizeof(batchStr), "%03d", batchNum);
+
+  if (!headerWritten) {
+    GLogBegin(datalogFolderNameInUse, batchStr, "Recovery");
+    GLogAddTimeStamp();
+    GLogAddData("FMT");
+    GLogAddData("ReliefNumber");
+    GLogAddData("PressureOnRelief");
+    GLogAddData("PressureOnReliefExtrapolated");
+    GLogAddData("EnvironmentTemperature");
+    GLogAddData("Temperature");
+    GLogAddData("OpenSeconds");
+    GLogAddData("ShadowExponent");
+    GLogAddData("ShadowHeadspaceInstant");
+    GLogAddData("ShadowHeadspaceFiltered");
+    char name[16];
+    for (uint8_t i = 0; i < points; ++i) {
+      snprintf(name, sizeof(name), "t%u_ms", (unsigned)i);  GLogAddData(name);
+      snprintf(name, sizeof(name), "p%u", (unsigned)i);     GLogAddData(name);
+    }
+    GLogSend();
+    headerWritten = true;
+  }
+
+  GLogBegin(datalogFolderNameInUse, batchStr, "Recovery");
+  GLogAddTimeStamp();
+  GLogAddData(FMTData.PovotoNum);
+  GLogAddData(reliefNumber);
+  GLogAddData(p1, 6);
+  GLogAddData(p1Extrap, 6);
+  GLogAddData(envTemp, 2);
+  GLogAddData(beerTemp, 2);
+  GLogAddData(openSeconds, 3);
+  GLogAddData(shadowExponent, 4);
+  GLogAddData(shadowHsInstant, 3);
+  GLogAddData(shadowHsFiltered, 3);
+  for (uint8_t i = 0; i < points; ++i) {
+    GLogAddData(ms[i]);
+    GLogAddData(pressure[i], 6);
+  }
+  GLogSend();
+}

@@ -134,6 +134,8 @@ struct CountersData_t {
   float correctionPlato;
   long int totalChillTime; // seconds
   long int totalHeatTime;  // seconds
+  // Dissolved-CO2 estimation mode (0 = half-life, 1 = immediate), restored after reboot.
+  uint8_t co2DissolvedMode;
 } __attribute__((packed));
 
 extern CountersData_t CountersData;

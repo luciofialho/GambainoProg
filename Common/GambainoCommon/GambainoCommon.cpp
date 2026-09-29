@@ -451,6 +451,12 @@ static void gambainoEspNowRecvCb(const uint8_t *mac, const uint8_t *data, int le
 // Call once after ESP-NOW is initialized (after esp_now_init / GLogEspNowInit).
 // NOT for SideKick — it has its own recv callback that already routes peer packets.
 void initPeerEspNowReceive() {
+  // Goes through GLog so the callback is automatically restored after an
+  // esp_now_deinit()/init() recovery cycle (which otherwise silently drops it).
+  // Forward-declared (not #include <IOTK_GLog.h>) to avoid a circular library
+  // dependency in the PlatformIO Library Dependency Finder.
+  extern void GLogEspNowRegisterRecvCallback(void (*cb)(const uint8_t*, const uint8_t*, int));
+  GLogEspNowRegisterRecvCallback(gambainoEspNowRecvCb);
   esp_err_t err = esp_now_register_recv_cb(gambainoEspNowRecvCb);
   Serial.printf("initPeerEspNowReceive: %s\n", err == ESP_OK ? "OK" : "FAILED");
 }

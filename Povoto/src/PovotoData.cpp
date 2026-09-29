@@ -90,7 +90,8 @@ CountersData_t CountersData = {
   .dumpedVolume = 0.0f,
   .correctionPlato = 0.0f,
   .totalChillTime = 0,
-  .totalHeatTime = 0
+  .totalHeatTime = 0,
+  .co2DissolvedMode = 0
 };
 
 // =============
@@ -376,6 +377,8 @@ bool readCountersDataFromEEPROM() {
   if (!isfinite(CountersData.correctionPlato)) CountersData.correctionPlato = defaultCountersData.correctionPlato;
   CountersData.totalChillTime = store.getInt("chillTime", defaultCountersData.totalChillTime);
   CountersData.totalHeatTime = store.getInt("heatTime", defaultCountersData.totalHeatTime);
+  CountersData.co2DissolvedMode = store.getUChar("co2Mode", defaultCountersData.co2DissolvedMode);
+  if (CountersData.co2DissolvedMode > 1) CountersData.co2DissolvedMode = defaultCountersData.co2DissolvedMode;
   store.end();
   return true;
 }
@@ -397,6 +400,7 @@ bool writeCountersDataToNIV() {
   saved = (store.putFloat("correctPlato", CountersData.correctionPlato) == sizeof(CountersData.correctionPlato)) && saved;
   saved = (store.putInt("chillTime", CountersData.totalChillTime) == sizeof(CountersData.totalChillTime)) && saved;
   saved = (store.putInt("heatTime", CountersData.totalHeatTime) == sizeof(CountersData.totalHeatTime)) && saved;
+  saved = (store.putUChar("co2Mode", CountersData.co2DissolvedMode) == sizeof(CountersData.co2DissolvedMode)) && saved;
   store.end();
   if (!saved) Serial.println("NVS: CountersData save incomplete");
   return saved;
@@ -510,6 +514,7 @@ void resetCountersForNewBatch() {
   CountersData.dumpedVolume = 0.0f;
   CountersData.totalChillTime = 0;
   CountersData.totalHeatTime = 0;
+  CountersData.co2DissolvedMode = 0;
 
   resetHeadspaceFilterTracking();
   resetCO2MolsProducedPerLiterTracking();
