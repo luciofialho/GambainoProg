@@ -5,6 +5,7 @@
 #include "PovotoData.h"
 #include "PressureControl.h"
 #include "GasFlowModel.h"
+#include "AutoSetpoints.h"
 
 // FMT data
 
@@ -91,7 +92,11 @@ CountersData_t CountersData = {
   .correctionPlato = 0.0f,
   .totalChillTime = 0,
   .totalHeatTime = 0,
-  .co2DissolvedMode = 0
+  .co2DissolvedMode = 0,
+  .tempState = TEMP_STATE_CHANGING_DIRECT,
+  .tempStableSince = 0,
+  .pressState = TEMP_STATE_CHANGING_DIRECT,
+  .pressStableSince = 0
 };
 
 // =============
@@ -379,6 +384,21 @@ bool readCountersDataFromEEPROM() {
   CountersData.totalHeatTime = store.getInt("heatTime", defaultCountersData.totalHeatTime);
   CountersData.co2DissolvedMode = store.getUChar("co2Mode", defaultCountersData.co2DissolvedMode);
   if (CountersData.co2DissolvedMode > 1) CountersData.co2DissolvedMode = defaultCountersData.co2DissolvedMode;
+  CountersData.tempState = store.getUChar("tempState", defaultCountersData.tempState);
+  CountersData.tempStableSince = store.getUInt("tempStableAt", defaultCountersData.tempStableSince);
+  // STABLE requires a timestamp and CHANGING_* must not carry one.
+  if (CountersData.tempState > TEMP_STATE_UNSTABLE ||
+      (CountersData.tempState == TEMP_STATE_STABLE) != (CountersData.tempStableSince != 0)) {
+    CountersData.tempState = defaultCountersData.tempState;
+    CountersData.tempStableSince = defaultCountersData.tempStableSince;
+  }
+  CountersData.pressState = store.getUChar("pressState", defaultCountersData.pressState);
+  CountersData.pressStableSince = store.getUInt("pressStableAt", defaultCountersData.pressStableSince);
+  if (CountersData.pressState > TEMP_STATE_UNSTABLE ||
+      (CountersData.pressState == TEMP_STATE_STABLE) != (CountersData.pressStableSince != 0)) {
+    CountersData.pressState = defaultCountersData.pressState;
+    CountersData.pressStableSince = defaultCountersData.pressStableSince;
+  }
   store.end();
   return true;
 }
@@ -401,8 +421,39 @@ bool writeCountersDataToNIV() {
   saved = (store.putInt("chillTime", CountersData.totalChillTime) == sizeof(CountersData.totalChillTime)) && saved;
   saved = (store.putInt("heatTime", CountersData.totalHeatTime) == sizeof(CountersData.totalHeatTime)) && saved;
   saved = (store.putUChar("co2Mode", CountersData.co2DissolvedMode) == sizeof(CountersData.co2DissolvedMode)) && saved;
+  saved = (store.putUChar("tempState", CountersData.tempState) == sizeof(CountersData.tempState)) && saved;
+  saved = (store.putUInt("tempStableAt", CountersData.tempStableSince) == sizeof(CountersData.tempStableSince)) && saved;
+  saved = (store.putUChar("pressState", CountersData.pressState) == sizeof(CountersData.pressState)) && saved;
+  saved = (store.putUInt("pressStableAt", CountersData.pressStableSince) == sizeof(CountersData.pressStableSince)) && saved;
   store.end();
   if (!saved) Serial.println("NVS: CountersData save incomplete");
+  return saved;
+}
+
+// Only the stability fields, written on state transitions.
+bool writeTempStabilityToNIV() {
+  Preferences store;
+  if (!store.begin("pvt_counters", false)) {
+    Serial.println("NVS: cannot open pvt_counters");
+    return false;
+  }
+  bool saved = store.putUChar("tempState", CountersData.tempState) == sizeof(CountersData.tempState);
+  saved = (store.putUInt("tempStableAt", CountersData.tempStableSince) == sizeof(CountersData.tempStableSince)) && saved;
+  store.end();
+  if (!saved) Serial.println("NVS: temperature stability save incomplete");
+  return saved;
+}
+
+bool writePressureStabilityToNIV() {
+  Preferences store;
+  if (!store.begin("pvt_counters", false)) {
+    Serial.println("NVS: cannot open pvt_counters");
+    return false;
+  }
+  bool saved = store.putUChar("pressState", CountersData.pressState) == sizeof(CountersData.pressState);
+  saved = (store.putUInt("pressStableAt", CountersData.pressStableSince) == sizeof(CountersData.pressStableSince)) && saved;
+  store.end();
+  if (!saved) Serial.println("NVS: pressure stability save incomplete");
   return saved;
 }
 
@@ -426,6 +477,7 @@ bool resetPovotoDataToFactoryDefaults() {
   BatchData = defaultBatchData;
   SetPointData = defaultSetPointData;
   CountersData = defaultCountersData;
+  resetAutoSetpointsToDefaults();
 
   bool saved = clearPovotoNamespace("pvt_settings");
   saved = clearPovotoNamespace("pvt_user") && saved;
@@ -433,6 +485,7 @@ bool resetPovotoDataToFactoryDefaults() {
   saved = clearPovotoNamespace("pvt_setpoint") && saved;
   saved = clearPovotoNamespace("pvt_calib") && saved; // Retired namespace.
   saved = clearPovotoNamespace("pvt_counters") && saved;
+  saved = clearPovotoNamespace("pvt_autosp") && saved;
   saved = clearPovotoNamespace("pvt_wifi") && saved;
 
   saved = writeFMTDataToNIV() && saved;
@@ -440,6 +493,7 @@ bool resetPovotoDataToFactoryDefaults() {
   saved = writeBatchDataToNIV() && saved;
   saved = writeSetPointDataToNIV() && saved;
   saved = writeCountersDataToNIV() && saved;
+  saved = writeAutoSetpointsToNIV() && saved;
   updatePatmFromFMTAltitude();
   requestDerivedStateRestoreFromCounters();
 
@@ -461,12 +515,14 @@ static void rewriteNVSIfSchemaChanged() {
   saved = clearPovotoNamespace("pvt_setpoint") && saved;
   saved = clearPovotoNamespace("pvt_calib") && saved; // Retired namespace.
   saved = clearPovotoNamespace("pvt_counters") && saved;
+  saved = clearPovotoNamespace("pvt_autosp") && saved;
 
   saved = writeFMTDataToNIV() && saved;
   saved = writeUserConfigurationDataToNIV() && saved;
   saved = writeBatchDataToNIV() && saved;
   saved = writeSetPointDataToNIV() && saved;
   saved = writeCountersDataToNIV() && saved;
+  saved = writeAutoSetpointsToNIV() && saved;
   if (saved) {
     FMTData.nvsSchemaVersion = PVT_NVS_SCHEMA_VERSION;
     saved = writeFMTDataToNIV();
@@ -500,6 +556,9 @@ void povotoDataInit() {
   else
     requestDerivedStateRestoreFromCounters();
 
+  if (!readAutoSetpointsFromEEPROM())
+    Serial.println("Auto set point load failed, using defaults");
+
   rewriteNVSIfSchemaChanged();
   updatePatmFromFMTAltitude();
 }
@@ -520,6 +579,7 @@ void resetCountersForNewBatch() {
   resetCO2MolsProducedPerLiterTracking();
 
   writeCountersDataToNIV();
+  resetAllAutoSetpointTriggers();
 }
 
 void maybePersistCountersData() {

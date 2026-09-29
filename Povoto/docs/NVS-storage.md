@@ -43,6 +43,15 @@ persists the factory defaults for the data namespaces.
 
 Run structural checks with: python tests/check_storage_schema.py
 
+Automatic set point rules live in `pvt_autosp` (AutoSetpoints.cpp): one
+blob per rule (`rule0`..`rule7`, NAN = empty field) and the trigger times
+(`trig0`..`trig7`, local NTP epoch, 0 = not triggered). Trigger times are written only when a rule fires or is reset, so
+saving definitions never re-arms a rule. Stored rules that fail validation, or
+whose blob size differs from `AutoSetpointRule_t` (older layout), are dropped on
+load. Starting a new batch clears all trigger times. The namespace is
+cleared/rewritten with the others on schema change and factory reset, and is
+not part of `povoto-settings.json` (rules have their own XML export).
+
 Schema 2 merges calibration fields into FMTData/pvt_settings. The retired
 pvt_calib namespace is cleared on schema change, with no migration. Pressure
 point 2 defaults to zero for both pressure and current. The calibration-page

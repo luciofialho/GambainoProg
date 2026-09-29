@@ -136,7 +136,21 @@ struct CountersData_t {
   long int totalHeatTime;  // seconds
   // Dissolved-CO2 estimation mode (0 = half-life, 1 = immediate), restored after reboot.
   uint8_t co2DissolvedMode;
+  // Temperature stability phase (TEMP_STATE_*) and the local NTP epoch
+  // (UTC-3) at which it became stable (0 = not yet stable).
+  uint8_t tempState;
+  uint32_t tempStableSince;
+  // Same for pressure (TEMP_STATE_* values). It becomes stable inside the
+  // relief cycle of the final target (see PressureControl.cpp).
+  uint8_t pressState;
+  uint32_t pressStableSince;
 } __attribute__((packed));
+
+#define TEMP_STATE_STABLE          0
+#define TEMP_STATE_CHANGING_DIRECT 1
+#define TEMP_STATE_CHANGING_SLOW   2
+// Was stable, then left the tolerance band; becomes STABLE again with a new time.
+#define TEMP_STATE_UNSTABLE        3
 
 extern CountersData_t CountersData;
 
@@ -159,6 +173,8 @@ void updatePatmFromFMTAltitude();
 void resetCountersForNewBatch();
 bool readCountersDataFromEEPROM();
 bool writeCountersDataToNIV();
+bool writeTempStabilityToNIV();
+bool writePressureStabilityToNIV();
 void maybePersistCountersData();
 void updateCountersTimes(bool chillOn, bool heatOn);
 

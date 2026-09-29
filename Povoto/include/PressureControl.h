@@ -4,6 +4,9 @@
 #include <Arduino.h>
 #include <ESPAsyncWebServer.h>
 
+// Size of the buffer passed to getPressureControlStatus().
+constexpr size_t PRESSURE_STATUS_SIZE = 3072;
+
 void pressureRelief(bool fromVolumeDetermination);
 void pressureControl();
 struct DissolvedCO2LogData {
@@ -56,6 +59,12 @@ extern float beerSG;
 extern float beerABV;
 extern float sgPointGenerationTime;
 extern bool pressureSensorUnstable;
+extern bool pressureSensorConnected;
+extern bool debugPressureOverride;
+// Connected sensor (or debugging) and a finite reading.
+bool pressureReadingValid();
+void markPressureSetpointChanged(bool slow);
+const char *getPressStateLabel();
 extern float currentReading;
 extern float headSpaceCO2Mols;
 // Signed rate over up to 71 samples; averages each end from nine samples onward.

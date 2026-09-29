@@ -12,6 +12,9 @@
 #include "PovotoTasks.h"
 #include "PovotoWifi.h"
 #include "PovotoSettingsBackup.h"
+#include "AutoSetpoints.h"
+#include "datalog.h"
+#include <stdarg.h>
 
 // ========== MAIN MENU ==========
 
@@ -100,14 +103,14 @@ void handleDebugParamsPage(AsyncWebServerRequest *request) {
     return;
   }
 
-  const size_t BUFFER_SIZE = 3000;
+  const size_t BUFFER_SIZE = 4500;
   char* html = (char*)malloc(BUFFER_SIZE);
   if (!html) {
     request->send(500, "text/plain", "Out of memory");
     return;
   }
 
-  char buffer[200];
+  char buffer[512];
   size_t remaining;
   strcpy(html, "<!DOCTYPE html><html><head>"
                 "<meta charset='UTF-8'>"
@@ -132,8 +135,12 @@ void handleDebugParamsPage(AsyncWebServerRequest *request) {
 
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='form-group'>"
-               "<label for='pressure'>Pressure (bar):</label>", remaining);
-  sprintf(buffer, "<input type='number' id='pressure' name='pressure' value='%.3f' step='0.001'>", ControlData.pressure);
+               "<label for='pressure'>Pressure (bar) - empty reads the INA:</label>", remaining);
+  // Empty unless overridden, so saving other fields does not freeze the pressure.
+  if (debugPressureOverride)
+    sprintf(buffer, "<input type='number' id='pressure' name='pressure' value='%.3f' step='0.001'>", ControlData.pressure);
+  else
+    sprintf(buffer, "<input type='number' id='pressure' name='pressure' value='' step='0.001' placeholder='%.3f (INA)'>", ControlData.pressure);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -141,8 +148,12 @@ void handleDebugParamsPage(AsyncWebServerRequest *request) {
 
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='form-group'>"
-               "<label for='temperature'>Temperature (°C):</label>", remaining);
-  sprintf(buffer, "<input type='number' id='temperature' name='temperature' value='%.2f' step='0.01'>", ControlData.temperature);
+               "<label for='temperature'>Temperature (°C) - empty reads the Dallas:</label>", remaining);
+  // Empty unless overridden, so saving other fields does not freeze the temperature.
+  if (debugTemperatureOverride)
+    sprintf(buffer, "<input type='number' id='temperature' name='temperature' value='%.2f' step='0.01'>", ControlData.temperature);
+  else
+    sprintf(buffer, "<input type='number' id='temperature' name='temperature' value='' step='0.01' placeholder='%.2f (Dallas)'>", ControlData.temperature);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -156,6 +167,20 @@ void handleDebugParamsPage(AsyncWebServerRequest *request) {
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "</div>", remaining);
+
+  {
+    char tempSince[20], pressSince[20];
+    formatLocalEpochISO(CountersData.tempStableSince, tempSince, sizeof(tempSince));
+    formatLocalEpochISO(CountersData.pressStableSince, pressSince, sizeof(pressSince));
+    snprintf(buffer, sizeof(buffer),
+             "<div class='form-group'><label for='stabilityShift'>Add to stability time (h):</label>"
+             "<input type='number' id='stabilityShift' name='stabilityShift' value='' step='any' min='0'>"
+             "<small>Moves 'stable since' back, for STABLE states only. "
+             "Temperature: %s %s. Pressure: %s %s.</small></div>",
+             getTempStateLabel(), tempSince, getPressStateLabel(), pressSince);
+  }
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, buffer, remaining);
 
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<button type='submit'>Save</button> "
@@ -175,14 +200,40 @@ void handleDebugParamsUpdate(AsyncWebServerRequest *request) {
   }
 
   if (request->hasParam("pressure", true)) {
-    ControlData.pressure = request->getParam("pressure", true)->value().toFloat();
+    String value = request->getParam("pressure", true)->value();
+    value.trim();
+    // A value replaces the INA reading; an empty field returns to the INA.
+    debugPressureOverride = value.length() > 0;
+    if (debugPressureOverride)
+      ControlData.pressure = value.toFloat();
   }
   if (request->hasParam("temperature", true)) {
-    ControlData.temperature = request->getParam("temperature", true)->value().toFloat();
-    debugTemperatureOverride = true;
+    String value = request->getParam("temperature", true)->value();
+    value.trim();
+    // A value replaces the Dallas reading; an empty field returns to the Dallas.
+    debugTemperatureOverride = value.length() > 0;
+    if (debugTemperatureOverride)
+      ControlData.temperature = value.toFloat();
   }
   if (request->hasParam("sgPointTime", true)) {
     sgPointGenerationTime = request->getParam("sgPointTime", true)->value().toFloat();
+  }
+  if (request->hasParam("stabilityShift", true)) {
+    // Pretends that more time has passed since the temperature/pressure became stable.
+    const float hours = request->getParam("stabilityShift", true)->value().toFloat();
+    if (isfinite(hours) && hours > 0.0f) {
+      const uint32_t shift = (uint32_t)(hours * 3600.0f);
+      if (CountersData.tempState == TEMP_STATE_STABLE && CountersData.tempStableSince != 0) {
+        CountersData.tempStableSince = CountersData.tempStableSince > shift
+            ? CountersData.tempStableSince - shift : 1;
+        writeTempStabilityToNIV();
+      }
+      if (CountersData.pressState == TEMP_STATE_STABLE && CountersData.pressStableSince != 0) {
+        CountersData.pressStableSince = CountersData.pressStableSince > shift
+            ? CountersData.pressStableSince - shift : 1;
+        writePressureStabilityToNIV();
+      }
+    }
   }
 
   String html = "<!DOCTYPE html><html><head>";
@@ -1259,10 +1310,326 @@ void handleCountersDataUpdate(AsyncWebServerRequest *request) {
   request->send(200, "text/html", html);
 }
 
+// ========== AUTOMATIC SET POINTS ==========
+
+static void appendHtml(char *html, size_t size, const char *format, ...) {
+  const size_t used = strlen(html);
+  if (used + 1 >= size) return;
+  va_list args;
+  va_start(args, format);
+  vsnprintf(html + used, size - used, format, args);
+  va_end(args);
+}
+
+// %g keeps the value as typed, so saving the page again does not round it.
+static void formatOptional(float value, char *out, size_t outSize) {
+  if (isnan(value)) out[0] = '\0';
+  else snprintf(out, outSize, "%g", value);
+}
+
+// decimals < 0: value as typed (%g) and any step; otherwise that fixed precision.
+static void appendRuleInput(char *html, size_t size, int rule, const char *field,
+                            const char *label, float value, bool readOnly, int decimals = -1) {
+  char text[16];
+  if (decimals < 0 || isnan(value)) formatOptional(value, text, sizeof(text));
+  else snprintf(text, sizeof(text), "%.*f", decimals, value);
+  char step[12] = "any";
+  if (decimals >= 0) snprintf(step, sizeof(step), "%g", powf(10.0f, -decimals));
+  appendHtml(html, size,
+    "<div class='form-group'><label for='r%d_%s'>%s</label>"
+    "<input type='number' step='%s' id='r%d_%s' name='r%d_%s' value='%s'%s></div>",
+    rule, field, label, step, rule, field, rule, field, text, readOnly ? " readonly" : "");
+}
+
+// For HTML text, HTML attributes and XML attributes.
+static String escapeMarkup(const char *text) {
+  String out;
+  for (const char *c = text; *c; c++) {
+    switch (*c) {
+      case '&':  out += "&amp;"; break;
+      case '<':  out += "&lt;"; break;
+      case '>':  out += "&gt;"; break;
+      case '"':  out += "&quot;"; break;
+      case '\'': out += "&#39;"; break;
+      default:   out += *c;
+    }
+  }
+  return out;
+}
+
+static void appendAutoSetpointSection(char *html, size_t size) {
+  AutoSetpointRule_t rules[AUTO_SETPOINT_RULE_COUNT];
+  AutoSetpointStatus_t status;
+  getAutoSetpointRules(rules);
+  getAutoSetpointStatus(status);
+
+  appendHtml(html, size,
+    "<h2>Automatic set points</h2>"
+    "<p class='hint'>Evaluated only in Fermenting mode. Each rule fires once, when all filled "
+    "triggers are met. Empty fields are ignored.</p>"
+    // autocomplete off: a reload must show the stored values, not the typed ones.
+    "<form id='rulesForm' action='/setpoint/auto/update' method='POST' autocomplete='off' onsubmit='return checkRules()'>");
+
+  for (int i = 0; i < AUTO_SETPOINT_RULE_COUNT; i++) {
+    const AutoSetpointRule_t &rule = rules[i];
+    const bool triggered = status.triggeredAt[i] != 0;
+    char triggeredText[24] = "not yet triggered";
+    if (triggered) {
+      formatLocalEpochISO(status.triggeredAt[i], triggeredText, sizeof(triggeredText));
+      char *t = strchr(triggeredText, 'T');
+      if (t) *t = ' ';
+    }
+    const String name = escapeMarkup(rule.name);
+    appendHtml(html, size,
+      "<fieldset class='rule'><legend>Rule %d<span id='r%d_title'>%s%s</span></legend>"
+      "<div class='rule-status'>Triggered at: <b>%s</b>",
+      i + 1, i, name.length() ? " - " : "", name.c_str(), triggeredText);
+    if (triggered)
+      appendHtml(html, size,
+        " <button type='submit' class='btn-reset' formaction='/setpoint/auto/reset?rule=%d' formnovalidate>Reset</button>",
+        i + 1);
+    appendHtml(html, size,
+      "</div><div class='form-group'><label for='r%d_name'>Name:</label>"
+      "<input type='text' id='r%d_name' name='r%d_name' value='%s' maxlength='%u'"
+      " placeholder='What this rule is meant for'%s></div>",
+      i, i, i, name.c_str(), (unsigned)(AUTO_SETPOINT_NAME_SIZE - 1), triggered ? " readonly" : "");
+    appendHtml(html, size, "<div class='rule-title'>Triggers</div><div class='rule-grid'>");
+    appendRuleInput(html, size, i, "sh", "Temp. stable for (h):", rule.stableHours, triggered);
+    appendRuleInput(html, size, i, "psh", "Press. stable for (h):", rule.pressureStableHours, triggered);
+    appendRuleInput(html, size, i, "sg", "SG &lt; x:", rule.sgBelow, triggered, 3);
+    appendRuleInput(html, size, i, "co2", "gCO2/L/d &lt; x:", rule.co2RateBelow, triggered);
+    appendHtml(html, size, "</div>");
+    if (i > 0)
+      appendHtml(html, size,
+        "<label class='req'><input type='checkbox' id='r%d_req' name='r%d_req' value='1'%s%s>"
+        " Requires rule %d</label>",
+        i, i, rule.requiresPrevious ? " checked" : "", triggered ? " disabled" : "", i);
+    appendHtml(html, size, "<div class='rule-title'>New set points</div><div class='rule-grid'>");
+    appendRuleInput(html, size, i, "t", "Temperature  (&deg;C):", rule.temperature, triggered);
+    appendRuleInput(html, size, i, "ts", "Temperature slow (&deg;C):", rule.temperatureSlow, triggered);
+    appendRuleInput(html, size, i, "p", "Pressure (bar):", rule.pressure, triggered);
+    appendRuleInput(html, size, i, "ps", "Pressure slow (bar):", rule.pressureSlow, triggered);
+    appendHtml(html, size, "</div></fieldset>");
+  }
+
+  appendHtml(html, size,
+    "<button type='submit'>Save rules</button>"
+    "</form>");
+
+  appendHtml(html, size,
+    "<div class='rule-title'>Export / import</div>"
+    "<p class='hint'>The XML holds names, triggers and actions only. Exporting saves the rules first. "
+    "Importing replaces all rules and clears their trigger times.</p>"
+    "<button type='button' class='btn-secondary' onclick='saveAndExport()'>Save &amp; export XML</button> "
+    "<input type='file' id='xmlFile' accept='.xml,application/xml,text/xml' style='width:auto'> "
+    "<button type='button' class='btn-secondary' onclick='importRules()'>Import XML</button>"
+    "<div id='importMsg' class='import-msg'></div>");
+
+  appendHtml(html, size,
+    "<script>"
+    "function checkRules(){"
+    "for(let i=0;i<%d;i++){"
+    "const v=f=>document.getElementById('r'+i+'_'+f).value.trim()!=='';"
+    "const trig=['sh','psh','sg','co2'].some(v);"
+    "const act=['p','ps','t','ts'].some(v);"
+    "if(act&&!trig){alert('Rule '+(i+1)+': at least one trigger is required.');return false;}"
+    "}return true;}"
+    "const XT=['stableHours','pressureStableHours','sgBelow','co2RateBelow'],"
+    "XA=['pressure','pressureSlow','temperature','temperatureSlow'],"
+    "XK=['sh','psh','sg','co2','p','ps','t','ts'];"
+    "function importFail(m){const e=document.getElementById('importMsg');e.textContent=m;e.style.display='block';}"
+    // Saves with the same checks as Save rules; downloads only if the save succeeded.
+    "function saveAndExport(){"
+    "if(!checkRules())return;"
+    "const b=new URLSearchParams(new FormData(document.getElementById('rulesForm')));"
+    "fetch('/setpoint/auto/update?noredirect=1',{method:'POST',body:b})"
+    ".then(res=>res.text().then(m=>{if(!res.ok)throw m;"
+    "document.getElementById('importMsg').style.display='none';"
+    "window.location='/setpoint/auto/export';}))"
+    ".catch(e=>importFail(typeof e==='string'?e:'Save failed: '+e));}"
+    "function importRules(){"
+    "const f=document.getElementById('xmlFile').files[0];"
+    "if(!f){importFail('Choose an XML file first.');return;}"
+    "f.text().then(t=>{"
+    "const d=new DOMParser().parseFromString(t,'application/xml');"
+    "if(d.getElementsByTagName('parsererror').length)throw 'The file is not well-formed XML.';"
+    "const r=d.documentElement;"
+    "if(r.nodeName!=='povotoAutoSetpoints')throw 'Root element must be povotoAutoSetpoints, found '+r.nodeName+'.';"
+    "if(r.getAttribute('version')!=='2')throw 'Unsupported version '+r.getAttribute('version')+' (expected 2).';"
+    "const b=new URLSearchParams(),seen={};"
+    "for(const e of r.children){"
+    "if(e.nodeName!=='rule')throw 'Unexpected element '+e.nodeName+'.';"
+    "const i=Number(e.getAttribute('index'));"
+    "if(!Number.isInteger(i)||i<1||i>%d)throw 'Rule index must be from 1 to %d.';"
+    "if(seen[i])throw 'Rule '+i+' appears more than once.';"
+    "seen[i]=1;"
+    "b.append('r'+(i-1)+'_name',e.getAttribute('name')||'');"
+    "const tr=e.getElementsByTagName('trigger')[0],ac=e.getElementsByTagName('action')[0];"
+    "const rq=((tr&&tr.getAttribute('requiresPrevious'))||'').trim();"
+    "if(rq!==''&&rq!=='true'&&rq!=='false')throw 'Rule '+i+': requiresPrevious must be true or false.';"
+    "if(rq==='true'&&i>1)b.append('r'+(i-1)+'_req','1');"
+    "const names=XT.concat(XA);"
+    "names.forEach((n,k)=>{const el=k<4?tr:ac;const v=((el&&el.getAttribute(n))||'').trim();"
+    "if(v!==''&&!isFinite(Number(v)))throw 'Rule '+i+': '+n+' is not a number: '+v;"
+    "b.append('r'+(i-1)+'_'+XK[k],v);});"
+    "}"
+    "if(!confirm('Replace all rules and clear their trigger times?'))return null;"
+    "return fetch('/setpoint/auto/import',{method:'POST',body:b});"
+    // A new navigation (not reload) so the browser does not restore typed values.
+    "}).then(res=>{if(!res)return;return res.text().then(m=>{if(res.ok)window.location.href='/setpoint';else importFail(m);});})"
+    ".catch(e=>importFail(typeof e==='string'?e:'Import failed: '+e));}"
+    // Keeps the name next to 'Rule N' in step with the name field.
+    "for(let i=0;i<%d;i++){"
+    "const n=document.getElementById('r'+i+'_name'),t=document.getElementById('r'+i+'_title');"
+    "n.addEventListener('input',()=>{const v=n.value.trim();t.textContent=v?' - '+v:'';});}"
+    "</script>",
+    AUTO_SETPOINT_RULE_COUNT, AUTO_SETPOINT_RULE_COUNT, AUTO_SETPOINT_RULE_COUNT,
+    AUTO_SETPOINT_RULE_COUNT);
+}
+
+// Empty means not used. Returns false for text that is not a number.
+static bool parseOptionalFloat(AsyncWebServerRequest *request, const String &name, float &value) {
+  value = NAN;
+  if (!request->hasParam(name, true)) return true;
+  String text = request->getParam(name, true)->value();
+  text.trim();
+  if (text.length() == 0) return true;
+  char *end = nullptr;
+  const float parsed = strtof(text.c_str(), &end);
+  if (end == text.c_str() || *end != '\0' || !isfinite(parsed)) return false;
+  value = parsed;
+  return true;
+}
+
+// Rules whose skip flag is set keep the value already in rules[].
+static String parseAutoSetpointRules(AsyncWebServerRequest *request, AutoSetpointRule_t *rules,
+                                     const bool *skip) {
+  static const char *fields[] = {"sh", "psh", "sg", "co2", "p", "ps", "t", "ts"};
+  for (int i = 0; i < AUTO_SETPOINT_RULE_COUNT; i++) {
+    if (skip && skip[i]) continue;
+    float values[8];
+    for (int f = 0; f < 8; f++) {
+      if (!parseOptionalFloat(request, "r" + String(i) + "_" + fields[f], values[f]))
+        return "Rule " + String(i + 1) + ": invalid number.";
+    }
+    // SG is kept with 3 decimals, as shown on the page.
+    if (!isnan(values[2])) values[2] = roundf(values[2] * 1000.0f) / 1000.0f;
+    AutoSetpointRule_t rule = {"", values[0], values[1], values[2], values[3],
+                               values[4], values[5], values[6], values[7], 0};
+    // An unchecked box is not posted. Rule 1 has no previous rule.
+    rule.requiresPrevious = (i > 0 && request->hasParam("r" + String(i) + "_req", true)) ? 1 : 0;
+    const String nameParam = "r" + String(i) + "_name";
+    if (request->hasParam(nameParam, true)) {
+      String name = request->getParam(nameParam, true)->value();
+      name.trim();
+      setAutoSetpointRuleName(rule, name);
+    }
+    const String error = validateAutoSetpointRule(rule);
+    if (error.length()) return "Rule " + String(i + 1) + ": " + error;
+    rules[i] = rule;
+  }
+  return "";
+}
+
+void handleAutoSetpointUpdate(AsyncWebServerRequest *request) {
+  AutoSetpointRule_t rules[AUTO_SETPOINT_RULE_COUNT];
+  AutoSetpointStatus_t status;
+  getAutoSetpointRules(rules);
+  getAutoSetpointStatus(status);
+
+  bool triggered[AUTO_SETPOINT_RULE_COUNT];
+  for (int i = 0; i < AUTO_SETPOINT_RULE_COUNT; i++)
+    triggered[i] = status.triggeredAt[i] != 0; // Read-only until reset.
+  const String error = parseAutoSetpointRules(request, rules, triggered);
+  if (error.length()) {
+    request->send(400, "text/plain", error);
+    return;
+  }
+
+  if (!saveAutoSetpointRules(rules)) {
+    request->send(500, "text/plain", "Automatic set points could not be saved to NVS.");
+    return;
+  }
+  // Save & export posts with noredirect and downloads the XML itself.
+  if (request->hasParam("noredirect")) {
+    request->send(200, "text/plain", "saved");
+    return;
+  }
+  request->redirect("/setpoint");
+}
+
+static void appendXmlAttribute(String &xml, const char *name, float value, int decimals = -1) {
+  char text[16] = "";
+  if (!isnan(value)) {
+    if (decimals < 0) snprintf(text, sizeof(text), "%g", value);
+    else snprintf(text, sizeof(text), "%.*f", decimals, value);
+  }
+  xml += " ";
+  xml += name;
+  xml += "=\"";
+  xml += text;
+  xml += "\"";
+}
+
+// Definitions only; trigger times are not exported.
+void handleAutoSetpointExport(AsyncWebServerRequest *request) {
+  AutoSetpointRule_t rules[AUTO_SETPOINT_RULE_COUNT];
+  getAutoSetpointRules(rules);
+  String xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<povotoAutoSetpoints version=\"2\">\n";
+  for (int i = 0; i < AUTO_SETPOINT_RULE_COUNT; i++) {
+    const AutoSetpointRule_t &rule = rules[i];
+    xml += "  <rule index=\"" + String(i + 1) + "\" name=\"" + escapeMarkup(rule.name) + "\">\n    <trigger";
+    appendXmlAttribute(xml, "stableHours", rule.stableHours);
+    appendXmlAttribute(xml, "pressureStableHours", rule.pressureStableHours);
+    appendXmlAttribute(xml, "sgBelow", rule.sgBelow, 3);
+    appendXmlAttribute(xml, "co2RateBelow", rule.co2RateBelow);
+    if (i > 0) xml += String(" requiresPrevious=\"") + (rule.requiresPrevious ? "true" : "false") + "\"";
+    xml += "/>\n    <action";
+    appendXmlAttribute(xml, "pressure", rule.pressure);
+    appendXmlAttribute(xml, "pressureSlow", rule.pressureSlow);
+    appendXmlAttribute(xml, "temperature", rule.temperature);
+    appendXmlAttribute(xml, "temperatureSlow", rule.temperatureSlow);
+    xml += "/>\n  </rule>\n";
+  }
+  xml += "</povotoAutoSetpoints>\n";
+  AsyncWebServerResponse *response = request->beginResponse(200, "application/xml; charset=utf-8", xml);
+  response->addHeader("Content-Disposition", "attachment; filename=\"povoto-autosetpoints.xml\"");
+  request->send(response);
+}
+
+// The browser parses and checks the XML, then posts the same fields as the
+// rules form. Rules missing from the file are imported empty.
+void handleAutoSetpointImport(AsyncWebServerRequest *request) {
+  AutoSetpointRule_t rules[AUTO_SETPOINT_RULE_COUNT];
+  const String error = parseAutoSetpointRules(request, rules, nullptr);
+  if (error.length()) {
+    request->send(400, "text/plain; charset=utf-8", error);
+    return;
+  }
+  if (!importAutoSetpointRules(rules)) {
+    request->send(500, "text/plain; charset=utf-8", "Imported rules could not be saved to NVS.");
+    return;
+  }
+  request->send(200, "text/plain; charset=utf-8", "Rules imported.");
+}
+
+void handleAutoSetpointReset(AsyncWebServerRequest *request) {
+  const int rule = request->hasParam("rule") ? request->getParam("rule")->value().toInt() : 0;
+  if (rule < 1 || rule > AUTO_SETPOINT_RULE_COUNT) {
+    request->send(400, "text/plain", "Invalid rule.");
+    return;
+  }
+  if (!resetAutoSetpointTrigger(rule - 1)) {
+    request->send(500, "text/plain", "Rule reset could not be saved to NVS.");
+    return;
+  }
+  request->redirect("/setpoint");
+}
+
 // ========== SETPOINT DATA HANDLERS ==========
 
 void handleSetPointDataPage(AsyncWebServerRequest *request) {
-  const size_t BUFFER_SIZE = 6000;
+  const size_t BUFFER_SIZE = 40000; // ~2.3 KB per automatic set point rule
   char* html = (char*)malloc(BUFFER_SIZE);
   if (!html) {
     request->send(500, "text/plain", "Out of memory");
@@ -1299,6 +1666,8 @@ void handleSetPointDataPage(AsyncWebServerRequest *request) {
   strncat(html, ".btn-secondary { background: #999; color: white; }", remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "h2 { color: #333; margin: 28px 0 12px; } .setpoint-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; } .setpoint-grid .form-group { margin-bottom: 0; } @media (max-width: 600px) { .setpoint-grid { grid-template-columns: 1fr; } }", remaining);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, ".hint { color: #666; font-size: 14px; } fieldset.rule { border: 1px solid #ddd; border-radius: 6px; margin: 0 0 16px; padding: 10px 14px; } fieldset.rule legend { font-weight: bold; color: #333; } .rule-status { margin-bottom: 8px; } .rule-title { color: #333; font-weight: bold; margin: 10px 0 6px; } .rule-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; } .rule-grid .form-group { margin-bottom: 0; } input[readonly] { background: #f3f3f3; color: #777; } label.req { font-weight: normal; margin: 10px 0 0; } label.req input { width: auto; margin-right: 6px; } .btn-reset { background: #e67e22; color: white; padding: 4px 12px; font-size: 14px; } .import-msg { display: none; margin-top: 10px; padding: 10px; border-radius: 4px; background: #fdecea; color: #b71c1c; border: 1px solid #f5c6cb; } @media (max-width: 600px) { .rule-grid { grid-template-columns: 1fr 1fr; } }", remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "</style></head><body>", remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -1378,9 +1747,9 @@ void handleSetPointDataPage(AsyncWebServerRequest *request) {
   remaining = BUFFER_SIZE - strlen(html) - 1;
     strncat(html, "<button type='submit'>Save</button> "
                  "<button type='button' class='btn-secondary' onclick='window.location=\"/\"'>Cancel</button>"
-                 "</form>"
-                 "</div>"
-                 "</body></html>", remaining);
+                 "</form>", remaining);
+  appendAutoSetpointSection(html, BUFFER_SIZE);
+  appendHtml(html, BUFFER_SIZE, "</div></body></html>");
   
   request->send(200, "text/html", html);
   free(html);

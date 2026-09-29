@@ -9,6 +9,7 @@
 #include "PressureControl.h"
 #include "PovotoTasks.h"
 #include <math.h>
+#include <IOTK_NTP.h>
 
 #define BREWFATHER_SEND_INTERVAL_MS 600000UL  // 10 minutos
 #define BREWFATHER_RETRY_INTERVAL_MS 30000UL  // 15 segundos entre tentativas
@@ -99,6 +100,20 @@ static bool buildBrewfatherPayload(char *out, size_t outSize) {
   );
 
   return (written > 0 && (size_t)written < outSize);
+}
+
+// Same format as GLogAddTimeStamp (local time); empty when epoch is 0.
+void formatLocalEpochISO(uint32_t epoch, char *out, size_t outSize) {
+  if (epoch == 0) {
+    out[0] = '\0';
+    return;
+  }
+  unsigned long day;
+  int8_t dayOfWeek, hours, minutes, seconds, dayOfMonth, month;
+  int16_t year;
+  convertFromEpoch(epoch, day, dayOfWeek, hours, minutes, seconds, dayOfMonth, month, year);
+  snprintf(out, outSize, "%04d-%02d-%02dT%02d:%02d:%02d",
+           year, month, dayOfMonth, hours, minutes, seconds);
 }
 
 static const char *taskWindowTypeToText(byte type) {
@@ -202,6 +217,10 @@ void doDataLog() {
     GLogAddData("CO2MolsEjected");
     GLogAddData("PressureDropFactor");
     GLogAddData("TemperatureMode");
+    GLogAddData("TempState");
+    GLogAddData("TempStableSince");
+    GLogAddData("PressState");
+    GLogAddData("PressStableSince");
     GLogAddData("taskWindowType");
     GLogAddData("ChillTime(h)");
     GLogAddData("HeatTime(h)");
@@ -255,6 +274,14 @@ void doDataLog() {
     GLogAddData(CountersData.totalMolsEjected,3);
     GLogAddData(pressureDropFactor,5);
     GLogAddData(getTemperatureModeLabel());
+    GLogAddData(getTempStateLabel());
+    char tempStableSinceText[20];
+    formatLocalEpochISO(CountersData.tempStableSince, tempStableSinceText, sizeof(tempStableSinceText));
+    GLogAddData(tempStableSinceText);
+    GLogAddData(getPressStateLabel());
+    char pressStableSinceText[20];
+    formatLocalEpochISO(CountersData.pressStableSince, pressStableSinceText, sizeof(pressStableSinceText));
+    GLogAddData(pressStableSinceText);
     GLogAddData(taskWindowTypeToText(taskWindowType));
     GLogAddData(CountersData.totalChillTime/3600.,2);
     GLogAddData(CountersData.totalHeatTime /3600.,2);

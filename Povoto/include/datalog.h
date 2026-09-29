@@ -87,5 +87,6 @@ struct ReliefLogData {
 void doDataLog();
 void doReliefDataLog(const ReliefLogData &data);
 void maybeSendBrewfatherLog();
+void formatLocalEpochISO(uint32_t epoch, char *out, size_t outSize);
 
 #endif  // POVOTO_DATALOG_H

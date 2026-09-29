@@ -24,6 +24,10 @@ void handleCountersDataUpdate(AsyncWebServerRequest *request);
 
 void handleSetPointDataPage(AsyncWebServerRequest *request);
 void handleSetPointDataUpdate(AsyncWebServerRequest *request);
+void handleAutoSetpointUpdate(AsyncWebServerRequest *request);
+void handleAutoSetpointReset(AsyncWebServerRequest *request);
+void handleAutoSetpointExport(AsyncWebServerRequest *request);
+void handleAutoSetpointImport(AsyncWebServerRequest *request);
 
 void handleControlDataPage(AsyncWebServerRequest *request);
 void handleControlDataUpdate(AsyncWebServerRequest *request);

@@ -26,6 +26,7 @@
 #include "IOTK_ESPAsyncServer.h"
 #include <ElegantOTA.h>
 #include "PovotoTasks.h"
+#include "AutoSetpoints.h"
 #include <esp_system.h>
 
 //#include "esp_heap_caps.h"
@@ -36,7 +37,7 @@ TFT_eSPI_Button touchBtn;
 
 //#define MAXSTATUSLEN 4096
 
-char buf[2048];
+char buf[PRESSURE_STATUS_SIZE]; // The pressure status is the largest section written here.
 
 static volatile bool resetDisplayRequested = false;
 static char datalogBuffer[MAXPACKETSIZE+2];
@@ -211,8 +212,13 @@ void setup() {
   server.on("/counters", HTTP_GET, handleCountersDataPage);
   server.on("/counters/update", HTTP_POST, handleCountersDataUpdate);
   
-  server.on("/setpoint", HTTP_GET, handleSetPointDataPage);
+  // Sub-routes must be registered BEFORE the parent /setpoint route (ESPAsyncWebServer prefix matching)
   server.on("/setpoint/update", HTTP_POST, handleSetPointDataUpdate);
+  server.on("/setpoint/auto/update", HTTP_POST, handleAutoSetpointUpdate);
+  server.on("/setpoint/auto/reset", HTTP_POST, handleAutoSetpointReset);
+  server.on("/setpoint/auto/export", HTTP_GET, handleAutoSetpointExport);
+  server.on("/setpoint/auto/import", HTTP_POST, handleAutoSetpointImport);
+  server.on("/setpoint", HTTP_GET, handleSetPointDataPage);
   
   // Sub-routes must be registered BEFORE the parent /control route,
   // because ESPAsyncWebServer uses prefix matching (a /control handler
@@ -353,6 +359,7 @@ void loop() {
     }
   }
   pressureControl();
+  evaluateAutoSetpoints();
   maybeSendBrewfatherLog();
   maybePersistCountersData();
 

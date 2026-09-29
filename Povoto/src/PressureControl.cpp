@@ -55,6 +55,7 @@ static constexpr float VOLUME_MAX_RECENT_DIFFERENCE_PERCENT = 0.5f;
 
 INA226 ina226(INA226_I2C_ADDRESS);
 bool pressureSensorConnected = false;
+bool debugPressureOverride = false; // debugging only: pressure comes from the debug page, not the INA
 float currentReading = 0.0; // Corrente em mA
 
 
@@ -1502,15 +1503,18 @@ void readPressure() {
   }
   
   if (!inPressureNoiseWindow() && MILLISDIFF(noPressureReadUntil, 0)) {
+    // In debugging mode, a pressure set on the debug page replaces the INA.
+    const bool simulatedPressure = debugging && debugPressureOverride;
     if (pressureSensorConnected) {
       // Read and filter the INA current even in debugging mode. Debug pressure
-      // simulation is only used when this reading is zero or the INA is absent.
+      // simulation is only used when this reading is zero, the INA is absent
+      // or the pressure was set on the debug page.
       if (currentWindowCount == 0 || MILLISDIFF(lastCurrentMedianSampleMillis, CURRENT_MEDIAN_MIN_SAMPLE_MS)) {
         currentReading = medianFilter(readCurrentFromINA226mA());
         lastCurrentMedianSampleMillis = millis();
       }
 
-      if (!(debugging && currentReading == 0.0f)) {
+      if (!simulatedPressure && !(debugging && currentReading == 0.0f)) {
         ControlData.pressure = convertCurrentToPressure(currentReading);
         pressureAcquiredMillis = lastCurrentMedianSampleMillis;
         pressureAcquisitionValid = isfinite(ControlData.pressure);
@@ -1518,7 +1522,7 @@ void readPressure() {
       }
     }
 
-    if (debugging && (!pressureSensorConnected || currentReading == 0.0f)) {
+    if (debugging && (simulatedPressure || !pressureSensorConnected || currentReading == 0.0f)) {
       pressureAcquiredMillis = millis();
       pressureAcquisitionValid = true;
       static unsigned long lastPressureIncrease = 0;
@@ -3122,6 +3126,100 @@ float getVolumeDeterminationCalculatedSoFar() {
   return volumeCalculatedSoFar;
 }
 
+// ===== Pressure stability =====
+// Same cycle as the temperature stability. The final target is the slow
+// target while a ramp is active; ramp steps and ramp completion keep it
+// unchanged. With f = pressureDropFactor, a relief fires at setPoint/sqrt(f)
+// and brings the pressure to setPoint*sqrt(f):
+// - entry (STABLE, no ramp in progress): inside that relief cycle;
+// - exit (UNSTABLE): outside min(setPoint*f, setPoint-0.05) ..
+//   max(setPoint/f, setPoint+0.05), so the entry band is always narrower.
+static bool pressureStabilityTargetKnown = false;
+
+struct PressureStabilityBands {
+  bool entryValid; // false without an estimate of the relief cycle (f)
+  float entryLow, entryHigh, exitLow, exitHigh;
+};
+
+static PressureStabilityBands pressureStabilityBands(float setPoint) {
+  PressureStabilityBands b;
+  // f is the fraction of pressure kept by a relief (0 < f < 1).
+  b.entryValid = isfinite(pressureDropFactor) && pressureDropFactor > 0.0f && pressureDropFactor < 1.0f;
+  const float f = b.entryValid ? pressureDropFactor : 1.0f;
+  const float root = sqrtf(f);
+  b.entryLow = setPoint * root;
+  b.entryHigh = setPoint / root;
+  b.exitLow = fminf(setPoint * f, setPoint - 0.05f);
+  b.exitHigh = fmaxf(setPoint / f, setPoint + 0.05f);
+  return b;
+}
+static float pressureStabilityLastTarget = NOTaTEMP;
+
+static float pressureFinalTarget() {
+  return SetPointData.setPointSlowPressure != NOTaTEMP
+      ? SetPointData.setPointSlowPressure : SetPointData.setPointPressure;
+}
+
+const char *getPressStateLabel() {
+  switch (CountersData.pressState) {
+    case TEMP_STATE_STABLE:          return "STABLE";
+    case TEMP_STATE_CHANGING_DIRECT: return "CHANGING_DIRECT";
+    case TEMP_STATE_CHANGING_SLOW:   return "CHANGING_SLOW";
+    case TEMP_STATE_UNSTABLE:        return "UNSTABLE";
+    default:                         return "";
+  }
+}
+
+bool pressureReadingValid() {
+  return (pressureSensorConnected || debugging) && isfinite(ControlData.pressure);
+}
+
+void markPressureSetpointChanged(bool slow) {
+  CountersData.pressState = slow ? TEMP_STATE_CHANGING_SLOW : TEMP_STATE_CHANGING_DIRECT;
+  CountersData.pressStableSince = 0;
+  pressureStabilityLastTarget = pressureFinalTarget();
+  pressureStabilityTargetKnown = true;
+  writePressureStabilityToNIV();
+}
+
+static void updatePressureStability() {
+  const float target = pressureFinalTarget();
+  if (!pressureStabilityTargetKnown) {
+    // After boot, the state restored from counters refers to this target.
+    pressureStabilityLastTarget = target;
+    pressureStabilityTargetKnown = true;
+  }
+  else if (target != pressureStabilityLastTarget) {
+    markPressureSetpointChanged(SetPointData.setPointSlowPressure != NOTaTEMP);
+  }
+
+  if (SetPointData.setPointPressure <= 0.0f || !pressureReadingValid()) return;
+  const float pressure = ControlData.pressure;
+  const PressureStabilityBands bands = pressureStabilityBands(SetPointData.setPointPressure);
+  if (CountersData.pressState == TEMP_STATE_STABLE) {
+    // Leaving the exit band loses stability; it must be reached again.
+    if (pressure < bands.exitLow || pressure > bands.exitHigh) {
+      CountersData.pressState = TEMP_STATE_UNSTABLE;
+      CountersData.pressStableSince = 0;
+      writePressureStabilityToNIV();
+    }
+    return;
+  }
+  if (SetPointData.setPointSlowPressure != NOTaTEMP) return; // ramp in progress
+  if (!bands.entryValid) return; // no estimate of the relief cycle yet
+  if (pressure < bands.entryLow || pressure > bands.entryHigh) return;
+
+  // Stays pending until NTP is valid; the time recorded is when it was stamped.
+  static unsigned long lastNTPCheck = 0;
+  if (!MILLISDIFF(lastNTPCheck, 1000)) return;
+  lastNTPCheck = millis();
+  const unsigned long now = NTPEpoch();
+  if (now == 0) return;
+  CountersData.pressState = TEMP_STATE_STABLE;
+  CountersData.pressStableSince = now;
+  writePressureStabilityToNIV();
+}
+
 void pressureControl() {
   accountExpansionTankVenting(millis());
   if (beerSG == 0) {
@@ -3138,6 +3236,7 @@ void pressureControl() {
     return;
   }
   processSlowPressureTarget();
+  updatePressureStability();
   updateCO2DissolvedEstimationMode();
 
   if (SetPointData.mode != MODE_OFF &&
@@ -3216,13 +3315,28 @@ void pressureControl() {
 }
 
 char tmp[384];
+// "Temperature: STABLE since 2026-09-29T14:02:10 (26.4 h)" or just the state.
+static void appendStabilityStatus(char *st, const char *name, const char *state, uint32_t since) {
+  char when[20];
+  formatLocalEpochISO(since, when, sizeof(when));
+  const unsigned long now = since ? NTPEpoch() : 0;
+  if (since && now >= since)
+    snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;%s: %s since %s (%.1f h)<br>",
+             name, state, when, (now - since) / 3600.0f);
+  else if (since)
+    snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;%s: %s since %s<br>", name, state, when);
+  else
+    snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;%s: %s<br>", name, state);
+  strnncat(st, tmp, PRESSURE_STATUS_SIZE);
+}
+
 char *getPressureControlStatus(char *st) {
 
   int16_t rawShuntRegister = 0;
   st[0] = '\0';
 
   snprintf(tmp, sizeof(tmp), "<br>---------PRESSURE CONTROL:<br>");
-    strnncat(st, tmp, 2048);
+    strnncat(st, tmp, PRESSURE_STATUS_SIZE);
   if (1 || pressureSensorConnected) {
     const unsigned long now = millis();
     const float co2CalculationPressure = dissolvedCO2CalculationPressure();
@@ -3234,11 +3348,11 @@ char *getPressureControlStatus(char *st) {
     snprintf(tmp, sizeof(tmp),
              "Measured pressure: %.3f bar<br>Target pressure: %.3f bar<br>Atmospheric pressure: %.3f bar<br>",
              ControlData.pressure, SetPointData.setPointPressure, Patm);
-    strnncat(st, tmp, 2048);
+    strnncat(st, tmp, PRESSURE_STATUS_SIZE);
     snprintf(tmp, sizeof(tmp),
              "INA: Filtered current reading: %.2f mA Shunt voltage: %.2f mV Momentary current: %.2f mA<br>",
              currentReading, ina226.getShuntVoltage_mV(), readCurrentFromINA226mA());
-    strnncat(st, tmp, 2048);
+    strnncat(st, tmp, PRESSURE_STATUS_SIZE);
 
     const unsigned long criteriaElapsedMs = co2DissolvedCriteriaElapsedMillis(now);
     snprintf(tmp, sizeof(tmp),
@@ -3249,24 +3363,24 @@ char *getPressureControlStatus(char *st) {
              criteriaElapsedMs / 1000.0f,
              co2FermentationConfirmationMs / 1000.0f,
              co2CalculationPressure);
-    strnncat(st, tmp, 2048);
+    strnncat(st, tmp, PRESSURE_STATUS_SIZE);
 
-    strnncat(st, "-------------------------------------------------------------------------------------------<br>", 2048);
+    strnncat(st, "-------------------------------------------------------------------------------------------<br>", PRESSURE_STATUS_SIZE);
     snprintf(tmp, sizeof(tmp),
              "<br>CO2 moles accounting:<br>&nbsp;&nbsp;&nbsp;&nbsp;Headspace: %.3f<br>&nbsp;&nbsp;&nbsp;&nbsp;Dissolved: %.3f (if in equilibrium: %.3f)<br>&nbsp;&nbsp;&nbsp;&nbsp;Ejected: %.3f<br>&nbsp;&nbsp;&nbsp;&nbsp;Total: %.3f (%.2f g)<br>",
              headSpaceCO2Mols, CountersData.CO2InSolution, equilibriumCO2Mols,
              CountersData.totalMolsEjected, totalCO2Mols, CO2Mass());
-    strnncat(st, tmp, 2048);
+    strnncat(st, tmp, PRESSURE_STATUS_SIZE);
     snprintf(tmp, sizeof(tmp),
              "&nbsp;&nbsp;&nbsp;&nbsp;CO2 progress: raw total %.6f; raw delta %+.6f; correction debt %.6f; credited %+.6f mol<br>",
              co2ProducedDiagnosticTotalMols, co2ProducedDiagnosticRawDeltaMols,
              co2ModelCorrectionDebtMols, co2ProducedDiagnosticCreditedDeltaMols);
-    strnncat(st, tmp, 2048);
+    strnncat(st, tmp, PRESSURE_STATUS_SIZE);
 
-    strnncat(st, "<br>Expansions:<br>", 2048);
+    strnncat(st, "<br>Expansions:<br>", PRESSURE_STATUS_SIZE);
     snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;Relief count: %lu<br>",
              (unsigned long)CountersData.totalReliefCount);
-    strnncat(st, tmp, 2048);
+    strnncat(st, tmp, PRESSURE_STATUS_SIZE);
     if (!reliefsPerHourAvailable || reliefsPerHourValue < RELIEF_PER_HOUR_MIN_DISPLAY) {
       if (!reliefsPerHourAvailable) {
         snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;Reliefs/hour: N/A (need %u reliefs, have %u)<br>", (unsigned)RELIEFS_WINDOW_SIZE, reliefMillisCount);
@@ -3276,33 +3390,61 @@ char *getPressureControlStatus(char *st) {
     } else {
       snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;Reliefs/hour: %.2f<br>", reliefsPerHourValue);
     }
-    strnncat(st, tmp, 2048);
+    strnncat(st, tmp, PRESSURE_STATUS_SIZE);
     snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;gCO2/L/d: %.2f<br>",
              getBeerCO2EvolutionGramsPerLiterPerDay());
-    strnncat(st, tmp, 2048);
+    strnncat(st, tmp, PRESSURE_STATUS_SIZE);
+    {
+      // What currently holds the next expansion back (gas flow mode).
+      const float threshold = expansionPressureThreshold();
+      long waitMs = 0;
+      if (gasVentingActive && now - gasClosedMillis < gasMinimumVentingMilliseconds)
+        waitMs = (long)(gasMinimumVentingMilliseconds - (now - gasClosedMillis));
+      snprintf(tmp, sizeof(tmp),
+               "&nbsp;&nbsp;&nbsp;&nbsp;Expansion time: %.2f s now (%.3f bar); %.2f s at relief threshold (%.3f bar)<br>",
+               expansionTime(ControlData.pressure), ControlData.pressure,
+               expansionTime(threshold), threshold);
+      strnncat(st, tmp, PRESSURE_STATUS_SIZE);
+    }
 
     snprintf(tmp, sizeof(tmp),
              "<br>Volumes:<br>&nbsp;&nbsp;&nbsp;&nbsp;Headspace volume: %.2f L<br>&nbsp;&nbsp;&nbsp;&nbsp;Beer volume: %.2f L<br>&nbsp;&nbsp;&nbsp;&nbsp;Dumped volume: %.2f L<br>&nbsp;&nbsp;&nbsp;&nbsp;Expansion pressure drop factor (%%): %.3f<br>",
              CountersData.headSpaceVolume, beerVolume, CountersData.dumpedVolume, pressureDropFactor * 100);
-    strnncat(st, tmp, 2048);
+    strnncat(st, tmp, PRESSURE_STATUS_SIZE);
 
     snprintf(tmp, sizeof(tmp),
              "<br>Gravity:<br>&nbsp;&nbsp;&nbsp;&nbsp;OG: %.4f (extract: %.3fP)<br>&nbsp;&nbsp;&nbsp;&nbsp;SG: %.4f (apparent extract: %.3fP)<br>&nbsp;&nbsp;&nbsp;&nbsp;ABV: %.2f%%<br>",
              BatchData.batchOG, SGToApparentPlato(BatchData.batchOG),
              beerSG, SGToApparentPlato(beerSG), beerABV);
-    strnncat(st, tmp, 2048);
+    strnncat(st, tmp, PRESSURE_STATUS_SIZE);
+
+    strnncat(st, "<br>Stability:<br>", PRESSURE_STATUS_SIZE);
+    appendStabilityStatus(st, "Temperature", getTempStateLabel(), CountersData.tempStableSince);
+    appendStabilityStatus(st, "Pressure", getPressStateLabel(), CountersData.pressStableSince);
+    if (SetPointData.setPointPressure > 0.0f) {
+      const PressureStabilityBands bands = pressureStabilityBands(SetPointData.setPointPressure);
+      if (bands.entryValid)
+        snprintf(tmp, sizeof(tmp),
+                 "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;bands: entry %.3f-%.3f bar, exit %.3f-%.3f bar<br>",
+                 bands.entryLow, bands.entryHigh, bands.exitLow, bands.exitHigh);
+      else
+        snprintf(tmp, sizeof(tmp),
+                 "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;bands: entry n/a (no drop factor), exit %.3f-%.3f bar<br>",
+                 bands.exitLow, bands.exitHigh);
+      strnncat(st, tmp, PRESSURE_STATUS_SIZE);
+    }
   } else {
     snprintf(tmp, sizeof(tmp), "INA226 Pressure Sensor: DISCONNECTED<br>Atmospheric pressure: %.3f bar<br>", Patm);
-    strnncat(st, tmp, 2048);
+    strnncat(st, tmp, PRESSURE_STATUS_SIZE);
   }
 
   // --- Diagnóstico de relés ---
   unsigned long now = millis();
-  strnncat(st, "<br>--- Relay cycle ---<br>", 2048);
+  strnncat(st, "<br>--- Relay cycle ---<br>", PRESSURE_STATUS_SIZE);
   if (!inTheMiddleOfRelief()) {
-    strnncat(st, "Cycle: IDLE<br>", 2048);
+    strnncat(st, "Cycle: IDLE<br>", PRESSURE_STATUS_SIZE);
   } else {
-    strnncat(st, "Cycle: ACTIVE<br>", 2048);
+    strnncat(st, "Cycle: ACTIVE<br>", PRESSURE_STATUS_SIZE);
     if (timeToStartExpansion) {
       snprintf(tmp, sizeof(tmp), "Stage: waiting to open transfer (in %ld ms)<br>",
                (long)(timeToStartExpansion - now));
@@ -3313,12 +3455,12 @@ char *getPressureControlStatus(char *st) {
       snprintf(tmp, sizeof(tmp), "Stage: transfer CLOSED - measuring pressure in %ld ms<br>",
                (long)(timeToRegisterPressure - now));
     }
-    strnncat(st, tmp, 2048);
+    strnncat(st, tmp, PRESSURE_STATUS_SIZE);
     snprintf(tmp, sizeof(tmp),
              "timeToStartExpansion=%lu<br>timeToFinishExpansion=%lu<br>timeToRegisterPressure=%lu<br>",
              timeToStartExpansion, timeToFinishExpansion,
              timeToRegisterPressure);
-    strnncat(st, tmp, 2048);
+    strnncat(st, tmp, PRESSURE_STATUS_SIZE);
   }
 
   return st;

@@ -107,6 +107,72 @@ static unsigned long slowTargetIncrementIntervalMs(float speedPerDay, float incr
   return static_cast<unsigned long>(fmax(1000.0, fmin(interval, double(ULONG_MAX))));
 }
 
+// ===== Temperature stability =====
+// The final target is the slow target while a ramp is active; ramp steps and
+// ramp completion keep it unchanged, so only real set point changes restart
+// the cycle, whatever their origin (web page, touch, ESP-NOW, rules).
+// STABLE within FMTOFFSET of the target; lost (UNSTABLE) beyond 3*FMTOFFSET.
+static bool stabilityTargetKnown = false;
+static float stabilityLastTarget = NOTaTEMP;
+
+static float temperatureFinalTarget() {
+  return SetPointData.setPointSlowTemp != NOTaTEMP
+      ? SetPointData.setPointSlowTemp : SetPointData.setPointTemp;
+}
+
+void markTemperatureSetpointChanged(bool slow) {
+  CountersData.tempState = slow ? TEMP_STATE_CHANGING_SLOW : TEMP_STATE_CHANGING_DIRECT;
+  CountersData.tempStableSince = 0;
+  stabilityLastTarget = temperatureFinalTarget();
+  stabilityTargetKnown = true;
+  writeTempStabilityToNIV();
+}
+
+const char *getTempStateLabel() {
+  switch (CountersData.tempState) {
+    case TEMP_STATE_STABLE:          return "STABLE";
+    case TEMP_STATE_CHANGING_DIRECT: return "CHANGING_DIRECT";
+    case TEMP_STATE_CHANGING_SLOW:   return "CHANGING_SLOW";
+    case TEMP_STATE_UNSTABLE:        return "UNSTABLE";
+    default:                         return "";
+  }
+}
+
+static void updateTemperatureStability() {
+  const float target = temperatureFinalTarget();
+  if (!stabilityTargetKnown) {
+    // After boot, the state restored from counters refers to this target.
+    stabilityLastTarget = target;
+    stabilityTargetKnown = true;
+  }
+  else if (target != stabilityLastTarget) {
+    markTemperatureSetpointChanged(SetPointData.setPointSlowTemp != NOTaTEMP);
+  }
+
+  if (ControlData.temperature == NOTaTEMP || target == NOTaTEMP) return;
+  const float deviation = fabsf(ControlData.temperature - target);
+  if (CountersData.tempState == TEMP_STATE_STABLE) {
+    // Leaving the tolerance band loses stability; it must be reached again.
+    if (deviation > 3 * FMTOFFSET) {
+      CountersData.tempState = TEMP_STATE_UNSTABLE;
+      CountersData.tempStableSince = 0;
+      writeTempStabilityToNIV();
+    }
+    return;
+  }
+  if (deviation > FMTOFFSET) return;
+
+  // Stays pending until NTP is valid; the time recorded is when it was stamped.
+  static unsigned long lastNTPCheck = 0;
+  if (!MILLISDIFF(lastNTPCheck, 1000)) return;
+  lastNTPCheck = millis();
+  const unsigned long now = NTPEpoch();
+  if (now == 0) return;
+  CountersData.tempState = TEMP_STATE_STABLE;
+  CountersData.tempStableSince = now;
+  writeTempStabilityToNIV();
+}
+
 long int fermenterOnOffCycle(float temperature, byte targetMode) {
   long timeUnit = debugging ? 1000L : 60000L; 
 
@@ -225,6 +291,10 @@ void temperatureControl() {
 
   lastTarget = SetPointData.setPointTemp;
   lastSlowTarget = SetPointData.setPointSlowTemp;
+
+  // After slow-target processing, so a direct change that cancels a ramp is
+  // seen with its final value.
+  updateTemperatureStability();
 
 
   newMode = mode;

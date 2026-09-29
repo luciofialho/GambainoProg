@@ -9,3 +9,5 @@ void resetChillHeatCycle();
 char *getTemperatureModeLabel();
 char *getTemperatureControlStatus(char *st);
 unsigned long int holdPressureDueToTemperatureRelays();
+void markTemperatureSetpointChanged(bool slow);
+const char *getTempStateLabel();
