@@ -24,9 +24,7 @@ TASK_QUIET = 80 * 60
 STEP_GPLD = 50.0
 DEADBAND = 0.05
 BOOT_WAIT = 120
-SUPERSAT_WIN = 30  # samples (60 s): mean pressure and gas flux
-TAU_DES = 2.0      # h, calibration page default
-TAU_ABS = 2.0
+HENRY_WIN = 30     # samples (60 s): 30-min mean of Henry
 
 
 def henry(p, t, v):
@@ -90,16 +88,12 @@ class Fermenter:
 class Firmware:
     """Logic of PressureControl.cpp (dissolved-CO2 part)."""
 
-    def __init__(self, fer, state=1, tau_des=TAU_DES, tau_abs=TAU_ABS):
+    def __init__(self, fer, state=1):
         self.fer = fer
         self.state = state          # 0 half-life, 1 equilibrium, 2 initial, 3 armed
         self.d = fer.dissolved
-        self.tau_des, self.tau_abs = tau_des, tau_abs
-        self.ss = []                # (now, gas, pressure), last SUPERSAT_WIN samples
-        self.x = 0.0                # supersaturation applied
-        self.x_held = True
-        self.pending = 0.0          # x step after a hold (model step)
-        self.total_hist = []        # (now, gas + dissolved): displayed gCO2/L/d
+        self.hs = []                # (now, Henry), last HENRY_WIN samples
+        self.gas_hist = []          # (now, gas): displayed gCO2/L/d = gas leaving the beer
         self.display = math.nan
         self.base = None
         self.hist = []
@@ -124,7 +118,7 @@ class Firmware:
 
     def reboot(self):
         self.now, self.base, self.hist, self.since, self.hold = 0, None, [], None, 0
-        self.ss, self.total_hist, self.x_held = [], [], True
+        self.hs, self.gas_hist = [], []
 
     def fermentables_added(self):
         if self.state == 0:
@@ -138,11 +132,7 @@ class Firmware:
     def update_dissolved(self):
         fer = self.fer
         if self.state in (1, 2):
-            hm = sum(s[3] for s in self.ss) / len(self.ss) if self.ss else henry(fer.p, fer.t, fer.v)
-            self.d = max(0.0, hm + self.x)
-            if self.pending:
-                self.total_hist = [(t, v + self.pending) for t, v in self.total_hist]
-                self.pending = 0.0
+            self.d = sum(h for _, h in self.hs) / len(self.hs) if self.hs else henry(fer.p, fer.t, fer.v)
             self.base = None
             return
         if self.now < BOOT_WAIT:
@@ -170,11 +160,11 @@ class Firmware:
         if self.state == 3 and self.epoch - self.armed_at > ARMED_MAX_AGE:
             self.set_state(0, 'armed expired')
 
-    def supersat_sample(self, gas):
+    def rate_sample(self, gas):
         fer = self.fer
-        self.total_hist.append((self.now, gas + self.d))
-        self.total_hist = self.total_hist[-HIST:]
-        h = self.total_hist
+        self.gas_hist.append((self.now, gas))
+        self.gas_hist = self.gas_hist[-HIST:]
+        h = self.gas_hist
         n = len(h)
         if n >= 5:
             k = 1 if n < 9 else min(n // 3, 10)
@@ -183,30 +173,15 @@ class Firmware:
             ta = sum(t for t, _ in h[:k]) / k
             tb = sum(t for t, _ in h[-k:]) / k
             self.display = (b - a) * M * 86400 / (fer.v * (tb - ta))
-        self.ss.append((self.now, gas, fer.p, henry(fer.p, fer.t, fer.v)))
-        self.ss = self.ss[-SUPERSAT_WIN:]
-        if len(self.ss) >= 25 and self.ss[-1][0] - self.ss[0][0] >= 27 * 60 and self.task == 0:
-            xs = [(s[0] - self.ss[0][0]) / 86400 for s in self.ss]
-            ys = [s[1] for s in self.ss]
-            m = len(xs)
-            sx, sy = sum(xs), sum(ys)
-            f = (m * sum(x * y for x, y in zip(xs, ys)) - sx * sy) / (m * sum(x * x for x in xs) - sx * sx)
-            hm = sum(s[3] for s in self.ss) / m
-            nx = f * (self.tau_des if f >= 0 else self.tau_abs) / 24
-            nx = max(-0.5 * hm, min(0.5 * hm, nx))
-            if self.x_held:
-                self.pending += nx - self.x
-                self.x_held = False
-            self.x = nx
-        else:
-            self.x_held = True
+        self.hs.append((self.now, henry(fer.p, fer.t, fer.v)))
+        self.hs = self.hs[-HENRY_WIN:]
 
     def sample(self):
         fer = self.fer
         if self.now < BOOT_WAIT:
             return
         gas = fer.measured_gas()
-        self.supersat_sample(gas)
+        self.rate_sample(gas)
         ext = False
         if self.hist and fer.reliefs == self.last_relief:
             ext = (gas - self.hist[-1][1]) * M * 86400 / (fer.v * DT) > STEP_GPLD
@@ -420,88 +395,103 @@ run(fw, 60 * 60, each=lambda f: decisions.append(f.rate))
 check("external step: no decision", all(not math.isfinite(r) for r in decisions[1:]) and fw.state == 0,
       f"finite rates in the next hour: {sum(math.isfinite(r) for r in decisions[1:])}")
 
-# ---- Supersaturation (docs/dissolved-co2.md). The simulated beer transfers
-# CO2 with a 2-h time constant, the physics the model assumes.
-def supersat_case(tau_fw, change, hours):
+# ---- gCO2/L/d = gas leaving the beer; dissolved = 30-min mean of Henry
+# (docs/gco2-rate.md, docs/dissolved-co2.md). The simulated beer produces the
+# CO2 and transfers it to the gas with a 2-h time constant.
+def active_fermenter():
     fer = Fermenter(temp=20.0, threshold=0.826, tau_h=2.0)
     fer.gen_gpld = 8.6
-    fw = Firmware(fer, state=1, tau_des=tau_fw, tau_abs=tau_fw)
-    run(fw, 12 * 3600)                     # steady relief cycle
-    steady = []
-    run(fw, 3 * 3600, each=lambda f: steady.append(f.display))
-    seen = []
-    if change:
-        change(fer)
-        run(fw, hours * 3600, each=lambda f: seen.append(f.display))
-    else:
-        def each(f):
-            cool_ramp(f)
-            seen.append(f.display)
-        run(fw, hours * 3600, each=each)
-    return steady, seen
+    fw = Firmware(fer, state=1)
+    run(fw, 12 * 3600)
+    return fer, fw
 
 
-def raise_setpoint(fer):
-    fer.thr = 1.548                        # set point 0.8 -> 1.5 bar
+fer, fw = active_fermenter()
+steady = []
+run(fw, 3 * 3600, each=lambda f: steady.append(f.display))
+check("steady relief cycle: gCO2 = production",
+      abs(statistics.mean(steady) - 8.6) < 0.3 and statistics.pstdev(steady) < 0.3,
+      f"mean {statistics.mean(steady):.2f}, sd {statistics.pstdev(steady):.2f} g/L/d (production 8.6)")
+
+# Set point rise: the gas leaving the beer dips (the beer absorbs), no spike.
+fer.thr = 1.548
+seen = []
+run(fw, 4 * 3600, each=lambda f: seen.append(f.display))
+check("set point rise: no spike, gas leaving below production",
+      max(seen) < 8.6 * 1.1 and min(seen) > 0.0,
+      f"{min(seen):.2f}..{max(seen):.2f} g/L/d while rising (production 8.6)")
+
+# After the transition the SG error undoes itself: counted total vs true.
+fer, fw = active_fermenter()
+bias0 = (fer.measured_gas() + fw.d) - fer.true_total()
+fer.thr = 1.548
+run(fw, 3 * 3600)
+bias_rise = (fer.measured_gas() + fw.d) - fer.true_total()
+run(fw, 10 * 3600)
+bias_end = (fer.measured_gas() + fw.d) - fer.true_total()
+check("SG error of a pressure rise undoes itself",
+      abs(bias_end - bias0) < 0.2 * max(abs(bias_rise - bias0), 0.1),
+      f"counted - true: {bias0:+.3f} before, {bias_rise:+.3f} during, {bias_end:+.3f} 10 h after "
+      f"({pts(bias_rise - bias0, fer.v):+.2f} pt at most)")
+
+# Cooling ramp 2 C/h, 20 -> 15 C: the beer absorbs, the gas leaving dips.
+fer, fw = active_fermenter()
+seen = []
 
 
-def cool(fer):
-    fer.t = 15.0                           # cooling 20 -> 15 C as a step (not physical)
+def cooling(f):
+    f.fer.t = max(15.0, f.fer.t - 2.0 / 60.0)
+    seen.append(f.display)
 
 
-cool_ramp_steps = [0]
+run(fw, 5 * 3600, each=cooling)
+check("cooling ramp: no spike", max(seen) < 8.6 * 1.1,
+      f"{min(seen):.2f}..{max(seen):.2f} g/L/d while cooling (production 8.6)")
 
-
-def cool_ramp(fw):
-    # 2 C/h from 20 to 15 C, as a chiller does
-    fw.fer.t = max(15.0, fw.fer.t - 2.0 / 60.0)
-
-
-for label, change, hours in (("set point rise", raise_setpoint, 4), ("cooling ramp 20->15 C, 2 C/h", None, 5)):
-    res = {}
-    for tau in (0.0, 2.0):
-        steady, seen = supersat_case(tau, change, hours)
-        res[tau] = (statistics.pstdev(steady), max(seen), min(seen), statistics.mean(seen))
-    s0, s2 = res[0.0], res[2.0]
-    check(f"{label}: gCO2 stays near the generation (8.6)",
-          abs(s2[3] - 8.6) < 1.5 and s2[1] < 8.6 * 1.5 and abs(s2[3] - 8.6) < abs(s0[3] - 8.6),
-          f"tau 2 h: mean {s2[3]:.2f}, max {s2[1]:.2f}, min {s2[2]:.2f} | tau 0: mean {s0[3]:.2f}, max {s0[1]:.2f}, min {s0[2]:.2f}")
-    if label == "set point rise":
-        check("steady relief cycle: no extra noise", s2[0] <= s0[0] + 0.3,
-              f"sd tau 2 h {s2[0]:.2f}, tau 0 {s0[0]:.2f} g/L/d")
-
-# Reboot in active fermentation: x is held until the flux is back; the change
-# is a model step, not production.
-fer = Fermenter(temp=20.0, threshold=0.826, tau_h=2.0)
-fer.gen_gpld = 8.6
-fw = Firmware(fer, state=1)
-run(fw, 12 * 3600)
+# Reboot without the buffers: the window refills from zero.
+fer, fw = active_fermenter()
 fw.reboot()
 seen = []
 run(fw, 3 * 3600, each=lambda f: seen.append(f.display))
-after = [v for v in seen[75:] if math.isfinite(v)]   # full window after the boot
-check("reboot keeps the rate", after and max(abs(v - 8.6) for v in after) < 1.5,
+after = [v for v in seen[75:] if math.isfinite(v)]
+check("reboot keeps the rate", after and max(abs(v - 8.6) for v in after) < 0.5,
       f"after the window refills: {min(after):.2f}..{max(after):.2f} g/L/d")
 
-# Upgrade: 12 h with the instant-equilibrium model (x never counted), then the
-# new version boots with x = 0. When the flux is back, x enters the dissolved
-# CO2: the counted total must match the true one (SG corrected), with no spike
-# on the display.
-fer = Fermenter(temp=20.0, threshold=0.826, tau_h=2.0)
-fer.gen_gpld = 8.6
-old = Firmware(fer, state=1, tau_des=0.0, tau_abs=0.0)
-run(old, 12 * 3600)
-bias_before = (fer.measured_gas() + old.d) - fer.true_total()
-new = Firmware(fer, state=1)
-new.d = old.d
-new.now = 0
-seen = []
-run(new, 2 * 3600, each=lambda f: seen.append(f.display))
-bias_after = (fer.measured_gas() + new.d) - fer.true_total()
-shown = [v for v in seen[40:] if math.isfinite(v)]
-check("upgrade: SG corrected, no spike", abs(bias_after) < 0.25 and max(shown) < 8.6 * 1.3,
-      f"counted - true: {bias_before:+.3f} mol before, {bias_after:+.3f} mol after "
-      f"({pts(bias_before, fer.v):+.2f} -> {pts(bias_after, fer.v):+.2f} pt); display max {max(shown):.2f}")
+
+# Quick reboot with the buffers restored (PressureControl.cpp, restoreCO2Buffers):
+# the saved gas samples are shifted in time by the gap and stitched to the
+# current gas phase at their last rate (10 samples). The reboot also loses
+# 0.26 mol of ejected CO2 not yet saved in the counters.
+def stitch_restore(fw, gap_s, lost_ejected):
+    fer = fw.fer
+    saved_gas = list(fw.gas_hist)
+    saved_hs = list(fw.hs)
+    for _ in range(int(gap_s // DT)):          # the beer goes on during the boot
+        fer.step(True)
+    fer.ejected -= lost_ejected                # ejected since the last counters save
+    t_off = fw.now + gap_s
+    fw.reboot()
+    fw.now = BOOT_WAIT
+    tail = saved_gas[-10:]
+    n = len(tail)
+    sx = sum(t for t, _ in tail); sy = sum(v for _, v in tail)
+    slope = (n * sum(t * v for t, v in tail) - sx * sy) / (n * sum(t * t for t, _ in tail) - sx * sx)
+    last_t = saved_gas[-1][0] - t_off + fw.now
+    shift = fer.measured_gas() - (saved_gas[-1][1] + slope * (fw.now - last_t))
+    fw.gas_hist = [(t - t_off + fw.now, v + shift) for t, v in saved_gas]
+    fw.hs = [(t - t_off + fw.now, h) for t, h in saved_hs]
+
+
+fer, fw = active_fermenter()
+before = []
+run(fw, 3600, each=lambda f: before.append(f.display))
+stitch_restore(fw, 60, 0.26)
+after = []
+run(fw, 2 * 3600, each=lambda f: after.append(f.display))
+check("quick reboot, buffers restored: display continues",
+      max(abs(v - 8.6) for v in after if math.isfinite(v)) < 0.6,
+      f"before {min(before):.2f}..{max(before):.2f}, after {min(after):.2f}..{max(after):.2f} g/L/d "
+      f"(0.26 mol of ejected lost)")
 
 print(f"\n{sum(c for _, c in results)}/{len(results)} passed")
 raise SystemExit(0 if all(c for _, c in results) else 1)

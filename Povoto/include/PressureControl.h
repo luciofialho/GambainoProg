@@ -25,12 +25,6 @@ struct DissolvedCO2LogData {
   float reliefIntervalSeconds;
   float sinceLastReliefSeconds;
   float gasRate; // gas-phase CO2 rate, g/L/d (NAN = no decision)
-  // Supersaturation model and tau_s estimator (docs/dissolved-co2.md).
-  float gasFlux;          // g/L/d, 30-min slope of the gas phase (NAN until available)
-  float supersatMols;     // x applied
-  float tauDesEst, tauDesSe, tauAbsEst, tauAbsSe; // hours, NAN = not estimable
-  float tauEstRate;       // g/L/d implied by the fit
-  float tauEstRangeDes, tauEstRangeAbs; // g/L/d, variation of F in the fit window
 };
 DissolvedCO2LogData getDissolvedCO2LogData();
 // Dissolved-CO2 state (docs/dissolved-co2.md).
@@ -41,6 +35,8 @@ uint8_t getCO2DissolvedState(); // CountersData.co2DissolvedMode values
 const char *getCO2DissolvedStateLabel(uint8_t state);
 bool setCO2DissolvedStateManually(uint8_t state); // Counters page
 void resumeCO2AccountingAfterConditioning();
+// Saves the gCO2 window and the 30-min Henry samples (every 10 min and at an OTA start).
+void saveCO2Buffers();
 char *getPressureControlStatus(char *st);
 void handlePressureHistoryCSV(AsyncWebServerRequest *request);
 void handlePressureDumpCSV(AsyncWebServerRequest *request);
@@ -89,8 +85,11 @@ float CO2Mass(float mols=-1);
 float getTotalCO2Mols();
 // g CO2/L/day; presentation clamps negative evolution to zero.
 float getBeerCO2EvolutionGramsPerLiterPerDay();
-// Rate for the automatic rules: NAN unless the window has 30 min (docs/automatic-actions.md).
+// Rate for the automatic rules: NAN unless the window has 30 min and there is
+// no pressure/temperature transition (docs/automatic-actions.md).
 float getRuleCO2EvolutionGramsPerLiterPerDay();
+// Pressure or temperature changing or settled for less than 2 h (docs/gco2-rate.md).
+bool co2RateInTransition();
 // Signed; after a reboot, the saved rate while the new window is short
 // (docs/gco2-rate.md). Automatic rules use beerCO2EvolutionGramsPerLiterPerDay.
 float getReportedCO2EvolutionGramsPerLiterPerDay();

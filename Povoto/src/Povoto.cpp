@@ -175,7 +175,10 @@ void setup() {
 
 
   povotoDataInit();
-  ElegantOTA.onStart(writeCountersDataToNIV);
+  ElegantOTA.onStart([]() {
+    writeCountersDataToNIV();
+    saveCO2Buffers(); // the CO2 windows continue after the update (docs/gco2-rate.md)
+  });
   //esp_register_shutdown_handler(writeCountersDataToNIV);
 
   povotoWiFiInit();

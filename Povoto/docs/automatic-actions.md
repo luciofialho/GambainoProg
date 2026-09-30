@@ -63,7 +63,7 @@ Até **8 regras**. Cada uma:
 | Temp. stable for (h) | 1–360 | temperatura `STABLE` há mais que isso |
 | Press. stable for (h) | 1–360 | pressão `STABLE` há mais que isso |
 | SG < x | 0,990–1,200 | 3 casas decimais |
-| gCO2/L/d < x | 0,5–20 | só o valor calculado, > 0, com janela de pelo menos 30 min (31 amostras; ~32 min após o boot), e abaixo de x **sem interrupção por 20 min** (qualquer avaliação sem valor utilizável ou ≥ x recomeça a contagem). O valor retido de antes de um reboot nunca conta. Janelas curtas cobrem poucos ciclos de relief: no lote 160 (30/09 12:18) a primeira taxa após o boot, 7,19 com 4 min de janela e 8,8 real, disparou uma regra "< 8". Mediana do erro contra 6 h: ~1,2 g/L/d com 15 min, ~0,7 com 30 min |
+| gCO2/L/d < x | 0,5–20 | fora de transição de pressão ou temperatura (as duas estáveis há pelo menos 2 h: o gás que sai da cerveja difere da produção enquanto ela absorve ou libera; docs/gco2-rate.md); só o valor calculado, > 0, com janela de pelo menos 30 min (31 amostras; ~32 min após o boot), e abaixo de x **sem interrupção por 20 min** (qualquer avaliação sem valor utilizável ou ≥ x recomeça a contagem). O valor retido de antes de um reboot nunca conta. Janelas curtas cobrem poucos ciclos de relief: no lote 160 (30/09 12:18) a primeira taxa após o boot, 7,19 com 4 min de janela e 8,8 real, disparou uma regra "< 8". Mediana do erro contra 6 h: ~1,2 g/L/d com 15 min, ~0,7 com 30 min |
 | Requires rule N−1 | regras 2 a 8 | condição extra: a regra anterior precisa já ter disparado |
 | **Novos setpoints** (opcionais) | | |
 | Temperature / Temperature slow | 0–42 °C | |

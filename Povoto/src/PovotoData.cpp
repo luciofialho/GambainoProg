@@ -33,8 +33,6 @@ FMTData_t FMTData = {
   .pressure2Bar = 0.0,
   .pressure2Current = 0.0,
   .maximumPressure = 2.3f,
-  .supersatTauDesorbHours = 2.0f,
-  .supersatTauAbsorbHours = 2.0f,
   .nucleationWindow = 5,
   .heater = {true, 0.5f, 2.0f},
   .coolingCycle = {{30.0f, 15.0f}, {20.0f, 10.0f}, {5.0f, 8.0f}}
@@ -105,8 +103,7 @@ CountersData_t CountersData = {
   .co2RateHeld = NAN,
   .co2RateHeldAt = 0,
   .co2ArmedAt = 0,
-  .co2CorrectionDebt = 0.0,
-  .co2Supersat = 0.0f
+  .co2CorrectionDebt = 0.0
 };
 
 // =============
@@ -143,14 +140,6 @@ bool readFMTDataFromEEPROM() {
   if (!isfinite(FMTData.pressure2Current)) FMTData.pressure2Current = defaultFMTData.pressure2Current;
   FMTData.maximumPressure = store.getFloat("maxPressure", defaultFMTData.maximumPressure);
   if (!isfinite(FMTData.maximumPressure)) FMTData.maximumPressure = defaultFMTData.maximumPressure;
-  FMTData.supersatTauDesorbHours = store.getFloat("supersatTauD", defaultFMTData.supersatTauDesorbHours);
-  if (!isfinite(FMTData.supersatTauDesorbHours) || FMTData.supersatTauDesorbHours < 0.0f ||
-      FMTData.supersatTauDesorbHours > 24.0f)
-    FMTData.supersatTauDesorbHours = defaultFMTData.supersatTauDesorbHours;
-  FMTData.supersatTauAbsorbHours = store.getFloat("supersatTauA", defaultFMTData.supersatTauAbsorbHours);
-  if (!isfinite(FMTData.supersatTauAbsorbHours) || FMTData.supersatTauAbsorbHours < 0.0f ||
-      FMTData.supersatTauAbsorbHours > 24.0f)
-    FMTData.supersatTauAbsorbHours = defaultFMTData.supersatTauAbsorbHours;
   FMTData.nucleationWindow = store.getInt("nucleation", defaultFMTData.nucleationWindow);
   FMTData.nvsSchemaVersion = store.getUInt("schemaVersion", 0);
   FMTData.PovotoNum = store.getUChar("number", defaultFMTData.PovotoNum);
@@ -247,8 +236,6 @@ bool writeFMTDataToNIV() {
   saved = (store.putFloat("p2Bar", FMTData.pressure2Bar) == sizeof(FMTData.pressure2Bar)) && saved;
   saved = (store.putFloat("p2Current", FMTData.pressure2Current) == sizeof(FMTData.pressure2Current)) && saved;
   saved = (store.putFloat("maxPressure", FMTData.maximumPressure) == sizeof(FMTData.maximumPressure)) && saved;
-  saved = (store.putFloat("supersatTauD", FMTData.supersatTauDesorbHours) == sizeof(FMTData.supersatTauDesorbHours)) && saved;
-  saved = (store.putFloat("supersatTauA", FMTData.supersatTauAbsorbHours) == sizeof(FMTData.supersatTauAbsorbHours)) && saved;
   saved = (store.putInt("nucleation", FMTData.nucleationWindow) == sizeof(FMTData.nucleationWindow)) && saved;
   // Write the completion marker only after all settings were saved.
   if (saved)
@@ -434,8 +421,6 @@ bool readCountersDataFromEEPROM() {
   CountersData.co2CorrectionDebt = store.getDouble("co2Debt", defaultCountersData.co2CorrectionDebt);
   if (!isfinite(CountersData.co2CorrectionDebt) || CountersData.co2CorrectionDebt < 0.0)
     CountersData.co2CorrectionDebt = defaultCountersData.co2CorrectionDebt;
-  CountersData.co2Supersat = store.getFloat("co2Supersat", defaultCountersData.co2Supersat);
-  if (!isfinite(CountersData.co2Supersat)) CountersData.co2Supersat = defaultCountersData.co2Supersat;
   store.end();
   return true;
 }
@@ -467,7 +452,6 @@ bool writeCountersDataToNIV() {
   saved = (store.putUInt("co2RateAt", CountersData.co2RateHeldAt) == sizeof(CountersData.co2RateHeldAt)) && saved;
   saved = (store.putUInt("co2ArmedAt", CountersData.co2ArmedAt) == sizeof(CountersData.co2ArmedAt)) && saved;
   saved = (store.putDouble("co2Debt", CountersData.co2CorrectionDebt) == sizeof(CountersData.co2CorrectionDebt)) && saved;
-  saved = (store.putFloat("co2Supersat", CountersData.co2Supersat) == sizeof(CountersData.co2Supersat)) && saved;
   store.end();
   if (!saved) Serial.println("NVS: CountersData save incomplete");
   return saved;
@@ -637,7 +621,6 @@ void resetCountersForNewBatch() {
   CountersData.totalHeatTime = 0;
   CountersData.co2DissolvedMode = 2; // initial
   CountersData.co2ArmedAt = 0;
-  CountersData.co2Supersat = 0.0f;
   resetDailyHeadspaceTracking(); // [DAILY-HS] persisted by writeCountersDataToNIV() below
   CountersData.co2RateHeld = NAN; // the previous batch's rate must not be reported
   CountersData.co2RateHeldAt = 0;

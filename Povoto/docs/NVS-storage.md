@@ -17,10 +17,9 @@ the last gCO2/L/d from a mature window and its NTP time; see docs/gco2-rate.md.
 CountersData.co2DissolvedMode (key `co2Mode`, 0..3; other values read as 2)
 and co2ArmedAt (key `co2ArmedAt`) keep the dissolved-CO2 state; see
 docs/dissolved-co2.md.
-CountersData.co2Supersat (key `co2Supersat`) and FMTData.supersatTauDesorbHours /
-supersatTauAbsorbHours (keys `supersatTauD` / `supersatTauA`) belong to the
-supersaturation model; see docs/dissolved-co2.md. FMTData.co2TransferTime was
-removed without a schema change: its key `co2TransferTime` stays unused in NVS.
+FMTData.co2TransferTime and the supersaturation fields were removed without a
+schema change: their keys (`co2TransferTime`, `supersatTauD`, `supersatTauA`,
+`co2Supersat`) may stay unused in NVS.
 CountersData.co2CorrectionDebt (key `co2Debt`, double) keeps the debt of the
 produced-CO2 integral across reboots; see docs/gco2-rate.md.
 

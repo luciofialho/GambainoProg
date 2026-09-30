@@ -72,7 +72,8 @@ void handleMainMenu(AsyncWebServerRequest *request) {
   html += "<div class='status-item'><strong>Temperature:</strong> " + String(ControlData.temperature, 1) + " °C</div>";
   html += "<div class='status-item'><strong>Pressure:</strong> " + String(ControlData.pressure, 2) + " bar</div>";
   html += "<div class='status-item'><strong>Volume:</strong> " + String(beerVolume, 1) + " L</div>";
-  html += "<div class='status-item'><strong>SG:</strong> " + String(beerSG, 3) + " (gCO2/L/d: " + String(getBeerCO2EvolutionGramsPerLiterPerDay(), 2) + ")</div>";
+  html += "<div class='status-item'><strong>SG:</strong> " + String(beerSG, 3) + " (gCO2/L/d: " + String(getBeerCO2EvolutionGramsPerLiterPerDay(), 2) +
+          (co2RateInTransition() ? ", transition: gas leaving the beer" : "") + ")</div>";
   html += "<div class='status-item'><strong>Uptime:</strong> " + uptimeStr + "</div>";
   html += "<div class='status-item'><strong>Date/Time:</strong> " + String(dateTimeBuf) + "</div>";
   html += "</div>";
@@ -718,29 +719,6 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "</div>", remaining);
 
-  // Supersaturation time constants (docs/dissolved-co2.md)
-  snprintf(buffer, sizeof(buffer),
-    "<div class='form-group'><label for='supersatTauDesorbHours'>Supersaturation &tau;s, gas leaving the beer (h):</label>"
-    "<input type='number' id='supersatTauDesorbHours' name='supersatTauDesorbHours' value='%.2f' step='0.01' min='0' max='24'></div>",
-    FMTData.supersatTauDesorbHours);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, buffer, remaining);
-  snprintf(buffer, sizeof(buffer),
-    "<div class='form-group'><label for='supersatTauAbsorbHours'>Supersaturation &tau;s, beer absorbing gas (h):</label>"
-    "<input type='number' id='supersatTauAbsorbHours' name='supersatTauAbsorbHours' value='%.2f' step='0.01' min='0' max='24'></div>",
-    FMTData.supersatTauAbsorbHours);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, buffer, remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<small>Dissolved CO2 = Henry at the 30-min mean pressure + &tau;s &times; gas flux. "
-               "0 = instant equilibrium. To recalibrate, read the Cold log after a pressure rise "
-               "(set point up), a pressure fall (cooling) or a set point down: use TauDesEst "
-               "(gas leaving) or TauAbsEst (absorbing) only on rows where TauEstFRangeDes / "
-               "TauEstFRangeAbs &ge; 2.5 g/L/d, the SE is small compared with the estimate and "
-               "TauEstRate matches the gCO2/L/d of the relief cycles before the change. Take the "
-               "value from the end of the change (the 3-h window then covers it) and repeat over "
-               "a few events before changing it here. In a steady relief cycle the columns stay "
-               "empty: nothing to estimate.</small>", remaining);
 
   // Nucleation window
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -867,14 +845,7 @@ void handleCalibrationDataUpdate(AsyncWebServerRequest *request) {
   if (request->hasParam("maximumPressure", true)) {
     FMTData.maximumPressure = request->getParam("maximumPressure", true)->value().toFloat();
   }
-  if (request->hasParam("supersatTauDesorbHours", true)) {
-    const float value = request->getParam("supersatTauDesorbHours", true)->value().toFloat();
-    if (isfinite(value) && value >= 0.0f && value <= 24.0f) FMTData.supersatTauDesorbHours = value;
-  }
-  if (request->hasParam("supersatTauAbsorbHours", true)) {
-    const float value = request->getParam("supersatTauAbsorbHours", true)->value().toFloat();
-    if (isfinite(value) && value >= 0.0f && value <= 24.0f) FMTData.supersatTauAbsorbHours = value;
-  }
+
   if (request->hasParam("nucleationWindow", true)) {
     FMTData.nucleationWindow = request->getParam("nucleationWindow", true)->value().toInt();
   }

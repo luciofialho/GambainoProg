@@ -12,6 +12,7 @@
 #include <IOTK.h>
 #include <IOTK_NTP.h>
 #include "__NumFilters.h"
+#include <LittleFS.h>
 #include <math.h>
 
 
@@ -112,15 +113,9 @@ static constexpr unsigned long CO2_TASK_QUIET_MS = 80UL * MINUTESms;   // window
 // fermentation (gas added outside a task): the rate window gives no decision.
 static constexpr float CO2_EXTERNAL_STEP_GPLD = 50.0f; // g/L/d over one sample
 static float co2GasRate = NAN;                        // g/L/d, NAN = no decision
-// Supersaturation model state (functions below rebaseCO2Evolution).
-struct SupersatEstimate { float tauDes, tauDesSe, tauAbs, tauAbsSe, rate, rangeDes, rangeAbs; };
-static SupersatEstimate supersatEstimate = {NAN, NAN, NAN, NAN, NAN, NAN, NAN};     // last fit
-static SupersatEstimate supersatLastEstimate = {NAN, NAN, NAN, NAN, NAN, NAN, NAN}; // last valid
-static uint32_t supersatLastEstimateAt = 0;    // local NTP epoch
-static float supersatFlux = NAN;               // mol/day, 30-min slope of the gas phase
-static float supersatMeanPressure = NAN;       // bar, 30-min mean
-static float supersatMeanHenry = NAN;          // mol, 30-min mean of Henry (pressure and temperature)
-static double pendingSupersatStep = 0.0;       // change of x after a hold: a model step
+// 30-min means for the dissolved CO2 (block "Henry mean" below).
+static float henryMeanPressure = NAN; // bar
+static float henryMeanMols = NAN;     // mol, mean of Henry at each sample's pressure and temperature
 static const char *co2StateDecision = "no-decision";
 static unsigned long co2StateConditionSinceMillis = 0; // 0 = no condition running
 static unsigned long co2StateHoldMs = 0;
@@ -130,7 +125,6 @@ static double co2GasBaselineMols = 0.0;
 static uint32_t co2EvolutionLastReliefCount = 0; // relief count at the last CO2 sample
 struct CO2EvolutionSample {
   unsigned long millisStamp;
-  double totalMols;
   float pressure;
   double gasMols;       // ejected + headspace + expansion tank
   bool externalStep;    // pressure jump without relief (e.g. gas added): no decision
@@ -830,6 +824,7 @@ bool setCO2DissolvedStateManually(uint8_t state) {
 
 // CountersData was reset for a new batch (co2DissolvedMode = initial).
 static void resetBeerCO2Evolution();
+static void invalidateCO2BufferFile();
 
 void resetCO2DissolvedStateForNewBatch() {
   co2DissolvedState = (CO2DissolvedState)CountersData.co2DissolvedMode;
@@ -841,9 +836,7 @@ void resetCO2DissolvedStateForNewBatch() {
   co2StateDecision = "no-decision";
   // Samples of the previous batch must not enter the windows of the new one.
   resetBeerCO2Evolution();
-  supersatLastEstimate = supersatEstimate = {NAN, NAN, NAN, NAN, NAN, NAN, NAN};
-  supersatLastEstimateAt = 0;
-  pendingSupersatStep = 0.0;
+  invalidateCO2BufferFile();
 }
 
 // Back from Conditioning: nothing is generating (the batch was conditioning),
@@ -927,8 +920,8 @@ static unsigned long co2DissolvedCriteriaElapsedMillis(unsigned long now) {
 // relief cycle, follows rises and falls; a set point change is not a jump).
 // Half-life limits and before the first sample: the current pressure.
 static float dissolvedCO2CalculationPressure() {
-  if (co2StateIsHalfLife(co2DissolvedState) || !isfinite(supersatMeanPressure)) return ControlData.pressure;
-  return supersatMeanPressure;
+  if (co2StateIsHalfLife(co2DissolvedState) || !isfinite(henryMeanPressure)) return ControlData.pressure;
+  return henryMeanPressure;
 }
 
 DissolvedCO2LogData getDissolvedCO2LogData() {
@@ -943,21 +936,11 @@ DissolvedCO2LogData getDissolvedCO2LogData() {
   data.criteriaElapsedMillis = co2DissolvedCriteriaElapsedMillis(now);
   data.confirmationMillis = co2StateHoldMs;
   data.calculationPressure = dissolvedCO2CalculationPressure();
-  data.equilibriumMols = (!co2StateIsHalfLife(co2DissolvedState) && isfinite(supersatMeanHenry))
-      ? supersatMeanHenry
+  data.equilibriumMols = (!co2StateIsHalfLife(co2DissolvedState) && isfinite(henryMeanMols))
+      ? henryMeanMols
       : CO2DissolvedMols(data.calculationPressure, beerSG, ControlData.temperature, beerVolume);
   data.previousPressure = NAN;
   data.gasRate = co2GasRate;
-  const float toGpld = (isfinite(beerVolume) && beerVolume > 0.0f) ? CO2MOLAR_MASS / beerVolume : NAN;
-  data.gasFlux = supersatFlux * toGpld;
-  data.supersatMols = CountersData.co2Supersat;
-  data.tauDesEst = supersatEstimate.tauDes;
-  data.tauDesSe = supersatEstimate.tauDesSe;
-  data.tauAbsEst = supersatEstimate.tauAbs;
-  data.tauAbsSe = supersatEstimate.tauAbsSe;
-  data.tauEstRate = supersatEstimate.rate;
-  data.tauEstRangeDes = supersatEstimate.rangeDes;
-  data.tauEstRangeAbs = supersatEstimate.rangeAbs;
   data.reliefIntervalSeconds = NAN;
   data.sinceLastReliefSeconds = NAN;
   if (reliefMillisCount > 0) {
@@ -971,241 +954,57 @@ DissolvedCO2LogData getDissolvedCO2LogData() {
   return data;
 }
 
-// Shifts the stored CO2 totals by a model step so the rate window ignores it.
-static void rebaseCO2Evolution(double deltaMols) {
-  if (!isfinite(deltaMols) || deltaMols == 0.0) return;
-  for (uint16_t i = 0; i < co2EvolutionCount; ++i) {
-    co2EvolutionHistory[(co2EvolutionStart + i) % CO2_EVOLUTION_HISTORY_SIZE].totalMols += deltaMols;
-  }
-}
-
-// ===== Supersaturation (docs/dissolved-co2.md) =====
-// The CO2 is produced in the beer and leaves it only while the beer is above
-// saturation: gas flux F = kLa*(D - Henry). So D = Henry + x, x = tau_s*F,
-// tau_s = 1/kLa (desorption for F > 0, absorption for F < 0, calibration page).
-// Henry is the 30-min mean of Henry at each sample's pressure and temperature
-// (constant in the relief cycle, follows rises, falls and cooling), the same
-// window as F, the 30-min slope of the measured gas phase.
-// An estimator refits tau_s from the log data when F varies enough.
-static constexpr uint16_t SUPERSAT_BUFFER_SIZE = 211;      // 180-min fit + 30-min centering + 1
-static constexpr uint16_t SUPERSAT_FLUX_SAMPLES = 30;      // 60-s samples: 30 min
-static constexpr uint16_t SUPERSAT_FLUX_MIN_SAMPLES = 25;
-static constexpr uint16_t SUPERSAT_FIT_SAMPLES = 180;      // 3 h
-static constexpr uint16_t SUPERSAT_FIT_MIN_SAMPLES = 150;
-static constexpr uint16_t SUPERSAT_FIT_EVERY = 10;         // samples between fits
-static constexpr float SUPERSAT_FIT_MIN_RANGE_GPLD = 2.5f; // F variation needed per direction
-struct SupersatSample {
+// ===== Henry mean (docs/dissolved-co2.md) =====
+// In equilibrium and initial the dissolved CO2 is the 30-min mean of Henry at
+// each sample's pressure and temperature: constant in the relief cycle (the
+// saw-tooth averages out), following rises, falls and cooling. The transfer
+// between the beer and the gas is not modelled: gCO2/L/d is the gas leaving
+// the beer (docs/gco2-rate.md), and the SG error of a transition undoes itself
+// when the beer is back in equilibrium.
+static constexpr uint16_t HENRY_MEAN_SAMPLES = 30; // 60-s samples: 30 min
+struct HenrySample {
   unsigned long millisStamp;
-  float gasMols;       // gas phase, relative to supersatGasBase
-  float henryPerBar;   // Henry mol per bar of absolute pressure (T, SG, volume of the sample)
+  float henryMols; // Henry at the sample's pressure, temperature, SG and volume
   float pressure;
-  float centeredFlux;  // mol/day over +-15 min, NAN until computable
-  float centeredHenry; // Henry at the +-15-min mean pressure, same instant as centeredFlux
-  bool usable;         // fermenting, equilibrium/initial, no task, no external step
-  bool externalStep;
-  bool task;
 };
-static SupersatSample supersatBuffer[SUPERSAT_BUFFER_SIZE];
-static uint16_t supersatStart = 0, supersatCount = 0, supersatSinceFit = 0;
-static double supersatGasBase = 0.0;
-static bool supersatFluxHeld = true; // x is held (boot, task): its next change is a model step
+static HenrySample henryBuffer[HENRY_MEAN_SAMPLES];
+static uint16_t henryStart = 0, henryCount = 0;
 
-static const SupersatSample &supersatAt(uint16_t i) {
-  return supersatBuffer[(supersatStart + i) % SUPERSAT_BUFFER_SIZE];
+static const HenrySample &henryAt(uint16_t i) {
+  return henryBuffer[(henryStart + i) % HENRY_MEAN_SAMPLES];
 }
 
-static void resetSupersatBuffer() {
-  supersatStart = supersatCount = supersatSinceFit = 0;
-  supersatFlux = NAN;
-  supersatMeanPressure = NAN;
-  supersatMeanHenry = NAN;
-  supersatFluxHeld = true;
+static void updateHenryMeans() {
+  if (henryCount == 0) {
+    henryMeanMols = henryMeanPressure = NAN;
+    return;
+  }
+  double h = 0.0, p = 0.0;
+  for (uint16_t i = 0; i < henryCount; ++i) {
+    h += henryAt(i).henryMols;
+    p += henryAt(i).pressure;
+  }
+  henryMeanMols = float(h / henryCount);
+  henryMeanPressure = float(p / henryCount);
 }
 
-// Least-squares slope (mol/day) of the gas over samples [from, to]; NAN if the
-// span is short or a sample has an external step or a task.
-static float supersatSlope(uint16_t from, uint16_t to) {
-  const uint16_t n = to - from + 1;
-  if (n < SUPERSAT_FLUX_MIN_SAMPLES) return NAN;
-  const unsigned long t0 = supersatAt(from).millisStamp;
-  if (supersatAt(to).millisStamp - t0 < 27UL * MINUTESms) return NAN;
-  double sx = 0, sy = 0, sxx = 0, sxy = 0;
-  for (uint16_t i = from; i <= to; ++i) {
-    const SupersatSample &s = supersatAt(i);
-    if (s.externalStep || s.task) return NAN;
-    const double x = (s.millisStamp - t0) / 86400000.0;
-    sx += x; sy += s.gasMols; sxx += x * x; sxy += x * s.gasMols;
-  }
-  const double d = n * sxx - sx * sx;
-  return d > 0.0 ? float((n * sxy - sx * sy) / d) : NAN;
-}
-
-// Solves the normal equations of a least-squares fit with up to 4 regressors.
-// Returns false if singular; inv[k] = (A^-1)_kk for the standard errors.
-static bool supersatSolve(double A[4][4], double b[4], uint8_t n, double coef[4], double inv[4]) {
-  double m[4][9];
-  for (uint8_t i = 0; i < n; ++i) {
-    for (uint8_t j = 0; j < n; ++j) m[i][j] = A[i][j];
-    m[i][n] = b[i];
-    for (uint8_t j = 0; j < n; ++j) m[i][n + 1 + j] = (i == j) ? 1.0 : 0.0;
-  }
-  const uint8_t cols = 2 * n + 1;
-  for (uint8_t c = 0; c < n; ++c) {
-    uint8_t p = c;
-    for (uint8_t r = c + 1; r < n; ++r) if (fabs(m[r][c]) > fabs(m[p][c])) p = r;
-    if (fabs(m[p][c]) < 1e-12) return false;
-    if (p != c) for (uint8_t j = 0; j < cols; ++j) { const double t = m[c][j]; m[c][j] = m[p][j]; m[p][j] = t; }
-    const double piv = m[c][c];
-    for (uint8_t j = 0; j < cols; ++j) m[c][j] /= piv;
-    for (uint8_t r = 0; r < n; ++r) {
-      if (r == c) continue;
-      const double f = m[r][c];
-      for (uint8_t j = 0; j < cols; ++j) m[r][j] -= f * m[c][j];
-    }
-  }
-  for (uint8_t i = 0; i < n; ++i) { coef[i] = m[i][n]; inv[i] = m[i][n + 1 + i]; }
-  return true;
-}
-
-// Fit over the last 3 h (centered flux available):
-//   gas + Henry = c + R*t - tauDes*F+ - tauAbs*F-
-// F+ / F- enter only when they varied by at least SUPERSAT_FIT_MIN_RANGE_GPLD.
-static void supersatFit() {
-  supersatEstimate = {NAN, NAN, NAN, NAN, NAN, NAN, NAN};
-  if (!isfinite(beerVolume) || beerVolume <= 0.0f) return;
-  int16_t last = -1;
-  for (int16_t i = supersatCount - 1; i >= 0; --i)
-    if (isfinite(supersatAt(i).centeredFlux)) { last = i; break; }
-  if (last < 0 || last + 1 < SUPERSAT_FIT_SAMPLES) return;
-  const uint16_t first = last + 1 - SUPERSAT_FIT_SAMPLES;
-  const double toGpld = CO2MOLAR_MASS / beerVolume;
-  float minP = INFINITY, maxP = -INFINITY, minN = INFINITY, maxN = -INFINITY;
-  uint16_t n = 0;
-  for (uint16_t i = first; i <= (uint16_t)last; ++i) {
-    const SupersatSample &s = supersatAt(i);
-    if (!s.usable || !isfinite(s.centeredFlux) || !isfinite(s.centeredHenry)) return; // the whole window must be clean
-    const float fp = fmaxf(s.centeredFlux, 0.0f), fn = fminf(s.centeredFlux, 0.0f);
-    minP = fminf(minP, fp); maxP = fmaxf(maxP, fp);
-    minN = fminf(minN, fn); maxN = fmaxf(maxN, fn);
-    ++n;
-  }
-  if (n < SUPERSAT_FIT_MIN_SAMPLES) return;
-  supersatEstimate.rangeDes = (maxP - minP) * toGpld;
-  supersatEstimate.rangeAbs = (maxN - minN) * toGpld;
-  const bool useDes = supersatEstimate.rangeDes >= SUPERSAT_FIT_MIN_RANGE_GPLD;
-  const bool useAbs = supersatEstimate.rangeAbs >= SUPERSAT_FIT_MIN_RANGE_GPLD;
-  if (!useDes && !useAbs) return;
-  const uint8_t k = 2 + (useDes ? 1 : 0) + (useAbs ? 1 : 0);
-  double A[4][4] = {}, b[4] = {}, coef[4], inv[4];
-  const unsigned long t0 = supersatAt(first).millisStamp;
-  for (uint16_t i = first; i <= (uint16_t)last; ++i) {
-    const SupersatSample &s = supersatAt(i);
-    double x[4] = {1.0, (s.millisStamp - t0) / 86400000.0, 0, 0};
-    uint8_t j = 2;
-    if (useDes) x[j++] = fmaxf(s.centeredFlux, 0.0f);
-    if (useAbs) x[j++] = fminf(s.centeredFlux, 0.0f);
-    const double y = double(s.gasMols) + s.centeredHenry;
-    for (uint8_t r = 0; r < k; ++r) {
-      b[r] += x[r] * y;
-      for (uint8_t c = 0; c < k; ++c) A[r][c] += x[r] * x[c];
-    }
-  }
-  if (!supersatSolve(A, b, k, coef, inv)) return;
-  double rss = 0.0;
-  for (uint16_t i = first; i <= (uint16_t)last; ++i) {
-    const SupersatSample &s = supersatAt(i);
-    double x[4] = {1.0, (s.millisStamp - t0) / 86400000.0, 0, 0};
-    uint8_t j = 2;
-    if (useDes) x[j++] = fmaxf(s.centeredFlux, 0.0f);
-    if (useAbs) x[j++] = fminf(s.centeredFlux, 0.0f);
-    double fit = 0.0;
-    for (uint8_t r = 0; r < k; ++r) fit += coef[r] * x[r];
-    const double e = double(s.gasMols) + s.centeredHenry - fit;
-    rss += e * e;
-  }
-  const double s2 = rss / (n - k);
-  supersatEstimate.rate = coef[1] * toGpld;
-  uint8_t j = 2;
-  if (useDes) {
-    supersatEstimate.tauDes = -coef[j] * 24.0;
-    supersatEstimate.tauDesSe = sqrt(fmax(s2 * inv[j], 0.0)) * 24.0;
-    ++j;
-  }
-  if (useAbs) {
-    supersatEstimate.tauAbs = -coef[j] * 24.0;
-    supersatEstimate.tauAbsSe = sqrt(fmax(s2 * inv[j], 0.0)) * 24.0;
-  }
-  supersatLastEstimate = supersatEstimate;
-  supersatLastEstimateAt = NTPEpoch();
+static void resetHenryBuffer() {
+  henryStart = henryCount = 0;
+  updateHenryMeans();
 }
 
 // One call per CO2 sample (60 s).
-static void addSupersatSample(unsigned long now, double gasMols, bool externalStep) {
-  if (supersatCount == 0) supersatGasBase = gasMols;
-  if (supersatCount == SUPERSAT_BUFFER_SIZE) {
-    supersatStart = (supersatStart + 1) % SUPERSAT_BUFFER_SIZE;
-    --supersatCount;
+static void addHenrySample(unsigned long now) {
+  if (henryCount == HENRY_MEAN_SAMPLES) {
+    henryStart = (henryStart + 1) % HENRY_MEAN_SAMPLES;
+    --henryCount;
   }
-  SupersatSample &s = supersatBuffer[(supersatStart + supersatCount) % SUPERSAT_BUFFER_SIZE];
-  const bool task = taskWindowType != 0;
+  HenrySample &s = henryBuffer[(henryStart + henryCount) % HENRY_MEAN_SAMPLES];
   s.millisStamp = now;
-  s.gasMols = float(gasMols - supersatGasBase);
+  s.henryMols = CO2DissolvedMols(ControlData.pressure, beerSG, ControlData.temperature, beerVolume);
   s.pressure = ControlData.pressure;
-  s.centeredFlux = NAN;
-  s.centeredHenry = NAN;
-  const float pRef = fmaxf(ControlData.pressure, 0.01f); // CO2DissolvedMols is 0 at or below 0 bar gauge
-  s.henryPerBar = CO2DissolvedMols(pRef, beerSG, ControlData.temperature, beerVolume) / (pRef + Patm);
-  s.externalStep = externalStep;
-  s.task = task;
-  s.usable = SetPointData.mode == MODE_FERMENTING && !co2StateIsHalfLife(co2DissolvedState) &&
-             !task && !externalStep;
-  ++supersatCount;
-
-  // 30-min means of the pressure and of Henry.
-  const uint16_t from = supersatCount > SUPERSAT_FLUX_SAMPLES ? supersatCount - SUPERSAT_FLUX_SAMPLES : 0;
-  double pSum = 0.0, hSum = 0.0;
-  for (uint16_t i = from; i < supersatCount; ++i) {
-    const SupersatSample &w = supersatAt(i);
-    pSum += w.pressure;
-    hSum += double(w.henryPerBar) * (w.pressure + Patm);
-  }
-  supersatMeanPressure = float(pSum / (supersatCount - from));
-  supersatMeanHenry = float(hSum / (supersatCount - from));
-  const float henryMean = supersatMeanHenry;
-
-  // Flux over the last 30 min. With a task or an external step in the window
-  // x is held, and its next change is a model step (as after a boot).
-  supersatFlux = supersatCount >= SUPERSAT_FLUX_SAMPLES ? supersatSlope(from, supersatCount - 1) : NAN;
-  if (isfinite(supersatFlux)) {
-    const float tauH = supersatFlux >= 0.0f ? FMTData.supersatTauDesorbHours : FMTData.supersatTauAbsorbHours;
-    float x = supersatFlux * tauH / 24.0f;
-    const float limit = 0.5f * henryMean;
-    if (isfinite(limit) && limit > 0.0f) x = fmaxf(-limit, fminf(limit, x));
-    if (supersatFluxHeld) {
-      pendingSupersatStep += double(x) - CountersData.co2Supersat;
-      supersatFluxHeld = false;
-    }
-    CountersData.co2Supersat = x;
-  } else {
-    supersatFluxHeld = true;
-  }
-
-  // Centered flux of the sample 15 min ago, for the estimator.
-  if (supersatCount >= 31) {
-    const uint16_t c = supersatCount - 16;
-    SupersatSample &mid = supersatBuffer[(supersatStart + c) % SUPERSAT_BUFFER_SIZE];
-    mid.centeredFlux = supersatSlope(c - 15, c + 15);
-    double hc = 0.0;
-    for (uint16_t i = c - 15; i <= c + 15; ++i) {
-      const SupersatSample &w = supersatAt(i);
-      hc += double(w.henryPerBar) * (w.pressure + Patm);
-    }
-    mid.centeredHenry = float(hc / 31.0);
-  }
-  if (++supersatSinceFit >= SUPERSAT_FIT_EVERY) {
-    supersatSinceFit = 0;
-    supersatFit();
-  }
+  ++henryCount;
+  updateHenryMeans();
 }
 
 // A dump removes beer with its dissolved CO2; in the half-life the amount is
@@ -1216,7 +1015,6 @@ void scaleDissolvedCO2ForBeerVolume(float volumeBefore, float volumeAfter) {
       volumeAfter <= 0.0f || volumeAfter >= volumeBefore) return;
   const double removed = CountersData.CO2InSolution * (1.0 - double(volumeAfter) / volumeBefore);
   CountersData.CO2InSolution -= removed;
-  rebaseCO2Evolution(-removed); // CO2 that left with the beer is not negative production
   co2GasBaselineValid = false;
   Serial.printf("[CO2 DUMP] dissolved -%.3f mol (%.1f -> %.1f L)\n", removed, volumeBefore, volumeAfter);
 }
@@ -1248,34 +1046,15 @@ static void recomputeDissolvedCO2MolsFromCurrentState() {
   startGuardActive = false;
 
   if (!co2StateIsHalfLife(co2DissolvedState)) {
-    // Henry at the mean pressure plus the supersaturation x = tau_s*F.
-    const double previousMols = CountersData.CO2InSolution;
-    const double henry = isfinite(supersatMeanHenry) ? double(supersatMeanHenry)
+    // 30-min mean of Henry (current pressure until the first sample).
+    CountersData.CO2InSolution = isfinite(henryMeanMols) ? double(henryMeanMols)
         : CO2DissolvedMols(ControlData.pressure, beerSG, ControlData.temperature, beerVolume);
-    CountersData.CO2InSolution = fmax(0.0, henry + CountersData.co2Supersat);
-    if (co2PreviousDissolvedState == co2DissolvedState && !leavingStartGuard && pendingSupersatStep != 0.0) {
-      // x resumed after a hold (boot, task): the step stays out of the gCO2
-      // window (no spike on the display) but counts in the SG integral: it is
-      // CO2 in the beer. On the first boot of this version x goes from 0 to
-      // tau_s*F, the CO2 the instant-equilibrium model never counted.
-      if (isfinite(pendingSupersatStep)) rebaseCO2Evolution(pendingSupersatStep);
-      Serial.printf("[CO2 SUPERSAT] x resumed, step=%.3f mol (counted in the SG)\n", pendingSupersatStep);
-    }
-    pendingSupersatStep = 0.0;
-    if (co2PreviousDissolvedState != co2DissolvedState && !leavingStartGuard) {
-      // A model step is not production: keep it out of gCO2/L/d.
-      const double stepMols = CountersData.CO2InSolution - previousMols;
-      rebaseCO2Evolution(stepMols);
-      Serial.printf("[CO2 REBASE] %s->%s step=%.3f mol, samples=%u\n",
-                    co2DissolvedStateLabel(co2PreviousDissolvedState),
-                    co2DissolvedStateLabel(co2DissolvedState), stepMols, (unsigned)co2EvolutionCount);
-    }
+    (void)leavingStartGuard;
     co2PreviousDissolvedState = co2DissolvedState;
     co2GasBaselineValid = false;
     return;
   }
   co2PreviousDissolvedState = co2DissolvedState;
-  pendingSupersatStep = 0.0; // x is not used in the half-life
 
   // Half-life (hybrid, by measurement; docs/dissolved-co2.md): the dissolved
   // CO2 moves only with the measured gas phase G, bounded by Henry H at the
@@ -1494,7 +1273,7 @@ static void resetBeerCO2Evolution() {
   co2EvolutionStart = 0;
   co2EvolutionCount = 0;
   beerCO2EvolutionGramsPerLiterPerDay = 0.0f;
-  resetSupersatBuffer();
+  resetHenryBuffer();
 }
 
 // Gas-phase CO2 rate (g/L/d) over the gCO2 window, with the same end
@@ -1527,15 +1306,186 @@ static float gasPhaseCO2Rate(unsigned long now) {
       / (double(beerVolume) * elapsedMs);
 }
 
+// ===== CO2 buffers across a reboot (docs/gco2-rate.md) =====
+// The gCO2 window (gas phase) and the 30-min Henry samples are saved to
+// LittleFS every CO2_BUFFER_SAVE_MS and at an OTA start. At boot, once NTP is
+// valid, they are restored if the file is at most CO2_BUFFER_MAX_GAP_S old and
+// of the same batch, in Fermenting. The gas series is stitched to the current
+// gas phase at its last rate, so CO2 lost by the reboot (ejected not yet saved
+// in the counters) does not look like a change of the rate.
+static constexpr const char *CO2_BUFFER_FILE = "/co2buffers.bin";
+static constexpr const char *CO2_BUFFER_TMP = "/co2buffers.tmp";
+static constexpr uint32_t CO2_BUFFER_MAGIC = 0x32304243UL; // "CB02"
+// Quick boots (OTA ~1 min, power blips, crashes) are well below this; a longer
+// gap is a power cut without temperature and pressure control: start over.
+static constexpr uint32_t CO2_BUFFER_MAX_GAP_S = 600;
+static constexpr unsigned long CO2_BUFFER_SAVE_MS = 10UL * MINUTESms;
+static constexpr unsigned long CO2_BUFFER_RESTORE_WAIT_MS = 5UL * MINUTESms; // for NTP
+static constexpr uint16_t CO2_BUFFER_STITCH_SAMPLES = 10;
+static bool co2BufferRestorePending = true; // boot: sampling waits for the restore decision
+static unsigned long co2BufferLastSaveMillis = 0;
+static char co2BufferStatus[64] = "pending";
+
+struct CO2BufferHeader {
+  uint32_t magic;
+  uint16_t batchNumber;
+  uint8_t mode;
+  uint32_t savedEpoch;
+  uint32_t reliefCount; // counters reset since the save (new batch) -> reject
+  uint16_t co2Count;
+  uint16_t henryCount;
+} __attribute__((packed));
+struct CO2SampleFile {
+  uint32_t ageMs;
+  float pressure;
+  double gasMols;
+  uint8_t externalStep;
+} __attribute__((packed));
+struct HenrySampleFile {
+  uint32_t ageMs;
+  float henryMols;
+  float pressure;
+} __attribute__((packed));
+
+void saveCO2Buffers() {
+  const unsigned long epoch = NTPEpoch();
+  if (co2BufferRestorePending || epoch == 0 || BatchData.batchNumber == 0 ||
+      SetPointData.mode != MODE_FERMENTING || (co2EvolutionCount == 0 && henryCount == 0))
+    return;
+  File f = LittleFS.open(CO2_BUFFER_TMP, "w");
+  if (!f) return;
+  const unsigned long now = millis();
+  const CO2BufferHeader h = {CO2_BUFFER_MAGIC, BatchData.batchNumber, SetPointData.mode, (uint32_t)epoch,
+                             CountersData.totalReliefCount, co2EvolutionCount, henryCount};
+  bool ok = f.write((const uint8_t *)&h, sizeof(h)) == sizeof(h);
+  for (uint16_t i = 0; ok && i < co2EvolutionCount; ++i) {
+    const CO2EvolutionSample &s = co2EvolutionHistory[(co2EvolutionStart + i) % CO2_EVOLUTION_HISTORY_SIZE];
+    const CO2SampleFile r = {(uint32_t)(now - s.millisStamp), s.pressure, s.gasMols,
+                             (uint8_t)(s.externalStep ? 1 : 0)};
+    ok = f.write((const uint8_t *)&r, sizeof(r)) == sizeof(r);
+  }
+  for (uint16_t i = 0; ok && i < henryCount; ++i) {
+    const HenrySample &s = henryAt(i);
+    const HenrySampleFile r = {(uint32_t)(now - s.millisStamp), s.henryMols, s.pressure};
+    ok = f.write((const uint8_t *)&r, sizeof(r)) == sizeof(r);
+  }
+  f.close();
+  if (!ok) {
+    LittleFS.remove(CO2_BUFFER_TMP);
+    return;
+  }
+  LittleFS.remove(CO2_BUFFER_FILE);
+  LittleFS.rename(CO2_BUFFER_TMP, CO2_BUFFER_FILE);
+  co2BufferLastSaveMillis = now;
+}
+
+// The saved buffers no longer describe the CO2 accounting (counters edited,
+// new batch, back from Conditioning).
+static void invalidateCO2BufferFile() {
+  if (co2BufferRestorePending) return; // boot: the file is still to be read
+  LittleFS.remove(CO2_BUFFER_FILE);
+}
+
+// Least-squares slope (mol/ms) of the gas over the last samples.
+static double co2BufferTailSlope() {
+  const uint16_t n = co2EvolutionCount < CO2_BUFFER_STITCH_SAMPLES ? co2EvolutionCount : CO2_BUFFER_STITCH_SAMPLES;
+  if (n < 2) return 0.0;
+  const uint16_t from = co2EvolutionCount - n;
+  const unsigned long t0 = co2EvolutionHistory[from].millisStamp;
+  double sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (uint16_t i = from; i < co2EvolutionCount; ++i) {
+    const double x = double(co2EvolutionHistory[i].millisStamp - t0);
+    const double y = co2EvolutionHistory[i].gasMols;
+    sx += x; sy += y; sxx += x * x; sxy += x * y;
+  }
+  const double d = n * sxx - sx * sx;
+  return d > 0.0 ? (n * sxy - sx * sy) / d : 0.0;
+}
+
+static void restoreCO2Buffers() {
+  co2BufferRestorePending = false;
+  File f = LittleFS.open(CO2_BUFFER_FILE, "r");
+  if (!f) {
+    strcpy(co2BufferStatus, "not restored (no file)");
+    return;
+  }
+  CO2BufferHeader h;
+  const unsigned long epoch = NTPEpoch();
+  const char *reject = nullptr;
+  if (f.read((uint8_t *)&h, sizeof(h)) != sizeof(h)) reject = "invalid file";
+  else if (h.magic == 0) reject = "placeholder"; // data/co2buffers.bin after a filesystem upload
+  else if (h.magic != CO2_BUFFER_MAGIC) reject = "invalid file";
+  else if (h.co2Count > CO2_EVOLUTION_HISTORY_SIZE || h.henryCount > HENRY_MEAN_SAMPLES ||
+           f.size() != sizeof(h) + h.co2Count * sizeof(CO2SampleFile) + h.henryCount * sizeof(HenrySampleFile))
+    reject = "invalid file";
+  else if (h.batchNumber != BatchData.batchNumber || CountersData.totalReliefCount < h.reliefCount)
+    reject = "other batch";
+  else if (h.mode != SetPointData.mode || SetPointData.mode != MODE_FERMENTING) reject = "mode changed";
+  else if (epoch < h.savedEpoch || epoch - h.savedEpoch > CO2_BUFFER_MAX_GAP_S) reject = "too old";
+  if (reject) {
+    f.close();
+    snprintf(co2BufferStatus, sizeof(co2BufferStatus), "not restored (%s)", reject);
+    return;
+  }
+  const unsigned long now = millis();
+  const unsigned long gapMs = (epoch - h.savedEpoch) * 1000UL;
+  bool ok = true;
+  for (uint16_t i = 0; ok && i < h.co2Count; ++i) {
+    CO2SampleFile r;
+    ok = f.read((uint8_t *)&r, sizeof(r)) == sizeof(r);
+    co2EvolutionHistory[i] = {now - (r.ageMs + gapMs), r.pressure, r.gasMols, r.externalStep != 0};
+  }
+  for (uint16_t i = 0; ok && i < h.henryCount; ++i) {
+    HenrySampleFile r;
+    ok = f.read((uint8_t *)&r, sizeof(r)) == sizeof(r);
+    henryBuffer[i] = {now - (r.ageMs + gapMs), r.henryMols, r.pressure};
+  }
+  f.close();
+  if (!ok) {
+    resetBeerCO2Evolution();
+    strcpy(co2BufferStatus, "not restored (read error)");
+    return;
+  }
+  co2EvolutionStart = 0;
+  co2EvolutionCount = h.co2Count;
+  henryStart = 0;
+  henryCount = h.henryCount;
+  updateHenryMeans(); // the dissolved CO2 continues the value before the boot
+
+  // Stitch: the gas series continues at its last rate up to now.
+  if (co2EvolutionCount > 0) {
+    const CO2EvolutionSample &last = co2EvolutionHistory[co2EvolutionCount - 1];
+    const double gasShift = gasPhaseCO2Mols() -
+        (last.gasMols + co2BufferTailSlope() * double(now - last.millisStamp));
+    for (uint16_t i = 0; i < co2EvolutionCount; ++i) co2EvolutionHistory[i].gasMols += gasShift;
+    Serial.printf("[CO2 BUFFERS] restored %u+%u samples, gap %lu s, gas shift %+.3f mol\n",
+                  (unsigned)co2EvolutionCount, (unsigned)henryCount, gapMs / 1000UL, gasShift);
+  }
+  co2EvolutionLastReliefCount = CountersData.totalReliefCount;
+  snprintf(co2BufferStatus, sizeof(co2BufferStatus), "restored (gap %lu s, %u+%u samples)",
+           gapMs / 1000UL, (unsigned)co2EvolutionCount, (unsigned)henryCount);
+}
+
+// Called from pressureControl() after the counters restore.
+static void handleCO2BufferRestore() {
+  if (!co2BufferRestorePending) return;
+  if (NTPEpoch() != 0) restoreCO2Buffers();
+  else if (millis() > CO2_BUFFER_RESTORE_WAIT_MS) {
+    co2BufferRestorePending = false;
+    strcpy(co2BufferStatus, "not restored (no NTP)");
+  }
+}
+
 static void recomputeBeerCO2EvolutionFromCurrentState() {
   const unsigned long now = millis();
-  if (now < 120000UL) {
+  if (now < 120000UL || co2BufferRestorePending) {
     return;
   }
 
-  const double totalMols = CountersData.totalMolsEjected
-      + CountersData.CO2InSolution + double(headSpaceCO2Mols) + expansionTankInventoryMoles();
-  if (!isfinite(beerVolume) || beerVolume <= 0.0f || !isfinite(totalMols)) {
+  // gCO2/L/d is the gas leaving the beer: ejected + headspace + expansion
+  // tank (docs/gco2-rate.md). The dissolved CO2 is not in the rate.
+  const double gasMols = gasPhaseCO2Mols();
+  if (!isfinite(beerVolume) || beerVolume <= 0.0f || !isfinite(gasMols)) {
     beerCO2EvolutionGramsPerLiterPerDay = 0.0f;
     return;
   }
@@ -1553,7 +1503,6 @@ static void recomputeBeerCO2EvolutionFromCurrentState() {
     --co2EvolutionCount;
   }
 
-  const double gasMols = gasPhaseCO2Mols();
   bool externalStep = false;
   if (co2EvolutionCount > 0 && CountersData.totalReliefCount == co2EvolutionLastReliefCount) {
     const CO2EvolutionSample &previous =
@@ -1565,9 +1514,11 @@ static void recomputeBeerCO2EvolutionFromCurrentState() {
   co2EvolutionLastReliefCount = CountersData.totalReliefCount;
 
   const uint16_t index = (co2EvolutionStart + co2EvolutionCount) % CO2_EVOLUTION_HISTORY_SIZE;
-  co2EvolutionHistory[index] = {now, totalMols, ControlData.pressure, gasMols, externalStep};
+  co2EvolutionHistory[index] = {now, ControlData.pressure, gasMols, externalStep};
   ++co2EvolutionCount;
-  addSupersatSample(now, gasMols, externalStep);
+  addHenrySample(now);
+  if (co2BufferLastSaveMillis == 0) co2BufferLastSaveMillis = now;
+  else if (now - co2BufferLastSaveMillis >= CO2_BUFFER_SAVE_MS) saveCO2Buffers();
 
   updateCO2DissolvedStateFromGasRate(now, gasPhaseCO2Rate(now));
 
@@ -1584,8 +1535,8 @@ static void recomputeBeerCO2EvolutionFromCurrentState() {
   for (uint16_t i = 0; i < avgWindow; ++i) {
     const CO2EvolutionSample &first = co2EvolutionHistory[(co2EvolutionStart + i) % CO2_EVOLUTION_HISTORY_SIZE];
     const CO2EvolutionSample &last = co2EvolutionHistory[(co2EvolutionStart + co2EvolutionCount - avgWindow + i) % CO2_EVOLUTION_HISTORY_SIZE];
-    firstMols += first.totalMols;
-    lastMols += last.totalMols;
+    firstMols += first.gasMols;
+    lastMols += last.gasMols;
     // Relative unsigned timestamps preserve elapsed time across millis() rollover.
     firstTime += first.millisStamp - firstMillis;
     lastTime += last.millisStamp - firstMillis;
@@ -1632,14 +1583,33 @@ float getReportedCO2EvolutionGramsPerLiterPerDay() {
 }
 
 const char *getCO2EvolutionSource() {
+  if (co2RateInTransition()) return "transition";
   return co2RateHeldApplies() ? "held" : "calculated";
 }
 
 // For the automatic rules: only a calculated positive rate over a window of
 // at least CO2_RULE_MIN_SAMPLES (30 min); shorter windows cover few relief
 // cycles (batch 160: 7.19 after 4 min with 8.8 real fired a "< 8" rule).
+// Pressure or temperature changing, or settled for less than
+// CO2_TRANSITION_SETTLE_S: the gas leaving the beer differs from the
+// production (the beer absorbs after a rise or cooling, releases after a fall
+// or warming). Rules do not use gCO2/L/d then and Brewfather gets no rate.
+// Without NTP the settling cannot be timed: transition. docs/gco2-rate.md.
+static constexpr uint32_t CO2_TRANSITION_SETTLE_S = 2UL * 3600UL;
+bool co2RateInTransition() {
+  if (SetPointData.mode != MODE_FERMENTING) return false;
+  const unsigned long now = NTPEpoch();
+  if (now == 0) return true;
+  const bool tempSettled = CountersData.tempState == TEMP_STATE_STABLE && CountersData.tempStableSince != 0 &&
+      now >= CountersData.tempStableSince && now - CountersData.tempStableSince >= CO2_TRANSITION_SETTLE_S;
+  const bool pressSettled = SetPointData.setPointPressure <= 0.0f ||
+      (CountersData.pressState == TEMP_STATE_STABLE && CountersData.pressStableSince != 0 &&
+       now >= CountersData.pressStableSince && now - CountersData.pressStableSince >= CO2_TRANSITION_SETTLE_S);
+  return !(tempSettled && pressSettled);
+}
+
 float getRuleCO2EvolutionGramsPerLiterPerDay() {
-  if (co2EvolutionCount < CO2_RULE_MIN_SAMPLES) return NAN;
+  if (co2EvolutionCount < CO2_RULE_MIN_SAMPLES || co2RateInTransition()) return NAN;
   return (isfinite(beerCO2EvolutionGramsPerLiterPerDay) && beerCO2EvolutionGramsPerLiterPerDay > 0.0f)
       ? beerCO2EvolutionGramsPerLiterPerDay : NAN;
 }
@@ -1858,6 +1828,7 @@ static void restoreDerivedStateFromCounters() {
 
 void requestDerivedStateRestoreFromCounters() {
   resetBeerCO2Evolution();
+  invalidateCO2BufferFile(); // at boot the file is kept for the restore
   restartCO2ProducedBaseline();
   derivedStateRestorePending = true;
 }
@@ -3864,6 +3835,7 @@ void pressureControl() {
     restoreDerivedStateFromCounters();
     derivedStateRestorePending = false;
   }
+  handleCO2BufferRestore();
 
   if (!processReliefCycle()) {
     static unsigned long lastPressureCheckMillis = 0;
@@ -3976,21 +3948,6 @@ char *getPressureControlStatus(char *st) {
              criteriaElapsedMs / 60000.0f, co2StateHoldMs / 60000.0f,
              co2CalculationPressure);
     strnncat(st, tmp, PRESSURE_STATUS_SIZE);
-    snprintf(tmp, sizeof(tmp),
-             "Supersaturation: %.3f mol; gas flux %.2f g/L/d; tau_s %.2f h out / %.2f h in<br>",
-             CountersData.co2Supersat,
-             (beerVolume > 0.0f) ? supersatFlux * CO2MOLAR_MASS / beerVolume : NAN,
-             FMTData.supersatTauDesorbHours, FMTData.supersatTauAbsorbHours);
-    strnncat(st, tmp, PRESSURE_STATUS_SIZE);
-    {
-      char when[20] = "never";
-      if (supersatLastEstimateAt) formatLocalEpochISO(supersatLastEstimateAt, when, sizeof(when));
-      snprintf(tmp, sizeof(tmp),
-               "Last tau_s estimate (%s): out %.2f &plusmn; %.2f h, in %.2f &plusmn; %.2f h, rate %.2f g/L/d<br>",
-               when, supersatLastEstimate.tauDes, supersatLastEstimate.tauDesSe,
-               supersatLastEstimate.tauAbs, supersatLastEstimate.tauAbsSe, supersatLastEstimate.rate);
-      strnncat(st, tmp, PRESSURE_STATUS_SIZE);
-    }
 
     strnncat(st, "-------------------------------------------------------------------------------------------<br>", PRESSURE_STATUS_SIZE);
     snprintf(tmp, sizeof(tmp),
@@ -4021,6 +3978,8 @@ char *getPressureControlStatus(char *st) {
     snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;gCO2/L/d: %.2f (%s; %u samples)<br>",
              getBeerCO2EvolutionGramsPerLiterPerDay(), getCO2EvolutionSource(),
              (unsigned)co2EvolutionCount);
+    strnncat(st, tmp, PRESSURE_STATUS_SIZE);
+    snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;CO2 buffers at boot: %s<br>", co2BufferStatus);
     strnncat(st, tmp, PRESSURE_STATUS_SIZE);
     {
       // What currently holds the next expansion back (gas flow mode).

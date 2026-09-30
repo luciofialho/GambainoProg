@@ -1,28 +1,36 @@
 # Taxa de CO2 (gCO2/L/d)
 
-Taxa líquida de produção de CO2 por litro de cerveja por dia, calculada a partir do balanço de CO2 do fermentador. Implementação em `src/PressureControl.cpp` (`recomputeBeerCO2EvolutionFromCurrentState()` e funções vizinhas).
+**Definição: gás que sai da cerveja** por litro e por dia. Implementação em `src/PressureControl.cpp` (`recomputeBeerCO2EvolutionFromCurrentState()` e funções vizinhas).
 
-## 1. CO2 total
+## 1. Fase gasosa
 
-A cada amostra, o CO2 total da fermentação (mol) é:
+A cada amostra:
 
 ```
-total = totalMolsEjected + CO2InSolution + headSpaceCO2Mols + expansionTankInventoryMoles()
+gás = totalMolsEjected + headSpaceCO2Mols + expansionTankInventoryMoles()
 ```
 
 | Parcela | Origem |
 |---|---|
 | `CountersData.totalMolsEjected` | CO2 ventilado pelo tanque de expansão (reliefs), com a correção de massa líquida |
-| `CountersData.CO2InSolution` | CO2 dissolvido na cerveja (estados em docs/dissolved-co2.md) |
 | `headSpaceCO2Mols` | P·Vh/(R·T) − P_início·Vh/(R·T_início), com pressão manométrica e o headspace aplicado; mínimo 0 |
 | `expansionTankInventoryMoles()` | CO2 que ainda está no tanque de expansão, no ciclo atual |
+
+O CO2 dissolvido **não** entra na taxa: ele é modelado, não medido, e numa transição de pressão ou temperatura o modelo erra por várias vezes (docs/dissolved-co2.md, seção 2a). O SG continua usando o balanço completo, com o dissolvido (seção 6).
+
+**Fora das transições** (pressão e temperatura estáveis), o gás que sai é a produção: a cerveja está em regime (lote 160, 30/09: 8,5–9,1 g/L/d nos ciclos da manhã). **Numa transição** ele difere da produção em sentido conhecido: numa subida de pressão ou num resfriamento a cerveja absorve e o valor fica abaixo (piso); numa descida de pressão ou num aquecimento ela libera e o valor fica acima (teto). Os valores medidos variam suavemente: 5,2 → 2,7 g/L/d numa subida de 0,8 para 1,5 bar; −0,25 a +0,18 no cold crash do 159.
+
+**Transição** (`co2RateInTransition()`): em Fermenting, pressão ou temperatura fora de `STABLE` ou estáveis há menos de **2 h** (a cerveja ainda absorve ou libera com constante de ~2 h); sem NTP, é transição. Com setpoint de pressão 0, só a temperatura conta. Durante a transição:
+- regras "gCO2 < x": não avaliam (docs/automatic-actions.md);
+- Brewfather: sem o campo `bpm` (o gás que sai desenharia uma falsa desaceleração);
+- log Cold: `gCO2Source` = `transition`; a página inicial e o `/getstatus` mostram o valor com a marca de transição.
 
 ## 2. Amostragem
 
 - `processPressure()` roda a cada ~1 s (pelo `pressureControl()`) e ao fim de cada relief. Em cada chamada, uma amostra `{millis, total, pressão}` só entra se já tiverem passado **60 s** desde a anterior (`CO2_EVOLUTION_SAMPLE_MS`). Na prática, 1 amostra por minuto.
 - Nenhuma amostra nos **2 primeiros minutos** depois do boot.
 - Buffer circular de **71 amostras** (`CO2_EVOLUTION_HISTORY_SIZE`), cerca de 70 min. Cheio, a mais antiga é substituída.
-- Cada amostra também guarda a fase gasosa (ejetado + headspace + tanque de expansão) e um indicador de degrau externo, usados pela taxa da fase gasosa que decide o estado do CO2 dissolvido (docs/dissolved-co2.md; coluna Cold `GasCO2Rate`).
+- Cada amostra guarda a fase gasosa e um indicador de degrau externo. A mesma série dá a taxa exibida e a taxa que decide o estado do CO2 dissolvido (`GasCO2Rate`, vazia sem decisão: docs/dissolved-co2.md).
 
 ## 3. Cálculo da taxa
 
@@ -36,7 +44,6 @@ taxa [g/L/d] = ΔCO2 [mol] × 44,01 [g/mol] × 86 400 000 [ms/d] / (volume de ce
 
 - A taxa é **com sinal** (`beerCO2EvolutionGramsPerLiterPerDay`). A exibição corta valores negativos em 0.
 - Volume de cerveja inválido, CO2 total não finito ou Δt ≤ 0: taxa = 0.
-- **Rebase:** quando o CO2 dissolvido entra no equilíbrio (vindo do half-life ou do armado), o salto do modelo é somado a todas as amostras do buffer (`rebaseCO2Evolution()`), para não aparecer como produção. O mesmo vale para o CO2 que sai com a cerveja num dump durante o half-life.
 - Mudança do headspace aplicado (média de 24 h, dump) muda `headSpaceCO2Mols` e aparece na taxa como um degrau pequeno (≈ P·ΔVh/RT; 1 L a 0,8 bar ≈ 0,03 mol).
 
 Janela em função do tempo desde o boot:
@@ -50,7 +57,17 @@ Janela em função do tempo desde o boot:
 
 ## 4. Depois de um reboot
 
-O buffer fica só na RAM. Depois de um reboot, a taxa calculada fica em 0 por ~7 min e ruidosa até a janela crescer.
+**Buffers restaurados** (`saveCO2Buffers()` / `restoreCO2Buffers()` em `PressureControl.cpp`): o buffer do gCO2 (71 amostras da fase gasosa) e as 30 amostras de Henry do dissolvido (docs/dissolved-co2.md) são gravados no LittleFS (`/co2buffers.bin`, ~1,6 KB, gravação atômica por arquivo temporário) a cada 10 min e no início de um OTA, com a hora NTP e a idade de cada amostra. No boot a amostragem espera o NTP (até 5 min) e o arquivo é restaurado se:
+- tiver no máximo **10 min** (`CO2_BUFFER_MAX_GAP_S`): OTA (~1 min), quedas rápidas de energia e travamentos ficam bem abaixo; um intervalo maior é uma queda de energia sem controle de temperatura e pressão, e a janela recomeça;
+- for do mesmo lote, com o contador de reliefs não menor que o gravado (contadores não zerados), e o modo for Fermenting (gravado e atual).
+
+**Costura:** a série do gás restaurada é deslocada para continuar, no ritmo das suas últimas 10 amostras, até a fase gasosa atual. O CO2 ejetado perdido no reboot (não gravado nos contadores, até ~0,26 mol) não entra na taxa. No bench, um boot de 60 s com 0,26 mol perdidos deixa a tela em 8,59–8,60 g/L/d (produção 8,6). As amostras de Henry também são restauradas, então o dissolvido continua igual depois do boot.
+
+**Reserva no filesystem:** `data/co2buffers.bin` (zeros, do tamanho máximo do arquivo) entra na imagem do filesystem e reserva o espaço: se `data/` crescer demais, o build da imagem falha no PC. Depois de um upload do filesystem a placa o encontra, rejeita como `placeholder` e o substitui na primeira gravação. `python tests/check_co2_buffer_file.py` confere o tamanho contra as estruturas do firmware (`--write` recria o arquivo).
+
+O arquivo é apagado quando o balanço é reiniciado de propósito: contadores editados, lote novo, volta do Conditioning. O `/getstatus` mostra `CO2 buffers at boot: restored (gap N s, 71+211 samples)` ou o motivo de não ter restaurado.
+
+Sem arquivo válido, a janela recomeça: a taxa calculada fica em 0 por ~7 min e ruidosa até a janela crescer, e vale o valor retido abaixo.
 
 **Valor retido:** a cada amostra com janela madura (≥ 15 amostras, `CO2_EVOLUTION_MATURE_SAMPLES`) e NTP válido, a taxa e o horário NTP vão para `CountersData.co2RateHeld` / `co2RateHeldAt` (chaves `co2RateHeld` / `co2RateAt` em `pvt_counters`). Eles são gravados junto com os outros contadores (`writeCountersDataToNIV()`: a cada 5 reliefs, a cada 15 min de relé e no início de um OTA), sem gravações extras.
 
@@ -60,7 +77,7 @@ Depois do boot, o valor retido é **informado** no lugar do calculado enquanto:
 
 Sem NTP válido não dá para saber a idade, e o valor retido não é usado. Um lote novo apaga o valor retido.
 
-**Por que não persistir o buffer:** os contadores de CO2 (`totalMolsEjected`, `CO2InSolution`) só são gravados periodicamente. Num reboot inesperado perde-se o CO2 ejetado desde a última gravação (até ~4 reliefs, ~0,26 mol com tanque de 2 L a ~0,8 bar), que é da ordem da produção de uma janela inteira. Um buffer restaurado misturaria amostras de antes (total antigo) e de depois (total restaurado, sem esse CO2) e daria uma taxa subestimada, perto de zero, por até 70 min, justamente a direção que dispara "gCO2 < x". Com amostras só de depois do boot, uma defasagem constante no total não afeta a inclinação.
+**Por que a costura:** os contadores de CO2 (`totalMolsEjected`, `CO2InSolution`) só são gravados periodicamente. Num reboot inesperado perde-se o CO2 ejetado desde a última gravação (até ~4 reliefs, ~0,26 mol), da ordem da produção de uma janela inteira. Um buffer restaurado sem ajuste misturaria amostras de antes (total antigo) e de depois (total sem esse CO2) e daria uma taxa subestimada por até 70 min, justamente a direção que dispara "gCO2 < x". A costura elimina esse degrau.
 
 ## 5. Quem usa o quê
 
@@ -68,7 +85,7 @@ Sem NTP válido não dá para saber a idade, e o valor retido não é usado. Um 
 |---|---|
 | Página inicial, `/getstatus`, Brewfather (`bpm`, só se > 0) | informado (retido ou calculado), cortado em 0 — `getBeerCO2EvolutionGramsPerLiterPerDay()` |
 | Colunas `gCO2/L/d` dos logs Cold e Relief | informado, com sinal — `getReportedCO2EvolutionGramsPerLiterPerDay()`; origem na coluna Cold `gCO2Source` (`calculated` / `held`) |
-| Gatilho "gCO2/L/d < x" das ações automáticas | **só o calculado**, > 0 e com janela ≥ 30 min (`getRuleCO2EvolutionGramsPerLiterPerDay()`), abaixo de x por 20 min seguidos — o valor retido nunca dispara regra (docs/automatic-actions.md) |
+| Gatilho "gCO2/L/d < x" das ações automáticas | **só o calculado**, > 0, com janela ≥ 30 min e fora de transição (`getRuleCO2EvolutionGramsPerLiterPerDay()`), abaixo de x por 20 min seguidos — o valor retido nunca dispara regra (docs/automatic-actions.md) |
 
 O `/getstatus` mostra a origem e o número de amostras: `gCO2/L/d: 3.12 (held; 8 samples)`.
 

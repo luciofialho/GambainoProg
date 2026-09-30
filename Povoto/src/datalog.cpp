@@ -81,7 +81,9 @@ static bool buildBrewfatherPayload(char *out, size_t outSize) {
   if (isnan(pressure)) snprintf(pressureField, sizeof(pressureField), "null");
   else snprintf(pressureField, sizeof(pressureField), "%.3f", pressure);
 
-  if (isfinite(bpm) && bpm > 0.0f)
+  // No rate during a pressure/temperature transition: the gas leaving the beer
+  // would draw a false slowdown (docs/gco2-rate.md).
+  if (isfinite(bpm) && bpm > 0.0f && !co2RateInTransition())
     snprintf(bpmField, sizeof(bpmField), ",\"bpm\":%.2f", bpm);
 
   int written = snprintf(
@@ -275,18 +277,8 @@ void doDataLog() {
     GLogAddData("DumpStartMillis");
     GLogAddData("DumpEndMillis");
     GLogAddData("DumpDeltaH");
-    GLogAddData("gCO2Source"); // "calculated" or "held" (after a reboot)
+    GLogAddData("gCO2Source"); // "calculated", "held" (after a reboot) or "transition"
     GLogAddData("GasCO2Rate"); // gas-phase g/L/d of the dissolved-CO2 state (empty = no decision)
-    // Supersaturation model and tau_s estimator (docs/dissolved-co2.md).
-    GLogAddData("GasFlux");
-    GLogAddData("Supersat");
-    GLogAddData("TauDesEst");
-    GLogAddData("TauDesSE");
-    GLogAddData("TauAbsEst");
-    GLogAddData("TauAbsSE");
-    GLogAddData("TauEstRate");
-    GLogAddData("TauEstFRangeDes");
-    GLogAddData("TauEstFRangeAbs");
 
     GLogSend();
     headerWritten = true;
@@ -367,15 +359,6 @@ void doDataLog() {
     }
     GLogAddData(getCO2EvolutionSource());
     GLogAddData(co2.gasRate, 3);
-    GLogAddData(co2.gasFlux, 3);
-    GLogAddData(co2.supersatMols, 3);
-    GLogAddData(co2.tauDesEst, 3);
-    GLogAddData(co2.tauDesSe, 3);
-    GLogAddData(co2.tauAbsEst, 3);
-    GLogAddData(co2.tauAbsSe, 3);
-    GLogAddData(co2.tauEstRate, 3);
-    GLogAddData(co2.tauEstRangeDes, 3);
-    GLogAddData(co2.tauEstRangeAbs, 3);
     GLogSend();
     if (SetPointData.mode == MODE_CONDITIONING) conditioningFinalColdPending = false;
   }
