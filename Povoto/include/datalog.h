@@ -82,6 +82,12 @@ struct ReliefLogData {
   float polytropicFitSlopeBarPerMinute;
   float polytropicEstimatedExponent;
   float polytropicFitRMSEBar;
+  // [DAILY-HS] headSpaceVolume is the applied value; these explain where it came from.
+  float headSpaceMeasured;   // this relief's instantaneous value (NAN = invalid)
+  float headSpaceEMA;        // headspaceFiltered after the update
+  float headSpaceDaily;      // 24-hour average (NAN = no hours)
+  uint8_t dailyHours;
+  const char *dailyState;    // "valid", "hold" or "ema"
 };
 
 void doDataLog();

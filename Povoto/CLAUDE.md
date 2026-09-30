@@ -5,19 +5,21 @@ Firmware ESP32 que monitora e controla fermentação de cerveja (pressão e temp
 ## Arquivos principais
 - `PressureControl.cpp`: leitura de pressão (INA226, shunt 3 Ω, sensor 4–20 mA 0–2 bar YD6080), ciclo de relief/expansão, headspace, CO2 dissolvido e SG.
 - `datalog.cpp`: logs "Cold" (periódico, 30 s), "Relief" (um por relief) e "Recovery" (diagnóstico, marcado com [DIAG]).
-- `AutoSetpoints.cpp` (+ `PovotoMail.cpp`): ações automáticas (regras, estabilidade de temperatura/pressão, e-mail). Documentação: `docs/automatic-actions.md`.
+- `PovotoTasks.cpp`: janelas de tarefa (Dump, Gas, Liquid, Dry Hopping, Dynamic Hopping).
+- `AutoSetpoints.cpp` (+ `PovotoMail.cpp`): ações automáticas. Documentação: `docs/automatic-actions.md`.
+- Persistência: `docs/NVS-storage.md`; teste estrutural: `python tests/check_storage_schema.py`.
 
 ## Regras de trabalho
-- Há fermentação em andamento com o equipamento em produção. Nunca gravar na placa (upload/OTA) sem confirmação explícita.
+- Pode haver fermentação em andamento com o equipamento em produção. Nunca gravar na placa (upload/OTA) sem confirmação explícita.
 - Mudanças de diagnóstico não podem alterar controle, headspace, CO2 nem SG.
 - Preservar o final de linha CRLF dos arquivos.
-- O usuário confere os números: verificar antes de afirmar.
+- O usuário confere os números: verificar antes de afirmar. Prefere versões completas (sem etapas intermediárias) e soluções com base física ou em análise de dados.
 
-## Estado atual (set/2026, fermentação 160)
-- O headspace calculado varia com a temperatura ambiente: −0,16 L/°C nas tardes quentes, com correlação −0,69. A causa está na recuperação de pressão entre ~0,36 e 5 s depois de fechar a válvula (expoente politrópico efetivo); não é offset do sensor.
-- O patch [DIAG] grava a curva de recuperação (15 pontos, ~0,4–60 s) e um headspace "sombra" com n = 1,29 + 0,0078·max(0, Tamb − 21), somente em log.
-- Quando o device remoto para de enviar, a T ambiente fica travada em 25,0. Corrigir e validar em ENV_TEMP_VALID().
-- Pendente para depois desta fermentação: a troca de modo do CO2 dissolvido (half-life → immediate) gera um salto de −1,4 ponto de SG no início (ar no headspace + Henry com pressão total).
+## Estado atual (29/09/2026, fermentação 160)
+- O headspace medido a cada relief oscila com o ciclo diário da T ambiente (histerese: cai quando ela sobe, sobe quando ela desce; ±1 L). A média de 24 h cancela isso (30,2–30,6 L).
+- Em implementação: `docs/spec_headspace_24h.md` (média de 24 h aplicada + rebase no dump + limpeza em Liquid/Dry Hopping).
+- O expoente politrópico fixo 1,29 bate com a recuperação medida na média diária (τ ≈ 30 s). Não mudar.
+- Hipóteses descartadas: offset do sensor com a temperatura; expoente dependente do nível da Tamb; calor do compressor de refrigeração no ET.
 - INA226: 3,47 mA / 16,73 mA onde se esperava 4 / 20 mA. Suspeita de shunt efetivo de ~2,49 Ω; é hardware, não o código.
 
-Backlog e análise completos: `docs/povoto-backlog.md` e `docs/analise-160-headspace-vs-Tenv.md` (copiar do projeto Povoto no claude.ai).
+Backlog e análise completos: `docs/povoto-backlog.md` e `docs/analise-160-headspace-vs-Tenv.md` (cópias do projeto Povoto no claude.ai).

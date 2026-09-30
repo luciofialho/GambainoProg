@@ -121,6 +121,22 @@ struct ControlData_t {
 
 extern ControlData_t ControlData;
 
+// [DAILY-HS] 24-hour headspace average: one bin per hour (hourId = local NTP
+// epoch / 3600), each hour weighted equally.
+constexpr int DAILY_HS_BINS = 24;
+constexpr int DAILY_HS_MIN_HOURS = 18;
+
+struct DailyHeadspaceBin_t {
+  uint32_t hourId;
+  uint16_t count;
+  float sum;     // sum of the headspace measurements of that hour (L)
+} __attribute__((packed));
+
+struct DailyHeadspace_t {
+  DailyHeadspaceBin_t bins[DAILY_HS_BINS];
+  float heldValue; // last valid daily value (NAN = none)
+} __attribute__((packed));
+
 // Counters data
 struct CountersData_t {
   uint32_t totalReliefCount;
@@ -144,6 +160,8 @@ struct CountersData_t {
   // relief cycle of the final target (see PressureControl.cpp).
   uint8_t pressState;
   uint32_t pressStableSince;
+  // [DAILY-HS] Hourly bins and held value of the 24-hour headspace average.
+  DailyHeadspace_t dailyHs;
 } __attribute__((packed));
 
 #define TEMP_STATE_STABLE          0
@@ -175,6 +193,8 @@ bool readCountersDataFromEEPROM();
 bool writeCountersDataToNIV();
 bool writeTempStabilityToNIV();
 bool writePressureStabilityToNIV();
+bool writeDailyHeadspaceToNIV(); // [DAILY-HS]
+void resetDailyHeadspace();      // [DAILY-HS] all bins empty, no held value
 void maybePersistCountersData();
 void updateCountersTimes(bool chillOn, bool heatOn);
 

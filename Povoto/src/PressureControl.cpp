@@ -1001,20 +1001,153 @@ static void recomputeHeadspaceCO2MolsFromCurrentState() {
   }
 }
 
-static bool applyFilteredHeadspace(float headspace) {
+// [DAILY-HS] Applies a headspace value without touching the EMA state.
+static bool applyHeadspaceValue(float headspace) {
   if (!isfinite(headspace) || headspace <= 0.0f ||
       !isfinite(FMTData.FMTVolume) || headspace >= FMTData.FMTVolume) {
     return false;
   }
 
-  headspaceFiltered = headspace;
-  CountersData.headSpaceVolume = headspaceFiltered;
-  beerVolume = FMTData.FMTVolume - headspaceFiltered;
+  CountersData.headSpaceVolume = headspace;
+  beerVolume = FMTData.FMTVolume - headspace;
   if (isfinite(FMTData.FMTReliefVolume) && FMTData.FMTReliefVolume > 0.0f) {
-    pressureDropFactor = headspaceFiltered /
-      (headspaceFiltered + FMTData.FMTReliefVolume);
+    pressureDropFactor = headspace /
+      (headspace + FMTData.FMTReliefVolume);
   }
   return true;
+}
+
+static bool applyFilteredHeadspace(float headspace) {
+  if (!isfinite(headspace) || headspace <= 0.0f ||
+      !isfinite(FMTData.FMTVolume) || headspace >= FMTData.FMTVolume) {
+    return false;
+  }
+  headspaceFiltered = headspace;
+  return applyHeadspaceValue(headspace);
+}
+
+// ===== [DAILY-HS] 24-hour headspace average =====
+// The per-relief headspace follows the daily cycle of the room temperature
+// (hysteresis), which cancels over 24 h. Each hour weighs the same (mean of
+// the hourly means). Bins live in CountersData.dailyHs.
+enum DailyHsState : uint8_t { DAILY_HS_EMA, DAILY_HS_HOLD, DAILY_HS_VALID };
+static DailyHsState dailyHsState = DAILY_HS_EMA;
+static float dailyHsValue = NAN;  // mean of the hourly means (NAN = no hours)
+static uint8_t dailyHsHours = 0;  // hours of the last 24 with samples
+
+static const char *dailyHsStateLabel() {
+  switch (dailyHsState) {
+    case DAILY_HS_VALID: return "valid";
+    case DAILY_HS_HOLD:  return "hold";
+    default:             return "ema";
+  }
+}
+
+// Recomputes from the bins. Without a valid NTP time the last result is kept.
+static void dailyHsEvaluate() {
+  const unsigned long epoch = NTPEpoch();
+  if (epoch == 0) return;
+  const uint32_t hourNow = epoch / 3600UL;
+  DailyHeadspace_t &daily = CountersData.dailyHs;
+  double total = 0.0;
+  uint8_t hours = 0;
+  for (int i = 0; i < DAILY_HS_BINS; i++) {
+    const DailyHeadspaceBin_t &bin = daily.bins[i];
+    // Only the last 24 hours; hours ahead of now (clock jump) are ignored.
+    if (bin.count == 0 || bin.hourId > hourNow || bin.hourId + (DAILY_HS_BINS - 1) < hourNow) continue;
+    total += bin.sum / bin.count;
+    hours++;
+  }
+  dailyHsHours = hours;
+  dailyHsValue = hours ? float(total / hours) : NAN;
+  if (hours >= DAILY_HS_MIN_HOURS) {
+    daily.heldValue = dailyHsValue;
+    dailyHsState = DAILY_HS_VALID;
+  } else {
+    dailyHsState = isfinite(daily.heldValue) ? DAILY_HS_HOLD : DAILY_HS_EMA;
+  }
+}
+
+// Without a valid NTP time the sample is not accumulated.
+static void dailyHsAccumulate(float headspace) {
+  const unsigned long epoch = NTPEpoch();
+  if (epoch == 0) return;
+  const uint32_t hourId = epoch / 3600UL;
+  DailyHeadspaceBin_t &bin = CountersData.dailyHs.bins[hourId % DAILY_HS_BINS];
+  const bool newHour = bin.hourId != hourId;
+  if (newHour) {
+    bin.hourId = hourId;
+    bin.count = 0;
+    bin.sum = 0.0f;
+  }
+  if (bin.count < UINT16_MAX) {
+    bin.sum += headspace;
+    bin.count++;
+  }
+  dailyHsEvaluate();
+  if (newHour) writeDailyHeadspaceToNIV(); // once per hour, not per relief
+}
+
+// Applied headspace: the daily average when valid, else the held value,
+// else the EMA. The EMA itself keeps running (fallback and log).
+static bool applySelectedHeadspace(bool *fromDaily = nullptr) {
+  const bool daily = dailyHsState == DAILY_HS_VALID || dailyHsState == DAILY_HS_HOLD;
+  const float value = dailyHsState == DAILY_HS_VALID ? dailyHsValue
+      : dailyHsState == DAILY_HS_HOLD ? CountersData.dailyHs.heldValue
+      : headspaceFiltered;
+  const bool applied = applyHeadspaceValue(value);
+  if (fromDaily) *fromDaily = applied && daily;
+  return applied;
+}
+
+// After boot or a counters reload: the held value covers the time until the
+// bins can be evaluated with a valid NTP time.
+static void dailyHsRestore() {
+  dailyHsValue = NAN;
+  dailyHsHours = 0;
+  dailyHsState = isfinite(CountersData.dailyHs.heldValue) ? DAILY_HS_HOLD : DAILY_HS_EMA;
+  dailyHsEvaluate();
+}
+
+void rebaseDailyHeadspace(float deltaL, const char *reason) {
+  if (!isfinite(deltaL)) return;
+  DailyHeadspace_t &daily = CountersData.dailyHs;
+  const float before = dailyHsState == DAILY_HS_VALID ? dailyHsValue : daily.heldValue;
+  for (int i = 0; i < DAILY_HS_BINS; i++) {
+    if (daily.bins[i].count > 0)
+      daily.bins[i].sum += deltaL * daily.bins[i].count;
+  }
+  if (isfinite(daily.heldValue)) daily.heldValue += deltaL;
+  // Shift the cached result too, in case the time is not valid to re-evaluate.
+  if (isfinite(dailyHsValue)) dailyHsValue += deltaL;
+  dailyHsEvaluate();
+  writeDailyHeadspaceToNIV();
+  const float after = dailyHsState == DAILY_HS_VALID ? dailyHsValue : daily.heldValue;
+  Serial.printf("[DAILY-HS] rebase %s dH=%+.3f L %.3f->%.3f L (%s, %u h)\n",
+                reason, deltaL, before, after, dailyHsStateLabel(), (unsigned)dailyHsHours);
+}
+
+// Empties the bins and the cached result (new batch). Not persisted here.
+void resetDailyHeadspaceTracking() {
+  resetDailyHeadspace();
+  dailyHsValue = NAN;
+  dailyHsHours = 0;
+  dailyHsState = DAILY_HS_EMA;
+}
+
+void clearDailyHeadspace(const char *reason) {
+  const float before = dailyHsState == DAILY_HS_VALID ? dailyHsValue : CountersData.dailyHs.heldValue;
+  resetDailyHeadspaceTracking();
+  // The volume changed by an unknown amount: let the EMA reconverge quickly
+  // (it decays back to 0.05 by itself).
+  headspaceFilterAlpha = 0.5f;
+  writeDailyHeadspaceToNIV();
+  Serial.printf("[DAILY-HS] clear %s %.3f->nan L (ema)\n", reason, before);
+}
+
+DailyHeadspaceLogData getDailyHeadspaceLogData() {
+  dailyHsEvaluate();
+  return {headspaceFiltered, dailyHsValue, dailyHsHours, dailyHsStateLabel()};
 }
 
 void resetHeadspaceFilterTracking() {
@@ -1274,6 +1407,7 @@ float RealPlatoToSG(float realPlato) {
 
 
 static void restoreDerivedStateFromCounters() {
+  dailyHsRestore(); // [DAILY-HS]
   // Restore the dissolved-CO2 mode saved before the reboot.
   co2DissolvedEstimationMode = CountersData.co2DissolvedMode == 1
       ? CO2_DISSOLVED_IMMEDIATE : CO2_DISSOLVED_HALF_LIFE;
@@ -1306,7 +1440,20 @@ void requestDerivedStateRestoreFromCounters() {
   derivedStateRestorePending = true;
 }
 
-void applyDumpWindowHeadspaceRecalc(float headspaceBeforeL, float pressureBeforeBar, float pressureAfterBar) {
+// [DAILY-HS] Last dump, reported once in the next Cold log row.
+static DumpLogData lastDumpLog = {false, NAN, NAN, 0, 0, NAN};
+
+bool takeDumpLogData(DumpLogData &data) {
+  if (!lastDumpLog.pending) return false;
+  data = lastDumpLog;
+  lastDumpLog.pending = false;
+  return true;
+}
+
+void applyDumpWindowHeadspaceRecalc(float headspaceBeforeL, float pressureBeforeBar, float pressureAfterBar,
+                                    unsigned long startMillis, unsigned long endMillis) {
+  // [DAILY-HS] Logged even when the recalculation is not applied (dH = NAN).
+  lastDumpLog = {true, pressureBeforeBar, pressureAfterBar, startMillis, endMillis, NAN};
   // Ideal gas with constant moles/temperature during the dump window:
   // P1_abs * H_before = P2_abs * H_after  =>  H_after = H_before * P1_abs / P2_abs.
   if (headspaceBeforeL <= 0.0f) {
@@ -1328,6 +1475,12 @@ void applyDumpWindowHeadspaceRecalc(float headspaceBeforeL, float pressureBefore
     if (applyFilteredHeadspace(headAfter)) {
       headspaceFilterAlpha = 0.5f;
       lnPressureDropAvg.clear();
+      // [DAILY-HS] Shift the stored hours by the same dH, then apply the
+      // daily/held value (or headAfter, which is now the EMA).
+      const float deltaL = headAfter - headspaceBeforeL;
+      rebaseDailyHeadspace(deltaL, "dump");
+      applySelectedHeadspace();
+      lastDumpLog.deltaH = deltaL;
     }
   }
 
@@ -1342,6 +1495,8 @@ void applyDumpWindowHeadspaceRecalc(float headspaceBeforeL, float pressureBefore
                 CountersData.headSpaceVolume,
                 impliedHeadspaceDeltaL,
                 beerVolume);
+  Serial.printf("[DAILY-HS] dump start=%lu ms end=%lu ms, rebase dH=%.3f L\n",
+                startMillis, endMillis, lastDumpLog.deltaH);
 }
 
 static void markSolenoidToggle() {
@@ -1945,6 +2100,8 @@ void processPressure(bool afterRelief) {
   const unsigned long reliefPressureReachedTargetMillis = pressureReachedTargetMillis;
   float instantPressureDropFactor = NAN;
   bool headspaceUpdated = false;
+  bool headspaceFromDaily = false;        // [DAILY-HS]
+  float headspaceMeasuredForLog = NAN;    // [DAILY-HS]
   bool collectingInitialHeadspaceSamples = false;
   float ejectedMols = 0.0f;
   float ventingElapsedAtLogSeconds = NAN;
@@ -2001,6 +2158,12 @@ void processPressure(bool afterRelief) {
         volumeEstimationFromPressureDrop(instantPressureDropFactor);
       const bool validHeadspaceMeasured = isfinite(headspaceMeasured) &&
         headspaceMeasured > 0.0f && headspaceMeasured < FMTData.FMTVolume;
+      // [DAILY-HS] Every valid measurement enters the 24-hour average,
+      // including reliefs 1-3, except those of the volume determination.
+      if (validHeadspaceMeasured) {
+        headspaceMeasuredForLog = headspaceMeasured;
+        if (!volumeDeterminationActive) dailyHsAccumulate(headspaceMeasured);
+      }
       if (validHeadspaceMeasured && CountersData.totalReliefCount < 3 &&
           !isfinite(headspaceFiltered)) {
         // Keep the three initial factors only for the geometric initialization.
@@ -2010,19 +2173,22 @@ void processPressure(bool afterRelief) {
         if (!isfinite(headspaceFiltered)) {
           if (applyFilteredHeadspace(headspaceMeasured)) {
             headspaceFilterAlpha = 0.05f;
-            headspaceUpdated = true;
+            headspaceUpdated = applySelectedHeadspace(&headspaceFromDaily); // [DAILY-HS]
           }
         } else {
           headspaceFiltered += headspaceFilterAlpha *
             (headspaceMeasured - headspaceFiltered);
           headspaceFilterAlpha = fmaxf(0.05f,
             headspaceFilterAlpha / (1.0f + headspaceFilterAlpha));
-          headspaceUpdated = applyFilteredHeadspace(headspaceFiltered);
+          // [DAILY-HS] The EMA stays in headspaceFiltered; apply the selected value.
+          headspaceUpdated = applySelectedHeadspace(&headspaceFromDaily);
         }
       }
     }
 
-    if (gasFlowCycle && headspaceUpdated) {
+    if (gasFlowCycle && headspaceUpdated && headspaceFromDaily) {
+      gasHeadspaceUpdateStatus = "updated_daily_average"; // [DAILY-HS]
+    } else if (gasFlowCycle && headspaceUpdated) {
       gasHeadspaceUpdateStatus = "updated_adjusted_equilibrium";
     } else if (gasFlowCycle && collectingInitialHeadspaceSamples) {
       gasHeadspaceUpdateStatus = "collecting_initial_samples";
@@ -2261,6 +2427,12 @@ void processPressure(bool afterRelief) {
     reliefLog.polytropicFitSlopeBarPerMinute = polytropicFitSlopeBarPerMinute;
     reliefLog.polytropicEstimatedExponent = polytropicEstimatedExponent;
     reliefLog.polytropicFitRMSEBar = polytropicFitRMSEBar;
+    // [DAILY-HS] headSpaceVolume above is the applied value.
+    reliefLog.headSpaceMeasured = headspaceMeasuredForLog;
+    reliefLog.headSpaceEMA = headspaceFiltered;
+    reliefLog.headSpaceDaily = dailyHsValue;
+    reliefLog.dailyHours = dailyHsHours;
+    reliefLog.dailyState = dailyHsStateLabel();
     doReliefDataLog(reliefLog);
 
     // The third relief was logged using the configured initial volume. Its
@@ -2276,6 +2448,7 @@ void processPressure(bool afterRelief) {
       if (applyFilteredHeadspace(estimatedHeadspace)) {
         headspaceFilterAlpha = 0.05f;
         lnPressureDropAvg.clear();
+        applySelectedHeadspace(); // [DAILY-HS] daily/held value, if any, wins over the EMA
       }
     }
   }
@@ -3410,6 +3583,12 @@ char *getPressureControlStatus(char *st) {
     snprintf(tmp, sizeof(tmp),
              "<br>Volumes:<br>&nbsp;&nbsp;&nbsp;&nbsp;Headspace volume: %.2f L<br>&nbsp;&nbsp;&nbsp;&nbsp;Beer volume: %.2f L<br>&nbsp;&nbsp;&nbsp;&nbsp;Dumped volume: %.2f L<br>&nbsp;&nbsp;&nbsp;&nbsp;Expansion pressure drop factor (%%): %.3f<br>",
              CountersData.headSpaceVolume, beerVolume, CountersData.dumpedVolume, pressureDropFactor * 100);
+    strnncat(st, tmp, PRESSURE_STATUS_SIZE);
+    // [DAILY-HS] Where the applied headspace comes from.
+    snprintf(tmp, sizeof(tmp),
+             "&nbsp;&nbsp;&nbsp;&nbsp;Headspace sources: 24 h average %.3f L (%u h, %s), held %.3f L, EMA %.3f L<br>",
+             dailyHsValue, (unsigned)dailyHsHours, dailyHsStateLabel(),
+             CountersData.dailyHs.heldValue, headspaceFiltered);
     strnncat(st, tmp, PRESSURE_STATUS_SIZE);
 
     snprintf(tmp, sizeof(tmp),

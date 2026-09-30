@@ -96,7 +96,8 @@ CountersData_t CountersData = {
   .tempState = TEMP_STATE_CHANGING_DIRECT,
   .tempStableSince = 0,
   .pressState = TEMP_STATE_CHANGING_DIRECT,
-  .pressStableSince = 0
+  .pressStableSince = 0,
+  .dailyHs = {{}, NAN} // [DAILY-HS] empty bins, no held value
 };
 
 // =============
@@ -399,6 +400,13 @@ bool readCountersDataFromEEPROM() {
     CountersData.pressState = defaultCountersData.pressState;
     CountersData.pressStableSince = defaultCountersData.pressStableSince;
   }
+  // [DAILY-HS] A blob of another size, or with non-finite values, restarts empty.
+  bool dailyHsValid = store.getBytesLength("dailyHs") == sizeof(CountersData.dailyHs) &&
+      store.getBytes("dailyHs", &CountersData.dailyHs, sizeof(CountersData.dailyHs)) ==
+          sizeof(CountersData.dailyHs);
+  for (int i = 0; dailyHsValid && i < DAILY_HS_BINS; i++)
+    dailyHsValid = isfinite(CountersData.dailyHs.bins[i].sum);
+  if (!dailyHsValid) CountersData.dailyHs = defaultCountersData.dailyHs;
   store.end();
   return true;
 }
@@ -425,6 +433,7 @@ bool writeCountersDataToNIV() {
   saved = (store.putUInt("tempStableAt", CountersData.tempStableSince) == sizeof(CountersData.tempStableSince)) && saved;
   saved = (store.putUChar("pressState", CountersData.pressState) == sizeof(CountersData.pressState)) && saved;
   saved = (store.putUInt("pressStableAt", CountersData.pressStableSince) == sizeof(CountersData.pressStableSince)) && saved;
+  saved = (store.putBytes("dailyHs", &CountersData.dailyHs, sizeof(CountersData.dailyHs)) == sizeof(CountersData.dailyHs)) && saved; // [DAILY-HS]
   store.end();
   if (!saved) Serial.println("NVS: CountersData save incomplete");
   return saved;
@@ -455,6 +464,25 @@ bool writePressureStabilityToNIV() {
   store.end();
   if (!saved) Serial.println("NVS: pressure stability save incomplete");
   return saved;
+}
+
+// [DAILY-HS] Only the 24-hour headspace blob: on a new hour, rebase and clear.
+bool writeDailyHeadspaceToNIV() {
+  Preferences store;
+  if (!store.begin("pvt_counters", false)) {
+    Serial.println("NVS: cannot open pvt_counters");
+    return false;
+  }
+  const bool saved = store.putBytes("dailyHs", &CountersData.dailyHs, sizeof(CountersData.dailyHs)) ==
+      sizeof(CountersData.dailyHs);
+  store.end();
+  if (!saved) Serial.println("NVS: daily headspace save incomplete");
+  return saved;
+}
+
+// [DAILY-HS]
+void resetDailyHeadspace() {
+  CountersData.dailyHs = defaultCountersData.dailyHs;
 }
 
 static bool clearPovotoNamespace(const char *name) {
@@ -574,6 +602,7 @@ void resetCountersForNewBatch() {
   CountersData.totalChillTime = 0;
   CountersData.totalHeatTime = 0;
   CountersData.co2DissolvedMode = 0;
+  resetDailyHeadspaceTracking(); // [DAILY-HS] persisted by writeCountersDataToNIV() below
 
   resetHeadspaceFilterTracking();
   resetCO2MolsProducedPerLiterTracking();

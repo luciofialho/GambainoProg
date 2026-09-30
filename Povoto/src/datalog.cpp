@@ -248,6 +248,17 @@ void doDataLog() {
     GLogAddData("OperatingMode");
     GLogAddData("AtmosphericPressure");
     GLogAddData("EnvironmentTemperature");
+    // [DAILY-HS] 24-hour headspace average and the last dump (dump columns
+    // are filled only in the first row after a dump).
+    GLogAddData("HeadSpaceEMA");
+    GLogAddData("HeadSpaceDaily");
+    GLogAddData("DailyHours");
+    GLogAddData("DailyState");
+    GLogAddData("DumpP1");
+    GLogAddData("DumpP2");
+    GLogAddData("DumpStartMillis");
+    GLogAddData("DumpEndMillis");
+    GLogAddData("DumpDeltaH");
 
     GLogSend();
     headerWritten = true;
@@ -310,6 +321,22 @@ void doDataLog() {
     GLogAddData((int)SetPointData.mode);
     GLogAddData(Patm, 6);
     GLogAddData(isValidTemp(environmentTemp) ? environmentTemp : NAN, 2);
+    // [DAILY-HS]
+    const DailyHeadspaceLogData dailyHs = getDailyHeadspaceLogData();
+    GLogAddData(dailyHs.ema, 3);
+    GLogAddData(dailyHs.daily, 3);
+    GLogAddData((int)dailyHs.hours);
+    GLogAddData(dailyHs.state);
+    DumpLogData dump;
+    if (takeDumpLogData(dump)) {
+      GLogAddData(dump.pressureBeforeBar, 6);
+      GLogAddData(dump.pressureAfterBar, 6);
+      GLogAddData(dump.startMillis);
+      GLogAddData(dump.endMillis);
+      GLogAddData(dump.deltaH, 3);
+    } else {
+      for (int i = 0; i < 5; i++) GLogAddData("");
+    }
     GLogSend();
   }
 }
@@ -420,6 +447,12 @@ void doReliefDataLog(const ReliefLogData &data) {
     GLogAddData("PreviousTankEjectedMolesBeforeLiquidCorrection");
     GLogAddData("PreviousTankEjectedMoles");
     GLogAddData("VentingElapsedAtLogSeconds");
+    // [DAILY-HS] HeadSpaceVolume above is the applied value.
+    GLogAddData("HeadSpaceMeasured");
+    GLogAddData("HeadSpaceEMA");
+    GLogAddData("HeadSpaceDaily");
+    GLogAddData("DailyHours");
+    GLogAddData("DailyState");
     GLogSend();
     headerWritten = true;
   }
@@ -500,6 +533,12 @@ void doReliefDataLog(const ReliefLogData &data) {
   GLogAddData(data.previousTankEjectedMolesBeforeLiquidCorrection, 8);
   GLogAddData(data.previousTankEjectedMoles, 8);
   GLogAddData(data.ventingElapsedAtLogSeconds, 3);
+  // [DAILY-HS]
+  GLogAddData(data.headSpaceMeasured, 3);
+  GLogAddData(data.headSpaceEMA, 3);
+  GLogAddData(data.headSpaceDaily, 3);
+  GLogAddData((int)data.dailyHours);
+  GLogAddData(data.dailyState ? data.dailyState : "");
   GLogSend();
 }
 

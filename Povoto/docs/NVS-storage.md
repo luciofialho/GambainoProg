@@ -7,6 +7,11 @@ registration tables or access dispatch functions.
 FMTData.heater contains enabled, onMinutes and offMinutes and is stored as one
 blob. FMTData.coolingCycle is also one blob. Counters are individual values;
 totalMolsEjected and CO2InSolution use getDouble/putDouble (8 bytes).
+CountersData.dailyHs (24-hour headspace average, 24 hourly bins + held value,
+244 bytes) is the blob `dailyHs`; a different size or non-finite sums restart
+it empty. Besides writeCountersDataToNIV(), writeDailyHeadspaceToNIV() writes
+only this key, on a new hour, a rebase (dump) or a clear (liquid, dry/dynamic
+hopping). See docs/spec_headspace_24h.md.
 
 To add a field, declare it and its default, then add its get/put calls to the
 corresponding read/write functions. Keep keys within the NVS 15-character limit.

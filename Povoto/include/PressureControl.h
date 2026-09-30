@@ -38,7 +38,34 @@ bool startVolumeDetermination(bool fast, char *reason, size_t reasonSize);
 bool isVolumeDeterminationActive();
 uint16_t getVolumeDeterminationIteration();
 float getVolumeDeterminationCalculatedSoFar();
-void applyDumpWindowHeadspaceRecalc(float headspaceBeforeL, float pressureBeforeBar, float pressureAfterBar);
+void applyDumpWindowHeadspaceRecalc(float headspaceBeforeL, float pressureBeforeBar, float pressureAfterBar,
+                                    unsigned long startMillis, unsigned long endMillis);
+
+// [DAILY-HS] 24-hour headspace average (docs/spec_headspace_24h.md).
+struct DailyHeadspaceLogData {
+  float ema;        // headspaceFiltered
+  float daily;      // mean of the hourly means (NAN = no hours)
+  uint8_t hours;    // hours of the last 24 with samples
+  const char *state; // "valid", "hold" or "ema"
+};
+DailyHeadspaceLogData getDailyHeadspaceLogData(); // re-evaluates when NTP is valid
+// Shifts the stored hours (and the held value) by deltaL; persists.
+void rebaseDailyHeadspace(float deltaL, const char *reason);
+// Empties the hours and the held value, speeds up the EMA; persists.
+void clearDailyHeadspace(const char *reason);
+// New batch: empties the hours and the cached result; not persisted.
+void resetDailyHeadspaceTracking();
+
+// [DAILY-HS] Last dump, for one Cold log row.
+struct DumpLogData {
+  bool pending;
+  float pressureBeforeBar;  // P1
+  float pressureAfterBar;   // P2
+  unsigned long startMillis;
+  unsigned long endMillis;
+  float deltaH;             // rebase applied (NAN = not applied)
+};
+bool takeDumpLogData(DumpLogData &data);
 void requestDerivedStateRestoreFromCounters();
 void resetHeadspaceFilterTracking();
 void resetCO2MolsProducedPerLiterTracking();
