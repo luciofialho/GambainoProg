@@ -52,10 +52,10 @@ D = média, nas amostras de 60 s dos últimos 30 min, de Henry na pressão e na 
 
 No ciclo de relief a média do dente de serra é constante; numa subida ou descida de pressão, ou numa mudança de temperatura, ela acompanha. A troca de CO2 entre a cerveja e o gás não é modelada:
 
-- O gCO2/L/d é o gás que sai da cerveja (docs/gco2-rate.md), medido, sem o dissolvido.
+- O gCO2/L/d é o saldo de CO2 liberado pela cerveja (docs/gco2-rate.md), medido, sem o dissolvido.
 - No SG, a transição dá um erro temporário: numa subida de pressão ou num resfriamento a cerveja absorve devagar e o modelo conta antes; o erro se desfaz quando a cerveja volta ao equilíbrio (bench: +0,47 pt no pior momento de uma subida de 0,8 para 1,5 bar a 8,6 g/L/d, de volta ao nível anterior 10 h depois).
 
-**Histórico** (lote 160, 30/09): o equilíbrio usava Henry no limiar de relief (setpoint/√f), que saltava quando o setpoint mudava (+4,29 mol às 12:18, −1,9 pt de SG). Depois foram testados Henry instantâneo (a produção parecia triplicar durante uma subida), um modelo de supersaturação x = τs·F (acertou a subida com a fermentação forte, errou a com ela fraca: 7,5 contra ~2,5 g/L/d) e um atraso de 2 h (acertou as duas, mas com só dois eventos). Estimar a produção durante as transições exigiria um parâmetro que varia com a atividade e que o Povoto não mede; por isso a taxa passou a ser o gás que sai, com a transição sinalizada.
+**Histórico** (lote 160, 30/09): o equilíbrio usava Henry no limiar de relief (setpoint/√f), que saltava quando o setpoint mudava (+4,29 mol às 12:18, −1,9 pt de SG). Depois foram testados Henry instantâneo (a produção parecia triplicar durante uma subida), um modelo de supersaturação x = τs·F (acertou a subida com a fermentação forte, errou a com ela fraca: 7,5 contra ~2,5 g/L/d) e um atraso de 2 h (acertou as duas, mas com só dois eventos). Estimar a produção durante as transições exigiria um parâmetro que varia com a atividade e que o Povoto não mede; por isso a taxa passou a ser o saldo liberado pela cerveja, com a transição sinalizada.
 
 ## 3. Half-life híbrido
 

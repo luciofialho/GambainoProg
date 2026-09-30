@@ -6,6 +6,9 @@ void handleUserConfigUpdate(AsyncWebServerRequest *request);
 
 // Web interface handlers
 void handleMainMenu(AsyncWebServerRequest *request);
+void handleGraphsPage(AsyncWebServerRequest *request);
+void handleGraphsCSV(AsyncWebServerRequest *request);
+void handleGraphsGenerateDemo(AsyncWebServerRequest *request);
 
 void handleFMTDataPage(AsyncWebServerRequest *request);
 void handleFMTDataUpdate(AsyncWebServerRequest *request);

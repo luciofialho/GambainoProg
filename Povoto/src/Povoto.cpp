@@ -27,7 +27,10 @@
 #include <ElegantOTA.h>
 #include "PovotoTasks.h"
 #include "AutoSetpoints.h"
+#include "GraphHistory.h"
+#include "PovotoLogos.h"
 #include <esp_system.h>
+#include <esp_heap_caps.h>
 
 //#include "esp_heap_caps.h"
 
@@ -84,6 +87,21 @@ char * getPovotoStatus(char *st) {
 
   snprintf(buf,199,"<BR>Debugging mode: %s<br>",debugging ? "ON" : "OFF");
   strnncat(st,buf,MAXSTATUSLEN);
+
+  const size_t fsTotal = LittleFS.totalBytes();
+  const size_t fsUsed = LittleFS.usedBytes();
+  snprintf(buf, sizeof(buf),
+           "<b>LittleFS:</b> %u / %u bytes used (%u free)<br>"
+           "<b>PSRAM:</b> %u / %u bytes used (%u free; largest free block %u)<br>"
+           "<b>Graph history:</b> %u points<br>",
+           unsigned(fsUsed), unsigned(fsTotal), unsigned(fsTotal >= fsUsed ? fsTotal - fsUsed : 0),
+           unsigned(heap_caps_get_total_size(MALLOC_CAP_SPIRAM) -
+                    heap_caps_get_free_size(MALLOC_CAP_SPIRAM)),
+           unsigned(heap_caps_get_total_size(MALLOC_CAP_SPIRAM)),
+           unsigned(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)),
+           unsigned(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)),
+           unsigned(graphHistoryCount()));
+  strnncat(st, buf, MAXSTATUSLEN);
 
   // incluir informações da tamperatura atual, setpoint e estado dos relés
   snprintf(buf,199,"<br>Current Temp: %.2f C<br>Considered temperature: %.2f C<br>",dallasTemperature, ControlData.temperature);
@@ -194,6 +212,12 @@ void setup() {
 
   server.on("/", HTTP_GET, handleMainMenu);
   server.on("/config", HTTP_GET, handleMainMenu);
+  server.on("/assets/povoto.svg", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send_P(200, "image/svg+xml", POVOTO_LOGO_SVG);
+  });
+  server.on("/assets/brewtal.svg", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send_P(200, "image/svg+xml", BREWTAL_LOGO_SVG);
+  });
   
   server.on("/fmtdata/save", HTTP_GET, handleFMTDataSave);
   server.on("/fmtdata/load", HTTP_POST, handleFMTDataLoad);
@@ -236,8 +260,12 @@ void setup() {
   server.on("/startvolume", HTTP_GET, handleStartVolume);
   server.on("/startvolume", HTTP_POST, handleStartVolume);
 
-  server.on("/debugparams", HTTP_GET, handleDebugParamsPage);
+  server.on("/debugparams/graphs/demo", HTTP_POST, handleGraphsGenerateDemo);
   server.on("/debugparams/update", HTTP_POST, handleDebugParamsUpdate);
+  server.on("/debugparams", HTTP_GET, handleDebugParamsPage);
+  // Register child paths before /graphs (prefix-matching async server).
+  server.on("/graphs/data.csv", HTTP_GET, handleGraphsCSV);
+  server.on("/graphs", HTTP_GET, handleGraphsPage);
 
   // Sub-routes must be registered BEFORE the parent /tasks route (ESPAsyncWebServer prefix matching)
   server.on("/tasks/start", HTTP_GET, handleTaskStart);
@@ -259,13 +287,16 @@ void setup() {
   setStatusSource(getPovotoStatus);
   registerPeerSetupRoute();
   ElegantOTA.begin(&server);
-  server.begin();
 
-  if (!LittleFS.begin(true)) {
+  // Never format automatically: that would erase the batch history on a
+  // transient mount failure (as well as the UI assets).
+  if (!LittleFS.begin(false)) {
     Serial.println("Erro ao montar o LittleFS");
     return;
   }
   Serial.println("LittleFS montado com sucesso");
+  graphHistoryBegin();
+  server.begin();
 
   initTFT();
   
@@ -363,6 +394,7 @@ void loop() {
     }
   }
   pressureControl();
+  graphHistorySampleIfDue();
   evaluateAutoSetpoints();
   maybeSendBrewfatherLog();
   maybePersistCountersData();

@@ -15,6 +15,9 @@
 #include "AutoSetpoints.h"
 #include "datalog.h"
 #include <stdarg.h>
+#include <memory>
+#include <esp_heap_caps.h>
+#include "GraphHistory.h"
 
 // ========== MAIN MENU ==========
 
@@ -31,11 +34,13 @@ void handleMainMenu(AsyncWebServerRequest *request) {
   String html = "<!DOCTYPE html><html><head>";
   html += "<meta charset='UTF-8'>";
   html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
-  html += "<title>Povoto</title>";
+  html += "<title>Povoto " + String(FMTData.PovotoNum) + "</title>";
   html += "<style>";
   html += "body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; }";
   html += ".container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); }";
   html += "h1 { color: #333; text-align: center; margin-bottom: 30px; font-size: 28px; }";
+  html += ".brand{display:flex;align-items:center;justify-content:center;gap:14px}.brand img{width:78px;height:78px;object-fit:contain}";
+  html += ".signature{text-align:center;margin-top:26px}.signature img{display:block;width:220px;max-width:65%;height:auto;margin:0 auto}";
   html += ".status-box { background: #f7f7ff; border: 1px solid #e0e0ff; padding: 14px 18px; border-radius: 10px; margin-bottom: 20px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: 18px; }";
   html += ".status-item { color: #333; }";
   html += ".footer-link { margin-top: 16px; text-align: center; font-size: 12px; }";
@@ -52,7 +57,8 @@ void handleMainMenu(AsyncWebServerRequest *request) {
   html += "@media (max-width: 500px) { .menu-grid { grid-template-columns: 1fr; } }";
   html += "</style></head><body>";
   html += "<div class='container'>";
-  html += "<h1>&#127867; Povoto Configuration</h1>";
+  html += "<h1 class='brand'><img src='/assets/povoto.svg' alt='Povoto logo'>Povoto " +
+          String(FMTData.PovotoNum) + "</h1>";
   if (isVolumeDeterminationActive()) {
     const uint16_t iter = getVolumeDeterminationIteration();
     const float partialVolume = getVolumeDeterminationCalculatedSoFar();
@@ -72,8 +78,11 @@ void handleMainMenu(AsyncWebServerRequest *request) {
   html += "<div class='status-item'><strong>Temperature:</strong> " + String(ControlData.temperature, 1) + " °C</div>";
   html += "<div class='status-item'><strong>Pressure:</strong> " + String(ControlData.pressure, 2) + " bar</div>";
   html += "<div class='status-item'><strong>Volume:</strong> " + String(beerVolume, 1) + " L</div>";
+  // During a pressure/temperature transition an info icon explains the rate on hover.
   html += "<div class='status-item'><strong>SG:</strong> " + String(beerSG, 3) + " (gCO2/L/d: " + String(getBeerCO2EvolutionGramsPerLiterPerDay(), 2) +
-          (co2RateInTransition() ? ", transition: gas leaving the beer" : "") + ")</div>";
+          (co2RateInTransition()
+               ? " <span title='Transition: net CO2 release (production &minus; absorption)' style='cursor:help'>&#9432;</span>"
+               : "") + ")</div>";
   html += "<div class='status-item'><strong>Uptime:</strong> " + uptimeStr + "</div>";
   html += "<div class='status-item'><strong>Date/Time:</strong> " + String(dateTimeBuf) + "</div>";
   html += "</div>";
@@ -83,6 +92,7 @@ void handleMainMenu(AsyncWebServerRequest *request) {
   html += "<a href='/batch' class='menu-button'><span class='icon'>&#128218;</span>Batch Data</a>";
   html += "<a href='/control' class='menu-button'><span class='icon'>&#128736;</span>Control</a>";
   html += "<a href='/calibration' class='menu-button'><span class='icon'>&#128200;</span>Calibration</a>";
+  html += "<a href='/graphs' class='menu-button'><span class='icon'>&#128202;</span>Graphs</a>";
   html += "<a href='/fmtdata' class='menu-button'><span class='icon'>&#9881;</span>Settings</a>";
   html += "<a href='/userConfig' class='menu-button'><span class='icon'>&#127899;&#65039;</span>User Configuration</a>";
   if (debugging) {
@@ -90,10 +100,222 @@ void handleMainMenu(AsyncWebServerRequest *request) {
   }
   html += "</div>";
   html += "<div class='footer-link'><a href='/getstatus'>full status</a></div>";
+  html += "<div class='signature'><img src='/assets/brewtal.svg' alt='Brewtal'></div>";
   html += "</div>";
   html += "</body></html>";
   
   request->send(200, "text/html", html);
+}
+
+// ========== GRAPH HISTORY (CSV VALIDATION, NO CHART YET) ==========
+
+void handleGraphsPage(AsyncWebServerRequest *request) {
+  String html;
+  html.reserve(1900);
+  html = "<!DOCTYPE html><html><head><meta charset='UTF-8'>"
+         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+         "<title>Povoto Graphs</title><style>"
+         "body{font-family:Arial,sans-serif;background:#f0f0f0;margin:20px;color:#333}"
+         ".box{max-width:650px;margin:auto;background:white;padding:24px;border-radius:9px}"
+         "a.button{display:inline-block;background:#5168bb;color:white;padding:12px 18px;"
+         "margin:8px 8px 8px 0;border-radius:5px;text-decoration:none}"
+         "small{color:#555}</style></head><body><div class='box'>"
+         "<h1>Graphs</h1><p>Historical observations every 15 minutes."
+         " Charts will be added in a later phase; download CSV to validate the data.</p>";
+  html += "<p>Observations: " + String(graphHistoryCount()) + "</p>";
+  html += "<a class='button' href='/graphs/data.csv'>Download CSV</a>";
+  html += "<p><small>Each row is a 15-minute snapshot, not an average. Empty cells mean "
+          "unavailable measurements. Flags describe provenance only: 1 = CO2 rate held after "
+          "reboot; 2 = transition (CO2 rate omitted); 4 = synthetic point. Values may be "
+          "combined, for example 6 = synthetic transition.</small></p>";
+  html += "<p><a href='/'>Back to menu</a></p></div></body></html>";
+  request->send(200, "text/html; charset=utf-8", html);
+}
+
+// [DIAG] Timing of the CSV download callback (temporary): how often the
+// server asks for data, how much, and how much TCP send space it has.
+struct GraphCsvDiag {
+  AsyncClient *client = nullptr;
+  unsigned long startMillis = 0, lastMillis = 0, segmentStartMillis = 0;
+  uint32_t calls = 0, segmentCalls = 0;
+  size_t bytes = 0, segmentStartBytes = 0;
+  size_t minAsk = SIZE_MAX, maxAsk = 0, segmentAsk = 0, segmentSpace = 0;
+  unsigned long maxGap = 0;
+  size_t maxGapAt = 0;
+  uint32_t gaps[5] = {}; // <50, 50-150, 150-300, 300-700, >=700 ms
+  bool reported = false;
+  size_t segMinWritten = SIZE_MAX, segMaxWritten = 0;
+  uint32_t segExitNoRows = 0, segExitFull = 0, segSkipped = 0;
+  uint16_t *next = nullptr, *total = nullptr;
+
+  void call(size_t maxLen) {
+    const unsigned long now = millis();
+    if (!calls) startMillis = lastMillis = segmentStartMillis = now;
+    const unsigned long gap = now - lastMillis;
+    if (calls) {
+      gaps[gap < 50 ? 0 : gap < 150 ? 1 : gap < 300 ? 2 : gap < 700 ? 3 : 4]++;
+      if (gap > maxGap) { maxGap = gap; maxGapAt = bytes; }
+    }
+    lastMillis = now;
+    ++calls; ++segmentCalls;
+    minAsk = maxLen < minAsk ? maxLen : minAsk;
+    maxAsk = maxLen > maxAsk ? maxLen : maxAsk;
+    segmentAsk += maxLen;
+    segmentSpace += client ? client->space() : 0;
+  }
+  void sent(size_t written, size_t maxLen) {
+    bytes += written;
+    segMinWritten = written < segMinWritten ? written : segMinWritten;
+    segMaxWritten = written > segMaxWritten ? written : segMaxWritten;
+    if (written >= maxLen) ++segExitFull; else ++segExitNoRows;
+    if (bytes - segmentStartBytes >= 16384) {
+      const unsigned long ms = millis() - segmentStartMillis;
+      Serial.printf("[DIAG CSV] %6u..%6u B: %5lu ms (%.1f KB/s), %u calls, ask avg %u, space avg %u, "
+                    "written %u..%u, exit full %u / short %u, skipped rows %u, row %u/%u\n",
+                    unsigned(segmentStartBytes), unsigned(bytes), ms,
+                    ms ? (bytes - segmentStartBytes) / 1.024 / ms : 0.0, unsigned(segmentCalls),
+                    unsigned(segmentAsk / segmentCalls), unsigned(segmentSpace / segmentCalls),
+                    unsigned(segMinWritten), unsigned(segMaxWritten), unsigned(segExitFull),
+                    unsigned(segExitNoRows), unsigned(segSkipped),
+                    unsigned(next ? *next : 0), unsigned(total ? *total : 0));
+      segmentStartBytes = bytes;
+      segmentStartMillis = millis();
+      segmentCalls = 0; segmentAsk = 0; segmentSpace = 0;
+      segMinWritten = SIZE_MAX; segMaxWritten = 0; segExitFull = segExitNoRows = segSkipped = 0;
+    }
+  }
+  void report(const char *how) {
+    if (reported) return;
+    reported = true;
+    const unsigned long ms = millis() - startMillis;
+    Serial.printf("[DIAG CSV] %s: %u B in %lu ms (%.1f KB/s), %u calls, ask %u..%u, "
+                  "max gap %lu ms at %u B, gaps <50:%u 50-150:%u 150-300:%u 300-700:%u >=700:%u\n",
+                  how, unsigned(bytes), ms, ms ? bytes / 1.024 / ms : 0.0, unsigned(calls),
+                  unsigned(minAsk == SIZE_MAX ? 0 : minAsk), unsigned(maxAsk), maxGap, unsigned(maxGapAt),
+                  unsigned(gaps[0]), unsigned(gaps[1]), unsigned(gaps[2]), unsigned(gaps[3]), unsigned(gaps[4]));
+  }
+};
+
+struct GraphCsvCursor {
+  GraphHistoryPoint *snapshot = nullptr;
+  uint16_t total;
+  uint16_t next;
+  bool headerSent;
+  char line[256];
+  size_t used;
+  size_t position;
+  GraphCsvDiag diag; // [DIAG]
+  ~GraphCsvCursor() {
+    diag.report("closed"); // [DIAG] also when the browser aborts
+    if (snapshot) heap_caps_free(snapshot);
+  }
+};
+
+static void graphCsvFloat(char *out, size_t capacity, float value, int decimals) {
+  if (!isfinite(value)) {
+    out[0] = '\0';
+    return;
+  }
+  snprintf(out, capacity, "%.*f", decimals, value);
+  for (char *digit = out; *digit; ++digit) {
+    if (*digit == '.') *digit = ',';
+  }
+}
+
+void handleGraphsCSV(AsyncWebServerRequest *request) {
+  auto cursor = std::make_shared<GraphCsvCursor>();
+  const uint16_t available = graphHistoryCount();
+  if (available) {
+    cursor->snapshot = static_cast<GraphHistoryPoint *>(heap_caps_malloc(
+        size_t(available) * sizeof(GraphHistoryPoint), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!cursor->snapshot) {
+      request->send(503, "text/plain", "Not enough PSRAM to export graph history.");
+      return;
+    }
+  }
+  cursor->total = graphHistoryCopyPoints(cursor->snapshot, available);
+  cursor->next = 0;
+  cursor->headerSent = false;
+  cursor->used = cursor->position = 0;
+  cursor->diag.client = request->client(); // [DIAG]
+  cursor->diag.next = &cursor->next;
+  cursor->diag.total = &cursor->total;
+
+  AsyncWebServerResponse *response = request->beginChunkedResponse(
+      "text/csv; charset=utf-8",
+      [cursor](uint8_t *buffer, size_t maxLen, size_t) -> size_t {
+        cursor->diag.call(maxLen); // [DIAG]
+        size_t written = 0;
+        while (written < maxLen) {
+          if (cursor->position == cursor->used) {
+            cursor->position = 0;
+            if (!cursor->headerSent) {
+              const char *header = "epoch_local;datetime_local;SG;TempC;TempSetpointC;"
+                                   "PressureBar;PressureSetpointBar;gCO2_L_d;ABV_percent;flags\r\n";
+              cursor->used = strlen(header);
+              memcpy(cursor->line, header, cursor->used + 1);
+              cursor->headerSent = true;
+            } else {
+              if (cursor->next >= cursor->total) {
+                // End: nothing pending, so the next call returns 0 and closes the
+                // response (position was reset above; without this the last row
+                // was sent again on every call, forever).
+                cursor->used = 0;
+                break;
+              }
+              const GraphHistoryPoint &point = cursor->snapshot[cursor->next++];
+              char date[24], sg[20], temp[20], tempSp[20], press[20], pressSp[20], rate[20], abv[20];
+              formatLocalEpochISO(point.epoch, date, sizeof(date));
+              graphCsvFloat(sg, sizeof(sg), point.sg, 5);
+              graphCsvFloat(temp, sizeof(temp), point.temperature, 2);
+              graphCsvFloat(tempSp, sizeof(tempSp), point.temperatureSetpoint, 2);
+              graphCsvFloat(press, sizeof(press), point.pressure, 3);
+              graphCsvFloat(pressSp, sizeof(pressSp), point.pressureSetpoint, 3);
+              graphCsvFloat(rate, sizeof(rate), point.co2Rate, 3);
+              graphCsvFloat(abv, sizeof(abv), point.abv, 2);
+              const int length = snprintf(cursor->line, sizeof(cursor->line),
+                  "%lu;%s;%s;%s;%s;%s;%s;%s;%s;%lu\r\n",
+                  static_cast<unsigned long>(point.epoch), date, sg, temp, tempSp,
+                  press, pressSp, rate, abv, static_cast<unsigned long>(point.flags));
+              cursor->used = length > 0 && static_cast<size_t>(length) < sizeof(cursor->line)
+                  ? static_cast<size_t>(length) : 0;
+              if (!cursor->used) {
+                ++cursor->diag.segSkipped; // [DIAG] row longer than the line buffer
+                continue;
+              }
+            }
+          }
+          const size_t pending = cursor->used - cursor->position;
+          const size_t space = maxLen - written;
+          const size_t amount = pending < space ? pending : space;
+          memcpy(buffer + written, cursor->line + cursor->position, amount);
+          cursor->position += amount;
+          written += amount;
+        }
+        cursor->diag.sent(written, maxLen); // [DIAG]
+        if (!written) cursor->diag.report("done");
+        return written;
+      });
+  response->addHeader("Content-Disposition", "attachment; filename=\"povoto-graphs.csv\"");
+  response->addHeader("Cache-Control", "no-store");
+  request->send(response);
+}
+
+void handleGraphsGenerateDemo(AsyncWebServerRequest *request) {
+  if (!debugging) {
+    request->send(403, "text/plain", "Debug mode only");
+    return;
+  }
+  if (!request->hasParam("confirm", true) ||
+      request->getParam("confirm", true)->value() != "replace") {
+    request->send(400, "text/plain", "Explicit graph history replacement confirmation required.");
+    return;
+  }
+  if (!graphHistoryGenerateDemo14Days()) {
+    request->send(503, "text/plain", "Cannot replace history: NTP, PSRAM or LittleFS unavailable.");
+    return;
+  }
+  request->redirect("/graphs");
 }
 
 // ========== DEBUG PARAMS HANDLERS ==========
@@ -186,7 +408,14 @@ void handleDebugParamsPage(AsyncWebServerRequest *request) {
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<button type='submit'>Save</button> "
                "<button type='button' class='btn-secondary' onclick='window.location=\"/\"'>Cancel</button>"
-               "</form>"
+               "</form><hr><h2>Graph history preview</h2>"
+               "<p>Replace the current graph history with 14 days of synthetic data. "
+               "The replacement is persisted in LittleFS; new Fermenting samples follow it.</p>"
+               "<form action='/debugparams/graphs/demo' method='POST' "
+               "onsubmit='return confirm(\"Replace the current graph history in PSRAM and LittleFS with 14 days of synthetic data?\")'>"
+               "<input type='hidden' name='confirm' value='replace'>"
+               "<button type='submit'>Replace graph history with 14-day demo</button></form>"
+               "<p><a href='/graphs'>Open Graphs / CSV downloads</a></p>"
                "</div>"
                "</body></html>", remaining);
 

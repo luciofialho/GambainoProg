@@ -9,6 +9,7 @@
 #include "PovotoTasks.h"
 #include "TemperatureControl.h"
 #include "datalog.h"
+#include "GraphHistory.h"
 
 // FMT data
 
@@ -542,6 +543,7 @@ bool resetPovotoDataToFactoryDefaults() {
   saved = writeAutoSetpointsToNIV() && saved;
   updatePatmFromFMTAltitude();
   requestDerivedStateRestoreFromCounters();
+  graphHistoryResetForNewBatch();
 
   if (saved) Serial.println("NVS: factory defaults restored");
   else Serial.println("NVS: factory reset incomplete");
@@ -610,6 +612,7 @@ void povotoDataInit() {
 }
 
 void resetCountersForNewBatch() {
+  graphHistoryResetForNewBatch();
   //zera totalbubblecount 
   CountersData.totalReliefCount = 0;
   CountersData.totalMolsEjected = 0.0;

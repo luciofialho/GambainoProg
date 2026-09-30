@@ -1,6 +1,6 @@
 # Taxa de CO2 (gCO2/L/d)
 
-**Definição: gás que sai da cerveja** por litro e por dia. Implementação em `src/PressureControl.cpp` (`recomputeBeerCO2EvolutionFromCurrentState()` e funções vizinhas).
+**Definição: saldo de CO2 liberado pela cerveja** (produção menos absorção) por litro e por dia: a variação do CO2 fora da cerveja. Implementação em `src/PressureControl.cpp` (`recomputeBeerCO2EvolutionFromCurrentState()` e funções vizinhas).
 
 ## 1. Fase gasosa
 
@@ -18,12 +18,12 @@ gás = totalMolsEjected + headSpaceCO2Mols + expansionTankInventoryMoles()
 
 O CO2 dissolvido **não** entra na taxa: ele é modelado, não medido, e numa transição de pressão ou temperatura o modelo erra por várias vezes (docs/dissolved-co2.md, seção 2a). O SG continua usando o balanço completo, com o dissolvido (seção 6).
 
-**Fora das transições** (pressão e temperatura estáveis), o gás que sai é a produção: a cerveja está em regime (lote 160, 30/09: 8,5–9,1 g/L/d nos ciclos da manhã). **Numa transição** ele difere da produção em sentido conhecido: numa subida de pressão ou num resfriamento a cerveja absorve e o valor fica abaixo (piso); numa descida de pressão ou num aquecimento ela libera e o valor fica acima (teto). Os valores medidos variam suavemente: 5,2 → 2,7 g/L/d numa subida de 0,8 para 1,5 bar; −0,25 a +0,18 no cold crash do 159.
+**Fora das transições** (pressão e temperatura estáveis), o saldo liberado é a produção: a cerveja está em regime (lote 160, 30/09: 8,5–9,1 g/L/d nos ciclos da manhã). **Numa transição** ele difere da produção em sentido conhecido: numa subida de pressão ou num resfriamento a cerveja absorve e o valor fica abaixo (piso); numa descida de pressão ou num aquecimento ela libera e o valor fica acima (teto). Os valores medidos variam suavemente: 5,2 → 2,7 g/L/d numa subida de 0,8 para 1,5 bar; −0,25 a +0,18 no cold crash do 159.
 
 **Transição** (`co2RateInTransition()`): em Fermenting, pressão ou temperatura fora de `STABLE` ou estáveis há menos de **2 h** (a cerveja ainda absorve ou libera com constante de ~2 h); sem NTP, é transição. Com setpoint de pressão 0, só a temperatura conta. Durante a transição:
 - regras "gCO2 < x": não avaliam (docs/automatic-actions.md);
-- Brewfather: sem o campo `bpm` (o gás que sai desenharia uma falsa desaceleração);
-- log Cold: `gCO2Source` = `transition`; a página inicial e o `/getstatus` mostram o valor com a marca de transição.
+- Brewfather: sem o campo `bpm` (o saldo liberado desenharia uma falsa desaceleração);
+- log Cold e `/getstatus`: `gCO2Source` = `transition`; página inicial: um ícone ⓘ ao lado do valor, com a explicação ao passar o mouse ("Transition: net CO2 release (production − absorption)").
 
 ## 2. Amostragem
 

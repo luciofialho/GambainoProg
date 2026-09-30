@@ -81,7 +81,7 @@ static bool buildBrewfatherPayload(char *out, size_t outSize) {
   if (isnan(pressure)) snprintf(pressureField, sizeof(pressureField), "null");
   else snprintf(pressureField, sizeof(pressureField), "%.3f", pressure);
 
-  // No rate during a pressure/temperature transition: the gas leaving the beer
+  // No rate during a pressure/temperature transition: the net CO2 released by the beer
   // would draw a false slowdown (docs/gco2-rate.md).
   if (isfinite(bpm) && bpm > 0.0f && !co2RateInTransition())
     snprintf(bpmField, sizeof(bpmField), ",\"bpm\":%.2f", bpm);

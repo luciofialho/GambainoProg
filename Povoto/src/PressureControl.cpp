@@ -958,7 +958,7 @@ DissolvedCO2LogData getDissolvedCO2LogData() {
 // In equilibrium and initial the dissolved CO2 is the 30-min mean of Henry at
 // each sample's pressure and temperature: constant in the relief cycle (the
 // saw-tooth averages out), following rises, falls and cooling. The transfer
-// between the beer and the gas is not modelled: gCO2/L/d is the gas leaving
+// between the beer and the gas is not modelled: gCO2/L/d is the net CO2 released
 // the beer (docs/gco2-rate.md), and the SG error of a transition undoes itself
 // when the beer is back in equilibrium.
 static constexpr uint16_t HENRY_MEAN_SAMPLES = 30; // 60-s samples: 30 min
@@ -1482,7 +1482,7 @@ static void recomputeBeerCO2EvolutionFromCurrentState() {
     return;
   }
 
-  // gCO2/L/d is the gas leaving the beer: ejected + headspace + expansion
+  // gCO2/L/d is the net CO2 released by the beer: ejected + headspace + expansion
   // tank (docs/gco2-rate.md). The dissolved CO2 is not in the rate.
   const double gasMols = gasPhaseCO2Mols();
   if (!isfinite(beerVolume) || beerVolume <= 0.0f || !isfinite(gasMols)) {
@@ -1591,7 +1591,7 @@ const char *getCO2EvolutionSource() {
 // at least CO2_RULE_MIN_SAMPLES (30 min); shorter windows cover few relief
 // cycles (batch 160: 7.19 after 4 min with 8.8 real fired a "< 8" rule).
 // Pressure or temperature changing, or settled for less than
-// CO2_TRANSITION_SETTLE_S: the gas leaving the beer differs from the
+// CO2_TRANSITION_SETTLE_S: the net CO2 released by the beer differs from the
 // production (the beer absorbs after a rise or cooling, releases after a fall
 // or warming). Rules do not use gCO2/L/d then and Brewfather gets no rate.
 // Without NTP the settling cannot be timed: transition. docs/gco2-rate.md.
