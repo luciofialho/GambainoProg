@@ -25,7 +25,7 @@ Os valores 0 e 1 mantêm o significado da versão anterior (um aparelho atualiza
 
 | De | Para | Condição |
 |---|---|---|
-| inicial | equilíbrio | ≥ 3 reliefs em Fermenting/Conditioning |
+| inicial | equilíbrio | ≥ 3 reliefs em Fermenting |
 | equilíbrio | half-life | taxa da fase gasosa < 0,3 g/L/d por **3 h** ininterruptas |
 | half-life | equilíbrio | taxa > 0,5 g/L/d por **6 h** ininterruptas |
 | half-life | armado | `BatchData.addedPlato` aumentou (página Batch) |
@@ -42,7 +42,7 @@ Uma nova adição no estado armado renova os 7 dias. No equilíbrio ou no inicia
 - alguma amostra da janela tem um degrau externo: G subiu mais que o equivalente a 50 g/L/d em uma amostra sem relief (gás injetado fora de uma task);
 - volume de cerveja inválido.
 
-Fora de Fermenting/Conditioning também não há decisão. Calibração com os lotes 159 e 160: na fermentação ativa a taxa fica muito acima de 0,5; no fim do 159 o half-life entra em 14/09 03:26 e nenhuma sequência > 0,5 passou de 73 min até o fim do lote (dry hops, dynamic hops, cold crash), longe das 6 h. Os reboots do 160, que no critério antigo derrubavam o modo para half-life por ~30 min, não mudam o estado.
+Fora de Fermenting não há decisão; no Conditioning o estado fica congelado (docs/conditioning.md). Calibração com os lotes 159 e 160: na fermentação ativa a taxa fica muito acima de 0,5; no fim do 159 o half-life entra em 14/09 03:26 e nenhuma sequência > 0,5 passou de 73 min até o fim do lote (dry hops, dynamic hops, cold crash), longe das 6 h. Os reboots do 160, que no critério antigo derrubavam o modo para half-life por ~30 min, não mudam o estado.
 
 ## 3. Half-life híbrido
 

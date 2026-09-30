@@ -6,6 +6,9 @@
 #include "PressureControl.h"
 #include "GasFlowModel.h"
 #include "AutoSetpoints.h"
+#include "PovotoTasks.h"
+#include "TemperatureControl.h"
+#include "datalog.h"
 
 // FMT data
 
@@ -626,6 +629,27 @@ void resetCountersForNewBatch() {
 
   writeCountersDataToNIV();
   resetAllAutoSetpointTriggers();
+}
+
+// The CO2 balance, SG and ABV stay as they are now; only the temperature is
+// controlled. Normal reliefs stop (pressure target 0); the safety relief at
+// maximumPressure stays. One last Cold row and Brewfather point are sent.
+void enterConditioning() {
+  cancelActiveTask();
+  SetPointData.mode = MODE_CONDITIONING;
+  SetPointData.setPointPressure = 0.0f;
+  SetPointData.setPointSlowPressure = NOTaTEMP;
+  writeSetPointDataToNIV();
+  resetChillHeatCycle();
+  writeCountersDataToNIV();
+  requestConditioningFinalRecord();
+}
+
+// Back from Conditioning the batch continues (no counter reset); the CO2
+// accounting restarts its references. The pressure target stays 0 until set.
+void resumeFermentingFromConditioning() {
+  SetPointData.mode = MODE_FERMENTING;
+  resumeCO2AccountingAfterConditioning();
 }
 
 void maybePersistCountersData() {

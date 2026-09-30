@@ -22,5 +22,9 @@ void endDryHoppingTask();
 void endDynamicHoppingTask();
 
 void checkTaskExpiration();
+// Ends the task window without its end-of-task processing (Conditioning entry).
+void cancelActiveTask();
+// Tasks are blocked in Conditioning (docs/conditioning.md).
+bool tasksAllowed();
 
 #endif // POVOTOTASKS_H

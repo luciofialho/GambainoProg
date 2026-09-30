@@ -15,7 +15,12 @@ static float dumpStartBeerVolumeL = 0.0f;
 static unsigned long dumpStartMillis = 0; // [DAILY-HS] for the dump log
 static bool taskRestWindowActive = false;
 
+bool tasksAllowed() {
+  return SetPointData.mode != MODE_CONDITIONING;
+}
+
 static void startTask(byte type) {
+  if (!tasksAllowed()) return;
   taskRestWindowActive = false;
   lastTaskMillis = millis();
   taskWindowType = type;
@@ -36,7 +41,12 @@ static void endTask(unsigned long restWindowMinutes) {
 }
 
 
+void cancelActiveTask() {
+  if (taskWindowType != 0) endTask(0);
+}
+
 void startDumpTask() {
+  if (!tasksAllowed()) return;
   dumpStartPressureBar = ControlData.pressure;
   dumpStartHeadspaceL = CountersData.headSpaceVolume;
   dumpStartBeerVolumeL = beerVolume;
@@ -130,6 +140,13 @@ void handleTasksPage(AsyncWebServerRequest *request) {
   html += "</style></head><body>";
   html += "<div class='container'>";
   html += "<h1>&#9881;&#65039; Tasks</h1>";
+  if (!tasksAllowed()) {
+    html += "<p style='text-align:center;color:#555;'>Tasks are disabled in Conditioning: the fermenter works as a plain refrigerator.</p>";
+    html += "<div class='back-link'><a href='/'>&#8592; Back to menu</a></div>";
+    html += "</div></body></html>";
+    request->send(200, "text/html", html);
+    return;
+  }
   if (taskWindowType != 0) {
     html += "<div style='background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:12px;margin-bottom:20px;text-align:center;font-weight:bold;color:#856404;'>";
     html += "Active task: ";
@@ -154,6 +171,10 @@ void handleTaskStart(AsyncWebServerRequest *request) {
     return;
   }
   byte type = (byte)request->getParam("type")->value().toInt();
+  if (!tasksAllowed()) {
+    request->redirect("/tasks");
+    return;
+  }
   switch (type) {
     case 1: startDumpTask();          break;
     case 2: startGasTask();           break;

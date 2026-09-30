@@ -1312,9 +1312,7 @@ static void showBatchInfoScreen() {
 
 static void doBeginConditioning() {
   batchInfoActive = false;
-  SetPointData.mode = MODE_CONDITIONING;
-  writeSetPointDataToNIV();
-  resetChillHeatCycle();
+  enterConditioning();
   //Serial.println(">>> Touch: mode changed to CONDITIONING <<<");
   mainScreen();
 }
@@ -1466,7 +1464,7 @@ void processTouch() {
           if (UI_PERF_LOG) Serial.printf("[TOUCH PERF] taskUI trigger=%lums\n", (unsigned long)(millis() - touchProcessStart));
           if (taskWindowType != 0) {
             showActiveTaskScreen();
-          } else {
+          } else if (tasksAllowed()) {
             showTaskSelectionScreen();
           }
           return;

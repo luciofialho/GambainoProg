@@ -3,6 +3,10 @@
 
 #include <Arduino.h>
 
+// One last Cold row and Brewfather point after entering Conditioning; after
+// them nothing is sent while in Conditioning.
+void requestConditioningFinalRecord();
+
 // Snapshot captured after the post-relief pressure reading and its calculations.
 // Keeping this separate from the live globals preserves values that are reset
 // when the next relief cycle starts.

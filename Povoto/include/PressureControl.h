@@ -34,6 +34,7 @@ void scaleDissolvedCO2ForBeerVolume(float volumeBefore, float volumeAfter);
 uint8_t getCO2DissolvedState(); // CountersData.co2DissolvedMode values
 const char *getCO2DissolvedStateLabel(uint8_t state);
 bool setCO2DissolvedStateManually(uint8_t state); // Counters page
+void resumeCO2AccountingAfterConditioning();
 char *getPressureControlStatus(char *st);
 void handlePressureHistoryCSV(AsyncWebServerRequest *request);
 void handlePressureDumpCSV(AsyncWebServerRequest *request);

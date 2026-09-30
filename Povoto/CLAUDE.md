@@ -9,6 +9,7 @@ Firmware ESP32 que monitora e controla fermentação de cerveja (pressão e temp
 - `AutoSetpoints.cpp` (+ `PovotoMail.cpp`): ações automáticas. Documentação: `docs/automatic-actions.md`.
 - Persistência: `docs/NVS-storage.md`; teste estrutural: `python tests/check_storage_schema.py`.
 - CO2 dissolvido (estados inicial/equilíbrio/half-life/armado): `docs/dissolved-co2.md`; bench: `python tests/dissolved_co2_bench.py`.
+- Modo Conditioning (geladeira simples, balanço congelado, tasks bloqueadas): `docs/conditioning.md`.
 - Taxa gCO2/L/d: `docs/gco2-rate.md`. Ao acrescentar colunas de log ou linhas no /getstatus, rodar `python tests/check_log_sizes.py` e `python tests/check_status_sizes.py` (limites de buffer).
 
 ## Regras de trabalho

@@ -546,8 +546,7 @@ static bool gasPressureCompensationValid = false;
 static const char *gasHeadspaceUpdateStatus = "not_evaluated";
 
 static bool gasFlowMode() {
-  return !volumeDeterminationActive &&
-    (SetPointData.mode == MODE_FERMENTING || SetPointData.mode == MODE_CONDITIONING);
+  return !volumeDeterminationActive && SetPointData.mode == MODE_FERMENTING;
 }
 
 static double calculateExpansionTankRemainingMoles(unsigned long now) {
@@ -823,6 +822,16 @@ void resetCO2DissolvedStateForNewBatch() {
   co2StateDecision = "no-decision";
 }
 
+// Back from Conditioning: nothing is generating (the batch was conditioning),
+// so equilibrium becomes half-life; the rate returns it to equilibrium if a
+// fermentation restarts. The restore restarts the gCO2 window, the produced-
+// CO2 reference and the gas baseline, so the frozen interval is not counted.
+void resumeCO2AccountingAfterConditioning() {
+  if (co2DissolvedState == CO2_STATE_EQUILIBRIUM)
+    setCO2DissolvedState(CO2_STATE_HALF_LIFE, "resumed from conditioning");
+  requestDerivedStateRestoreFromCounters();
+}
+
 // Fermentables were added (BatchData.addedPlato increased): a refermentation
 // is expected, so the half-life returns to equilibrium with a lower threshold.
 void notifyFermentablesAdded() {
@@ -838,8 +847,9 @@ void notifyFermentablesAdded() {
 // Initial -> equilibrium once reliefs show CO2 leaving the liquid; the armed
 // half-life expires after CO2_ARMED_MAX_AGE_S (by NTP; without NTP it waits).
 static void updateCO2DissolvedStateFromEvents() {
+  if (SetPointData.mode == MODE_CONDITIONING) return; // frozen
   if (co2DissolvedState == CO2_STATE_INITIAL &&
-      (SetPointData.mode == MODE_FERMENTING || SetPointData.mode == MODE_CONDITIONING) &&
+      SetPointData.mode == MODE_FERMENTING &&
       CountersData.totalReliefCount >= CO2_INITIAL_CONFIRM_RELIEFS)
     setCO2DissolvedState(CO2_STATE_EQUILIBRIUM, "reliefs started");
   if (co2DissolvedState == CO2_STATE_HALF_LIFE_ARMED) {
@@ -859,8 +869,7 @@ static void updateCO2DissolvedStateFromGasRate(unsigned long now, float rate) {
   co2GasRate = rate;
   const bool armed = co2DissolvedState == CO2_STATE_HALF_LIFE_ARMED;
   const float returnRate = armed ? CO2_GAS_RATE_RETURN_ARMED : CO2_GAS_RATE_RETURN;
-  const bool decide = isfinite(rate) &&
-      (SetPointData.mode == MODE_FERMENTING || SetPointData.mode == MODE_CONDITIONING);
+  const bool decide = isfinite(rate) && SetPointData.mode == MODE_FERMENTING;
   if (!decide) co2StateDecision = "no-decision";
   else if (rate > returnRate) co2StateDecision = "generating";
   else if (rate < CO2_GAS_RATE_EXIT) co2StateDecision = "idle";
@@ -1339,6 +1348,7 @@ static bool co2RateHeldApplies() {
 // Signed rate for display and logs; automatic rules use only the calculated
 // beerCO2EvolutionGramsPerLiterPerDay.
 float getReportedCO2EvolutionGramsPerLiterPerDay() {
+  if (SetPointData.mode == MODE_CONDITIONING) return 0.0f; // balance frozen
   return co2RateHeldApplies() ? CountersData.co2RateHeld : beerCO2EvolutionGramsPerLiterPerDay;
 }
 
@@ -2231,6 +2241,21 @@ void processPressure(bool afterRelief) {
   float ventingElapsedAtLogSeconds = NAN;
   float ejectedMolsBeforeLiquidCorrection = 0.0f;
 
+ // Conditioning: plain refrigerator. The CO2 balance stays as it was at the
+  // entry (docs/conditioning.md); only the derived SG/ABV are recomputed from
+  // the counters (after a reboot they would otherwise be missing).
+  if (SetPointData.mode == MODE_CONDITIONING) {
+    if (afterRelief) { // safety relief: close the cycle without accounting
+      pressureAfterRelief = ControlData.pressure;
+      pressureAfterReliefMillis = pressureAcquiredMillis;
+      pressureReachedTarget = 0;
+      pressureReachedTargetMillis = 0;
+      pendingReliefIndex = -1;
+    }
+    calculateFermentationState();
+    return;
+  }
+
   if (afterRelief && debugging) {
     if (volumeDeterminationActive && pressureSamples) 
       ControlData.pressure = ControlData.pressure * 0.984f + random(-5,5) * 0.0005; 
@@ -2653,7 +2678,7 @@ bool processReliefCycle() {
         const unsigned long transferClosedMillis = millis();
         reliefValveClosedMillis = transferClosedMillis;
         // [DIAG] inicia a captura da recuperação pós-relief (somente log)
-        if (!volumeDeterminationActive)
+        if (!volumeDeterminationActive && SetPointData.mode != MODE_CONDITIONING)
           startRecoveryCapture(transferClosedMillis,
                                (transferClosedMillis - reliefValveOpenedMillis) / 1000.0f);
         pressureAcquisitionValid = false;
@@ -3583,7 +3608,8 @@ void pressureControl() {
              (taskWindowType == 0 || MILLISDIFF(taskWindowEndTime, 0)) &&
              shouldStartGasExpansion(millis())) {
     pressureRelief(false);
-  } else if (!gasFlowMode() && SetPointData.setPointPressure > 0.0f &&
+  } else if (!gasFlowMode() && SetPointData.mode != MODE_CONDITIONING &&
+             SetPointData.setPointPressure > 0.0f &&
              ControlData.pressure > (SetPointData.setPointPressure / sqrt(pressureDropFactor)) &&
              (taskWindowType == 0 || MILLISDIFF(taskWindowEndTime, 0))) {
     pressureRelief(false);

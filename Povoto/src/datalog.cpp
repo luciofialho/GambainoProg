@@ -127,11 +127,23 @@ static const char *taskWindowTypeToText(byte type) {
   }
 }
 
+static bool conditioningFinalColdPending = false;       // RAM only
+static bool conditioningFinalBrewfatherPending = false;
+
+void requestConditioningFinalRecord() {
+  conditioningFinalColdPending = true;
+  conditioningFinalBrewfatherPending = true;
+}
+
 void maybeSendBrewfatherLog() {
   static unsigned long lastSuccessfulSend = 0;
   static unsigned long lastAttemptTime = 0;
 
   if (SetPointData.mode == MODE_OFF) {
+    return;
+  }
+  const bool finalPoint = SetPointData.mode == MODE_CONDITIONING;
+  if (finalPoint && !conditioningFinalBrewfatherPending) {
     return;
   }
   if (BatchData.batchNumber == 0) {
@@ -143,8 +155,8 @@ void maybeSendBrewfatherLog() {
 
   unsigned long now = millis();
   
-  // Se teve sucesso, aguarda 10 minutos para próximo envio
-  if (lastSuccessfulSend != 0 && (now - lastSuccessfulSend) < BREWFATHER_SEND_INTERVAL_MS) {
+  // Se teve sucesso, aguarda 10 minutos para próximo envio (o ponto final não espera)
+  if (!finalPoint && lastSuccessfulSend != 0 && (now - lastSuccessfulSend) < BREWFATHER_SEND_INTERVAL_MS) {
     return;
   }
   
@@ -168,6 +180,7 @@ void maybeSendBrewfatherLog() {
   
   // Atualiza lastSuccessfulSend apenas após envio bem-sucedido
   lastSuccessfulSend = now;
+  if (finalPoint) conditioningFinalBrewfatherPending = false;
 }
 
 void doDataLog() {
@@ -184,6 +197,9 @@ void doDataLog() {
   }
 
   if (SetPointData.mode == MODE_OFF) {
+    return;
+  }
+  if (SetPointData.mode == MODE_CONDITIONING && !conditioningFinalColdPending) {
     return;
   }
 
@@ -342,11 +358,13 @@ void doDataLog() {
     GLogAddData(getCO2EvolutionSource());
     GLogAddData(co2.gasRate, 3);
     GLogSend();
+    if (SetPointData.mode == MODE_CONDITIONING) conditioningFinalColdPending = false;
   }
 }
 
 void doReliefDataLog(const ReliefLogData &data) {
-  if (!datalogFolderNameInUse[0] || BatchData.batchNumber == 0) {
+  if (!datalogFolderNameInUse[0] || BatchData.batchNumber == 0 ||
+      SetPointData.mode == MODE_CONDITIONING) {
     return;
   }
 
@@ -551,7 +569,8 @@ void doRecoveryDataLog(unsigned long reliefNumber, float p1, float p1Extrap,
                        float envTemp, float beerTemp, float openSeconds,
                        float shadowExponent, float shadowHsInstant, float shadowHsFiltered,
                        uint8_t points, const unsigned long *ms, const float *pressure) {
-  if (!datalogFolderNameInUse[0] || BatchData.batchNumber == 0) return;
+  if (!datalogFolderNameInUse[0] || BatchData.batchNumber == 0 ||
+      SetPointData.mode == MODE_CONDITIONING) return;
 
   static bool headerWritten = false;
   static int lastBatchNum = -1;

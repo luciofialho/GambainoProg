@@ -197,6 +197,9 @@ bool writeSetPointDataToNIV();
 void updatePatmFromFMTAltitude();
 
 void resetCountersForNewBatch();
+// Conditioning: the fermenter becomes a plain refrigerator (docs/conditioning.md).
+void enterConditioning();
+void resumeFermentingFromConditioning();
 bool readCountersDataFromEEPROM();
 bool writeCountersDataToNIV();
 bool writeTempStabilityToNIV();

@@ -2022,9 +2022,15 @@ void handleSetPointDataUpdate(AsyncWebServerRequest *request) {
     SetPointData.setPointSlowPressureSpeed = slowPressureSpeed;
   }
   if (SetPointData.mode != oldMode) {
-    resetChillHeatCycle();
-    if (SetPointData.mode == MODE_FERMENTING) {
-      resetCountersForNewBatch();
+    if (SetPointData.mode == MODE_CONDITIONING) {
+      enterConditioning(); // after the form fields: the pressure target becomes 0
+    } else {
+      resetChillHeatCycle();
+      // A new batch starts only from Off or Brewing/Transfering.
+      if (SetPointData.mode == MODE_FERMENTING) {
+        if (oldMode == MODE_CONDITIONING) resumeFermentingFromConditioning();
+        else resetCountersForNewBatch();
+      }
     }
   }
   
