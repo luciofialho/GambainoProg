@@ -4,6 +4,15 @@ Regras que mudam os setpoints de temperatura e pressão, e/ou mandam um e-mail, 
 
 Princípio de projeto: **não disparar é mais conservador que disparar fora de hora**. Dado inválido, ausente ou ambíguo bloqueia o gatilho.
 
+## Manual only e Trigger now
+
+- Cada regra tem a opção **Manual only**, persistida na NVS e exportada no XML. Com ela marcada, os campos de gatilho de medida ficam desabilitados na página, mas seus valores são preservados para uma eventual volta ao modo automático. Uma regra manual pode não ter gatilhos de medida.
+- Uma regra **Manual only** nunca dispara na avaliação periódica. O botão **Trigger now** também pode disparar uma regra automática manualmente, sem testar seus gatilhos de medida.
+- **Trigger now** ocupa o lugar de **Reset**: aparece somente enquanto a regra não tiver disparado e, se depender da anterior, somente depois que a anterior tiver disparado. Há confirmação antes do envio. O servidor confere novamente essas condições; edições ainda não salvas na página não são aplicadas pelo botão.
+- O disparo manual usa a mesma aplicação de setpoints, persistência de horário, log Serial e e-mail do disparo automático. Exige horário NTP válido, mas não exige o modo Fermenting. Sem NTP ou se a gravação do horário falhar, nenhum setpoint é aplicado.
+- XML v2 continua compatível: `manualOnly="true"` ou `"false"` é um atributo opcional de `<rule>`; a ausência significa `false`.
+- Na página, a regra 1 fica sempre visível. Uma regra posterior só é ocultada quando a anterior não tem gatilho de medida nem **Manual only** marcado e a própria regra está vazia (sem nome, gatilhos, ações, dependência ou horário de disparo). A visibilidade acompanha as edições ainda não salvas; ocultar não altera a execução nem apaga definições.
+
 ## 1. Estabilidade de temperatura e pressão
 
 Cada grandeza tem um estado e um horário ("stable since"), persistidos em `counters`:
@@ -61,7 +70,7 @@ Até **8 regras**. Cada uma:
 | Pressure / Pressure slow | 0–2 bar | mesmo limite do teclado da tela |
 
 - Campo vazio = critério ignorado / sem ação.
-- Regra com qualquer ação exige pelo menos um gatilho de medida (o "requires rule" sozinho não basta). Regra vazia (ou só com nome) nunca dispara.
+- Regra automática com qualquer ação exige pelo menos um gatilho de medida (o "requires rule" sozinho não basta). Regra manual pode não ter gatilhos de medida. Regra vazia (ou só com nome) não dispara automaticamente.
 - Regra **sem ações** é válida: dispara, grava o horário e só manda o e-mail.
 - Ações seguem a mesma semântica da página de setpoints: só o direto aplica o valor e cancela a rampa; só o slow faz a rampa a partir do setpoint atual; os dois saltam para o direto e fazem a rampa até o slow. As velocidades das rampas são as da página de setpoints.
 - Uma regra disparada fica somente leitura, com botão **Reset** (zera o horário e libera edição).
@@ -95,7 +104,7 @@ Até **8 regras**. Cada uma:
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <povotoAutoSetpoints version="2">
-  <rule index="1" name="Cold crash">
+  <rule index="1" name="Cold crash" manualOnly="false">
     <trigger stableHours="24" pressureStableHours="" sgBelow="1.010" co2RateBelow=""/>
     <action pressure="" pressureSlow="" temperature="" temperatureSlow="2"/>
   </rule>
@@ -114,7 +123,7 @@ Até **8 regras**. Cada uma:
 | `pvt_autosp` | `trig0`..`trig7` | horário do disparo (epoch local; 0 = não disparou) |
 | `pvt_counters` | `tempState`, `tempStableAt`, `pressState`, `pressStableAt` | estabilidade |
 
-- Blob de tamanho diferente (layout antigo) ou regra inválida é descartado no boot. **Antes de gravar um firmware que mude `AutoSetpointRule_t`, exporte o XML** e importe depois.
+- Blobs antigos sem `manualOnly` são ignorados no boot, e seus horários de disparo são zerados para liberar a edição das regras. Refaça as regras na página ou importe um XML; XMLs antigos continuam compatíveis e entram como `manualOnly=false`. Outros tamanhos ou regras inválidas também são descartados.
 - `pvt_autosp` entra no factory reset e na reescrita de schema; não faz parte do `povoto-settings.json`.
 
 ## 7. Observabilidade e testes

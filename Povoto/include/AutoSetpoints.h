@@ -24,6 +24,8 @@ struct AutoSetpointRule_t {
   float temperatureSlow;
   // Extra condition (rules 2 and later): the previous rule must have fired.
   uint8_t requiresPrevious;
+  // Only the Trigger now button can fire this rule; measurement triggers stay stored.
+  uint8_t manualOnly;
 } __attribute__((packed));
 
 // Local NTP epoch (UTC-3) of the trigger; 0 = not yet triggered.
@@ -63,10 +65,20 @@ struct AutoSetpointFiring_t {
   uint32_t triggeredAt;
   AutoSetpointRule_t rule;
   AutoSetpointMeasurements measured;
+  bool manuallyTriggered;
 };
 
 // Called from loop(); only in Fermenting mode and with a valid NTP time.
 void evaluateAutoSetpoints();
+enum class AutoSetpointManualTriggerResult {
+  Triggered,
+  InvalidRule,
+  AlreadyTriggered,
+  PreviousNotTriggered,
+  NoClock,
+  StorageError
+};
+AutoSetpointManualTriggerResult triggerAutoSetpointRuleNow(int index);
 // Plain-text report: rule, time, criteria with measured values, actions.
 String describeAutoSetpointFiring(const AutoSetpointFiring_t &firing);
 

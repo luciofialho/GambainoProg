@@ -1443,7 +1443,8 @@ static void formatOptional(float value, char *out, size_t outSize) {
 
 // decimals < 0: value as typed (%g) and any step; otherwise that fixed precision.
 static void appendRuleInput(char *html, size_t size, int rule, const char *field,
-                            const char *label, float value, bool readOnly, int decimals = -1) {
+                            const char *label, float value, bool readOnly, int decimals = -1,
+                            bool disabled = false) {
   char text[16];
   if (decimals < 0 || isnan(value)) formatOptional(value, text, sizeof(text));
   else snprintf(text, sizeof(text), "%.*f", decimals, value);
@@ -1451,8 +1452,21 @@ static void appendRuleInput(char *html, size_t size, int rule, const char *field
   if (decimals >= 0) snprintf(step, sizeof(step), "%g", powf(10.0f, -decimals));
   appendHtml(html, size,
     "<div class='form-group'><label for='r%d_%s'>%s</label>"
-    "<input type='number' step='%s' id='r%d_%s' name='r%d_%s' value='%s'%s></div>",
-    rule, field, label, step, rule, field, rule, field, text, readOnly ? " readonly" : "");
+    "<input type='number' step='%s' id='r%d_%s' name='r%d_%s' value='%s'%s%s></div>",
+    rule, field, label, step, rule, field, rule, field, text,
+    readOnly ? " readonly" : "", disabled ? " disabled" : "");
+}
+
+// Disabled trigger inputs need enabled mirrors so their saved values survive a
+// manual-only form submission and can be restored if the checkbox is cleared.
+static void appendRuleTriggerMirror(char *html, size_t size, int rule,
+                                    const char *field, float value, bool manualOnly, int decimals = -1) {
+  char text[16];
+  if (decimals < 0 || isnan(value)) formatOptional(value, text, sizeof(text));
+  else snprintf(text, sizeof(text), "%.*f", decimals, value);
+  appendHtml(html, size,
+    "<input type='hidden' id='r%d_%s_copy' name='r%d_%s' value='%s'%s>",
+    rule, field, rule, field, text, manualOnly ? "" : " disabled");
 }
 
 // For HTML text, HTML attributes and XML attributes.
@@ -1480,13 +1494,18 @@ static void appendAutoSetpointSection(char *html, size_t size) {
   appendHtml(html, size,
     "<h2>Automatic set points</h2>"
     "<p class='hint'>Evaluated only in Fermenting mode. Each rule fires once, when all filled "
-    "triggers are met. Empty fields are ignored.</p>"
+    "triggers are met. Manual-only rules run only through Trigger now. Empty fields are ignored.</p>"
     // autocomplete off: a reload must show the stored values, not the typed ones.
-    "<form id='rulesForm' action='/setpoint/auto/update' method='POST' autocomplete='off' onsubmit='return checkRules()'>");
+    "<form id='rulesForm' action='/setpoint/auto/update' method='POST' autocomplete='off' onsubmit='return checkRules(event)'>");
 
   for (int i = 0; i < AUTO_SETPOINT_RULE_COUNT; i++) {
     const AutoSetpointRule_t &rule = rules[i];
     const bool triggered = status.triggeredAt[i] != 0;
+    const bool previousHasTrigger = i == 0 || rules[i - 1].manualOnly ||
+                                    autoSetpointRuleHasTrigger(rules[i - 1]);
+    const bool ownHasContent = rule.name[0] || rule.manualOnly || rule.requiresPrevious ||
+                               !autoSetpointRuleIsEmpty(rule) || triggered;
+    const bool hidden = i > 0 && !previousHasTrigger && !ownHasContent;
     char triggeredText[24] = "not yet triggered";
     if (triggered) {
       formatLocalEpochISO(status.triggeredAt[i], triggeredText, sizeof(triggeredText));
@@ -1495,24 +1514,37 @@ static void appendAutoSetpointSection(char *html, size_t size) {
     }
     const String name = escapeMarkup(rule.name);
     appendHtml(html, size,
-      "<fieldset class='rule'><legend>Rule %d<span id='r%d_title'>%s%s</span></legend>"
+      "<fieldset class='rule' id='r%d_rule' data-triggered='%d'%s>"
+      "<legend>Rule %d<span id='r%d_title'>%s%s</span></legend>"
       "<div class='rule-status'>Triggered at: <b>%s</b>",
+      i, triggered ? 1 : 0, hidden ? " hidden" : "",
       i + 1, i, name.length() ? " - " : "", name.c_str(), triggeredText);
     if (triggered)
       appendHtml(html, size,
-        " <button type='submit' class='btn-reset' formaction='/setpoint/auto/reset?rule=%d' formnovalidate>Reset</button>",
+        " <button type='submit' class='btn-reset' data-rule-action='1' formaction='/setpoint/auto/reset?rule=%d' formnovalidate>Reset</button>",
+        i + 1);
+    else if (i == 0 || !rule.requiresPrevious || status.triggeredAt[i - 1] != 0)
+      appendHtml(html, size,
+        " <button type='button' class='btn-trigger' onclick='triggerRule(%d)'>Trigger now</button>",
         i + 1);
     appendHtml(html, size,
       "</div><div class='form-group'><label for='r%d_name'>Name:</label>"
       "<input type='text' id='r%d_name' name='r%d_name' value='%s' maxlength='%u'"
       " placeholder='What this rule is meant for'%s></div>",
       i, i, i, name.c_str(), (unsigned)(AUTO_SETPOINT_NAME_SIZE - 1), triggered ? " readonly" : "");
+    appendHtml(html, size,
+      "<label class='req'><input type='checkbox' id='r%d_manual' name='r%d_manual' value='1'%s%s> Manual only</label>",
+      i, i, rule.manualOnly ? " checked" : "", triggered ? " disabled" : "");
     appendHtml(html, size, "<div class='rule-title'>Triggers</div><div class='rule-grid'>");
-    appendRuleInput(html, size, i, "sh", "Temp. stable for (h):", rule.stableHours, triggered);
-    appendRuleInput(html, size, i, "psh", "Press. stable for (h):", rule.pressureStableHours, triggered);
-    appendRuleInput(html, size, i, "sg", "SG &lt; x:", rule.sgBelow, triggered, 3);
-    appendRuleInput(html, size, i, "co2", "gCO2/L/d &lt; x:", rule.co2RateBelow, triggered);
+    appendRuleInput(html, size, i, "sh", "Temp. stable for (h):", rule.stableHours, triggered, -1, rule.manualOnly);
+    appendRuleInput(html, size, i, "psh", "Press. stable for (h):", rule.pressureStableHours, triggered, -1, rule.manualOnly);
+    appendRuleInput(html, size, i, "sg", "SG &lt; x:", rule.sgBelow, triggered, 3, rule.manualOnly);
+    appendRuleInput(html, size, i, "co2", "gCO2/L/d &lt; x:", rule.co2RateBelow, triggered, -1, rule.manualOnly);
     appendHtml(html, size, "</div>");
+    appendRuleTriggerMirror(html, size, i, "sh", rule.stableHours, rule.manualOnly);
+    appendRuleTriggerMirror(html, size, i, "psh", rule.pressureStableHours, rule.manualOnly);
+    appendRuleTriggerMirror(html, size, i, "sg", rule.sgBelow, rule.manualOnly, 3);
+    appendRuleTriggerMirror(html, size, i, "co2", rule.co2RateBelow, rule.manualOnly);
     if (i > 0)
       appendHtml(html, size,
         "<label class='req'><input type='checkbox' id='r%d_req' name='r%d_req' value='1'%s%s>"
@@ -1532,7 +1564,7 @@ static void appendAutoSetpointSection(char *html, size_t size) {
 
   appendHtml(html, size,
     "<div class='rule-title'>Export / import</div>"
-    "<p class='hint'>The XML holds names, triggers and actions only. Exporting saves the rules first. "
+    "<p class='hint'>The XML holds names, manual-only flags, triggers and actions. Exporting saves the rules first. "
     "Importing replaces all rules and clears their trigger times.</p>"
     "<button type='button' class='btn-secondary' onclick='saveAndExport()'>Save &amp; export XML</button> "
     "<input type='file' id='xmlFile' accept='.xml,application/xml,text/xml' style='width:auto'> "
@@ -1541,12 +1573,40 @@ static void appendAutoSetpointSection(char *html, size_t size) {
 
   appendHtml(html, size,
     "<script>"
-    "function checkRules(){"
+    "function confirmTrigger(i){return confirm('Trigger the SAVED definition of rule '+i+"
+    "' now? Unsaved edits on this page will not be applied.');}"
+    "function triggerRule(i){"
+    "if(!confirmTrigger(i))return;"
+    "fetch('/setpoint/auto/trigger?rule='+i,{method:'POST'})"
+    ".then(res=>res.text().then(m=>{if(!res.ok)throw m;window.location='/setpoint';}))"
+    ".catch(e=>alert(typeof e==='string'?e:'Trigger failed: '+e));}"
+    "function syncManual(i){"
+    "const manual=document.getElementById('r'+i+'_manual').checked;"
+    "for(const f of ['sh','psh','sg','co2']){"
+    "const input=document.getElementById('r'+i+'_'+f),copy=document.getElementById('r'+i+'_'+f+'_copy');"
+    "copy.value=input.value;input.disabled=manual;copy.disabled=!manual;}}"
+    "function ruleHasTrigger(i){"
+    "return document.getElementById('r'+i+'_manual').checked||"
+    "['sh','psh','sg','co2'].some(f=>document.getElementById('r'+i+'_'+f).value.trim()!=='');}"
+    "function ruleHasContent(i){"
+    "const rule=document.getElementById('r'+i+'_rule');"
+    "return rule.dataset.triggered==='1'||document.getElementById('r'+i+'_name').value.trim()!==''||"
+    "document.getElementById('r'+i+'_manual').checked||"
+    "(i>0&&document.getElementById('r'+i+'_req').checked)||"
+    "['sh','psh','sg','co2','t','ts','p','ps'].some(f=>"
+    "document.getElementById('r'+i+'_'+f).value.trim()!=='');}"
+    "function updateRuleVisibility(){"
+    "const count=document.querySelectorAll('fieldset.rule').length;"
+    "for(let i=1;i<count;i++)document.getElementById('r'+i+'_rule').hidden="
+    "!ruleHasTrigger(i-1)&&!ruleHasContent(i);}"
+    "function checkRules(e){"
+    "if(e&&e.submitter&&e.submitter.dataset.ruleAction)return true;"
     "for(let i=0;i<%d;i++){"
     "const v=f=>document.getElementById('r'+i+'_'+f).value.trim()!=='';"
     "const trig=['sh','psh','sg','co2'].some(v);"
     "const act=['p','ps','t','ts'].some(v);"
-    "if(act&&!trig){alert('Rule '+(i+1)+': at least one trigger is required.');return false;}"
+    "if(act&&!document.getElementById('r'+i+'_manual').checked&&!trig){"
+    "alert('Rule '+(i+1)+': at least one trigger is required.');return false;}"
     "}return true;}"
     "const XT=['stableHours','pressureStableHours','sgBelow','co2RateBelow'],"
     "XA=['pressure','pressureSlow','temperature','temperatureSlow'],"
@@ -1578,6 +1638,9 @@ static void appendAutoSetpointSection(char *html, size_t size) {
     "if(seen[i])throw 'Rule '+i+' appears more than once.';"
     "seen[i]=1;"
     "b.append('r'+(i-1)+'_name',e.getAttribute('name')||'');"
+    "const manual=(e.getAttribute('manualOnly')||'false').trim();"
+    "if(manual!=='true'&&manual!=='false')throw 'Rule '+i+': manualOnly must be true or false.';"
+    "if(manual==='true')b.append('r'+(i-1)+'_manual','1');"
     "const tr=e.getElementsByTagName('trigger')[0],ac=e.getElementsByTagName('action')[0];"
     "const rq=((tr&&tr.getAttribute('requiresPrevious'))||'').trim();"
     "if(rq!==''&&rq!=='true'&&rq!=='false')throw 'Rule '+i+': requiresPrevious must be true or false.';"
@@ -1595,7 +1658,13 @@ static void appendAutoSetpointSection(char *html, size_t size) {
     // Keeps the name next to 'Rule N' in step with the name field.
     "for(let i=0;i<%d;i++){"
     "const n=document.getElementById('r'+i+'_name'),t=document.getElementById('r'+i+'_title');"
-    "n.addEventListener('input',()=>{const v=n.value.trim();t.textContent=v?' - '+v:'';});}"
+    "n.addEventListener('input',()=>{const v=n.value.trim();t.textContent=v?' - '+v:'';});"
+    "const manual=document.getElementById('r'+i+'_manual');"
+    "manual.addEventListener('change',()=>syncManual(i));syncManual(i);}"
+    "const rulesForm=document.getElementById('rulesForm');"
+    "rulesForm.addEventListener('input',updateRuleVisibility);"
+    "rulesForm.addEventListener('change',updateRuleVisibility);"
+    "updateRuleVisibility();"
     "</script>",
     AUTO_SETPOINT_RULE_COUNT, AUTO_SETPOINT_RULE_COUNT, AUTO_SETPOINT_RULE_COUNT,
     AUTO_SETPOINT_RULE_COUNT);
@@ -1629,9 +1698,10 @@ static String parseAutoSetpointRules(AsyncWebServerRequest *request, AutoSetpoin
     // SG is kept with 3 decimals, as shown on the page.
     if (!isnan(values[2])) values[2] = roundf(values[2] * 1000.0f) / 1000.0f;
     AutoSetpointRule_t rule = {"", values[0], values[1], values[2], values[3],
-                               values[4], values[5], values[6], values[7], 0};
+                               values[4], values[5], values[6], values[7], 0, 0};
     // An unchecked box is not posted. Rule 1 has no previous rule.
     rule.requiresPrevious = (i > 0 && request->hasParam("r" + String(i) + "_req", true)) ? 1 : 0;
+    rule.manualOnly = request->hasParam("r" + String(i) + "_manual", true) ? 1 : 0;
     const String nameParam = "r" + String(i) + "_name";
     if (request->hasParam(nameParam, true)) {
       String name = request->getParam(nameParam, true)->value();
@@ -1692,7 +1762,8 @@ void handleAutoSetpointExport(AsyncWebServerRequest *request) {
   String xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<povotoAutoSetpoints version=\"2\">\n";
   for (int i = 0; i < AUTO_SETPOINT_RULE_COUNT; i++) {
     const AutoSetpointRule_t &rule = rules[i];
-    xml += "  <rule index=\"" + String(i + 1) + "\" name=\"" + escapeMarkup(rule.name) + "\">\n    <trigger";
+    xml += "  <rule index=\"" + String(i + 1) + "\" name=\"" + escapeMarkup(rule.name) +
+           "\" manualOnly=\"" + (rule.manualOnly ? "true" : "false") + "\">\n    <trigger";
     appendXmlAttribute(xml, "stableHours", rule.stableHours);
     appendXmlAttribute(xml, "pressureStableHours", rule.pressureStableHours);
     appendXmlAttribute(xml, "sgBelow", rule.sgBelow, 3);
@@ -1740,6 +1811,31 @@ void handleAutoSetpointReset(AsyncWebServerRequest *request) {
   request->redirect("/setpoint");
 }
 
+void handleAutoSetpointTrigger(AsyncWebServerRequest *request) {
+  const int rule = request->hasParam("rule") ? request->getParam("rule")->value().toInt() : 0;
+  const AutoSetpointManualTriggerResult result = triggerAutoSetpointRuleNow(rule - 1);
+  switch (result) {
+    case AutoSetpointManualTriggerResult::Triggered:
+      request->redirect("/setpoint");
+      return;
+    case AutoSetpointManualTriggerResult::InvalidRule:
+      request->send(400, "text/plain", "Invalid rule.");
+      return;
+    case AutoSetpointManualTriggerResult::AlreadyTriggered:
+      request->send(409, "text/plain", "Rule has already triggered. Reset it before triggering again.");
+      return;
+    case AutoSetpointManualTriggerResult::PreviousNotTriggered:
+      request->send(409, "text/plain", "The previous rule has not triggered yet.");
+      return;
+    case AutoSetpointManualTriggerResult::NoClock:
+      request->send(503, "text/plain", "NTP time is unavailable. The rule was not triggered.");
+      return;
+    case AutoSetpointManualTriggerResult::StorageError:
+      request->send(500, "text/plain", "Trigger time could not be saved to NVS. No action was applied.");
+      return;
+  }
+}
+
 // ========== SETPOINT DATA HANDLERS ==========
 
 void handleSetPointDataPage(AsyncWebServerRequest *request) {
@@ -1781,7 +1877,7 @@ void handleSetPointDataPage(AsyncWebServerRequest *request) {
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "h2 { color: #333; margin: 28px 0 12px; } .setpoint-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; } .setpoint-grid .form-group { margin-bottom: 0; } @media (max-width: 600px) { .setpoint-grid { grid-template-columns: 1fr; } }", remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, ".hint { color: #666; font-size: 14px; } fieldset.rule { border: 1px solid #ddd; border-radius: 6px; margin: 0 0 16px; padding: 10px 14px; } fieldset.rule legend { font-weight: bold; color: #333; } .rule-status { margin-bottom: 8px; } .rule-title { color: #333; font-weight: bold; margin: 10px 0 6px; } .rule-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; } .rule-grid .form-group { margin-bottom: 0; } input[readonly] { background: #f3f3f3; color: #777; } label.req { font-weight: normal; margin: 10px 0 0; } label.req input { width: auto; margin-right: 6px; } .btn-reset { background: #e67e22; color: white; padding: 4px 12px; font-size: 14px; } .import-msg { display: none; margin-top: 10px; padding: 10px; border-radius: 4px; background: #fdecea; color: #b71c1c; border: 1px solid #f5c6cb; } @media (max-width: 600px) { .rule-grid { grid-template-columns: 1fr 1fr; } }", remaining);
+  strncat(html, ".hint { color: #666; font-size: 14px; } fieldset.rule { border: 1px solid #ddd; border-radius: 6px; margin: 0 0 16px; padding: 10px 14px; } fieldset.rule legend { font-weight: bold; color: #333; } .rule-status { margin-bottom: 8px; } .rule-title { color: #333; font-weight: bold; margin: 10px 0 6px; } .rule-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; } .rule-grid .form-group { margin-bottom: 0; } input[readonly], input:disabled { background: #f3f3f3; color: #777; } label.req { font-weight: normal; margin: 10px 0 0; } label.req input { width: auto; margin-right: 6px; } button.btn-reset, button.btn-trigger { color: white; padding: 4px 12px; font-size: 14px; } button.btn-reset { background: #e67e22; } button.btn-trigger { background: #4CAF50; } .import-msg { display: none; margin-top: 10px; padding: 10px; border-radius: 4px; background: #fdecea; color: #b71c1c; border: 1px solid #f5c6cb; } @media (max-width: 600px) { .rule-grid { grid-template-columns: 1fr 1fr; } }", remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "</style></head><body>", remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;

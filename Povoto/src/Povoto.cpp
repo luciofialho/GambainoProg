@@ -216,6 +216,7 @@ void setup() {
   server.on("/setpoint/update", HTTP_POST, handleSetPointDataUpdate);
   server.on("/setpoint/auto/update", HTTP_POST, handleAutoSetpointUpdate);
   server.on("/setpoint/auto/reset", HTTP_POST, handleAutoSetpointReset);
+  server.on("/setpoint/auto/trigger", HTTP_POST, handleAutoSetpointTrigger);
   server.on("/setpoint/auto/export", HTTP_GET, handleAutoSetpointExport);
   server.on("/setpoint/auto/import", HTTP_POST, handleAutoSetpointImport);
   server.on("/setpoint", HTTP_GET, handleSetPointDataPage);

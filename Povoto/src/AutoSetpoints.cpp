@@ -16,7 +16,7 @@
 // trigger times (trig0, trig1, ...). Trigger times are written separately so
 // that saving definitions never rewrites them.
 
-static const AutoSetpointRule_t emptyRule = {"", NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN, 0};
+static const AutoSetpointRule_t emptyRule = {"", NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN, 0, 0};
 
 // Filled with emptyRule by resetAutoSetpointsToDefaults() when loaded at boot.
 static AutoSetpointRule_t autoSetpointRules[AUTO_SETPOINT_RULE_COUNT];
@@ -69,11 +69,13 @@ static bool inRangeOrEmpty(float value, float minimum, float maximum) {
 }
 
 String validateAutoSetpointRule(const AutoSetpointRule_t &rule) {
-  if (autoSetpointRuleIsEmpty(rule)) return "";
-  if (!autoSetpointRuleHasTrigger(rule))
-    return "at least one trigger is required.";
+  if (rule.manualOnly > 1)
+    return "invalid 'manual only' flag.";
   if (rule.requiresPrevious > 1)
     return "invalid 'requires previous rule' flag.";
+  if (autoSetpointRuleIsEmpty(rule)) return "";
+  if (!rule.manualOnly && !autoSetpointRuleHasTrigger(rule))
+    return "at least one trigger is required.";
   if (!inRangeOrEmpty(rule.stableHours, 1.0f, 360.0f))
     return "temperature stable hours must be from 1 to 360.";
   if (!inRangeOrEmpty(rule.pressureStableHours, 1.0f, 360.0f))
@@ -163,21 +165,28 @@ bool readAutoSetpointsFromEEPROM() {
   if (!store.begin("pvt_autosp", true)) return false;
   AutoSetpointRule_t rules[AUTO_SETPOINT_RULE_COUNT];
   AutoSetpointStatus_t status = {};
+  bool incompatible[AUTO_SETPOINT_RULE_COUNT] = {};
   char key[8];
   for (int i = 0; i < AUTO_SETPOINT_RULE_COUNT; i++) {
     rules[i] = emptyRule;
     snprintf(key, sizeof(key), "rule%d", i);
-    // Blobs of another size (older layout) are dropped.
-    if (store.getBytesLength(key) == sizeof(rules[i]))
+    const size_t storedSize = store.getBytesLength(key);
+    if (storedSize == sizeof(rules[i]))
       store.getBytes(key, &rules[i], sizeof(rules[i]));
+    else if (storedSize != 0)
+      incompatible[i] = true;
     rules[i].name[sizeof(rules[i].name) - 1] = '\0';
     // An invalid stored rule is dropped rather than risk an unexpected action.
     if (validateAutoSetpointRule(rules[i]).length() != 0)
       rules[i] = emptyRule;
     snprintf(key, sizeof(key), "trig%d", i);
-    status.triggeredAt[i] = store.getUInt(key, 0);
+    status.triggeredAt[i] = incompatible[i] ? 0 : store.getUInt(key, 0);
   }
   store.end();
+
+  // A discarded old rule must not stay locked by its separately stored time.
+  for (int i = 0; i < AUTO_SETPOINT_RULE_COUNT; i++)
+    if (incompatible[i]) writeTrigger(i, 0);
 
   portENTER_CRITICAL(&autoSetpointLock);
   memcpy(autoSetpointRules, rules, sizeof(autoSetpointRules));
@@ -232,6 +241,7 @@ static AutoSetpointMeasurements readAutoSetpointMeasurements(uint32_t now) {
 }
 
 static bool autoSetpointRuleMet(const AutoSetpointRule_t &rule, const AutoSetpointMeasurements &m) {
+  if (rule.manualOnly) return false;
   if (!autoSetpointRuleHasTrigger(rule)) return false;
   if (!isnan(rule.stableHours) && !(m.stableHours > rule.stableHours)) return false;
   if (!isnan(rule.pressureStableHours) && !(m.pressureStableHours > rule.pressureStableHours)) return false;
@@ -276,14 +286,18 @@ String describeAutoSetpointFiring(const AutoSetpointFiring_t &firing) {
   const AutoSetpointMeasurements &m = firing.measured;
 
   String criteria;
-  if (!isnan(r.stableHours))
-    criteria += "temperature stable > " + String(r.stableHours, 1) + " h (measured " + String(m.stableHours, 1) + " h)\n";
-  if (!isnan(r.pressureStableHours))
-    criteria += "pressure stable > " + String(r.pressureStableHours, 1) + " h (measured " + String(m.pressureStableHours, 1) + " h)\n";
-  if (!isnan(r.sgBelow))
-    criteria += "SG < " + String(r.sgBelow, 3) + " (measured " + String(m.sg, 4) + ")\n";
-  if (!isnan(r.co2RateBelow))
-    criteria += "gCO2/L/d < " + String(r.co2RateBelow, 2) + " (measured " + String(m.co2Rate, 2) + ")\n";
+  if (firing.manuallyTriggered) {
+    criteria += "Triggered manually; measurement criteria were not evaluated.\n";
+  } else {
+    if (!isnan(r.stableHours))
+      criteria += "temperature stable > " + String(r.stableHours, 1) + " h (measured " + String(m.stableHours, 1) + " h)\n";
+    if (!isnan(r.pressureStableHours))
+      criteria += "pressure stable > " + String(r.pressureStableHours, 1) + " h (measured " + String(m.pressureStableHours, 1) + " h)\n";
+    if (!isnan(r.sgBelow))
+      criteria += "SG < " + String(r.sgBelow, 3) + " (measured " + String(m.sg, 4) + ")\n";
+    if (!isnan(r.co2RateBelow))
+      criteria += "gCO2/L/d < " + String(r.co2RateBelow, 2) + " (measured " + String(m.co2Rate, 2) + ")\n";
+  }
   if (r.requiresPrevious && firing.index > 0)
     criteria += "rule " + String(firing.index) + " already triggered\n";
 
@@ -302,18 +316,37 @@ String describeAutoSetpointFiring(const AutoSetpointFiring_t &firing) {
          "Criteria:\n" + criteria + "\nActions applied: " + actions + "\n";
 }
 
-static void fireAutoSetpointRule(int index, const AutoSetpointRule_t &rule, uint32_t now,
-                                 const AutoSetpointMeasurements &measured) {
-  // Persist the trigger first: a reboot in between may skip the actions but
-  // can never fire the rule twice.
+static AutoSetpointManualTriggerResult fireAutoSetpointRule(
+    int index, uint32_t now, const AutoSetpointMeasurements &measured, bool manuallyTriggered) {
+  AutoSetpointRule_t rule;
+  AutoSetpointManualTriggerResult result = AutoSetpointManualTriggerResult::Triggered;
   portENTER_CRITICAL(&autoSetpointLock);
-  autoSetpointStatus.triggeredAt[index] = now;
+  if (autoSetpointStatus.triggeredAt[index] != 0)
+    result = AutoSetpointManualTriggerResult::AlreadyTriggered;
+  else if (index > 0 && autoSetpointRules[index].requiresPrevious &&
+           autoSetpointStatus.triggeredAt[index - 1] == 0)
+    result = AutoSetpointManualTriggerResult::PreviousNotTriggered;
+  else if (!manuallyTriggered && !autoSetpointRuleMet(autoSetpointRules[index], measured))
+    result = AutoSetpointManualTriggerResult::InvalidRule;
+  else {
+    rule = autoSetpointRules[index];
+    autoSetpointStatus.triggeredAt[index] = now;
+  }
   portEXIT_CRITICAL(&autoSetpointLock);
-  writeTrigger(index, now);
+  if (result != AutoSetpointManualTriggerResult::Triggered) return result;
+
+  // Persist before applying. A failed write must not execute the actions.
+  if (!writeTrigger(index, now)) {
+    portENTER_CRITICAL(&autoSetpointLock);
+    if (autoSetpointStatus.triggeredAt[index] == now)
+      autoSetpointStatus.triggeredAt[index] = 0;
+    portEXIT_CRITICAL(&autoSetpointLock);
+    return AutoSetpointManualTriggerResult::StorageError;
+  }
 
   applyAutoSetpointActions(rule);
 
-  const AutoSetpointFiring_t firing = {index, now, rule, measured};
+  const AutoSetpointFiring_t firing = {index, now, rule, measured, manuallyTriggered};
   const String report = describeAutoSetpointFiring(firing);
   Serial.print("[AUTOSP] ");
   Serial.println(report);
@@ -322,6 +355,15 @@ static void fireAutoSetpointRule(int index, const AutoSetpointRule_t &rule, uint
   snprintf(subject, sizeof(subject), "[POVOTO %d] Automatic set point rule %d triggered%s%s",
            (int)FMTData.PovotoNum, index + 1, rule.name[0] ? ": " : "", rule.name);
   queuePovotoMail(subject, report);
+  return AutoSetpointManualTriggerResult::Triggered;
+}
+
+AutoSetpointManualTriggerResult triggerAutoSetpointRuleNow(int index) {
+  if (index < 0 || index >= AUTO_SETPOINT_RULE_COUNT)
+    return AutoSetpointManualTriggerResult::InvalidRule;
+  const uint32_t now = NTPEpoch();
+  if (now == 0) return AutoSetpointManualTriggerResult::NoClock;
+  return fireAutoSetpointRule(index, now, readAutoSetpointMeasurements(now), true);
 }
 
 void evaluateAutoSetpoints() {
@@ -337,7 +379,8 @@ void evaluateAutoSetpoints() {
 
   bool pending = false;
   for (int i = 0; i < AUTO_SETPOINT_RULE_COUNT; i++)
-    pending = pending || (status.triggeredAt[i] == 0 && autoSetpointRuleHasTrigger(rules[i]));
+    pending = pending || (status.triggeredAt[i] == 0 && !rules[i].manualOnly &&
+                          autoSetpointRuleHasTrigger(rules[i]));
   if (!pending) return;
 
   const uint32_t now = NTPEpoch();
@@ -350,7 +393,7 @@ void evaluateAutoSetpoints() {
     if (status.triggeredAt[i] != 0) continue;
     if (i > 0 && rules[i].requiresPrevious && status.triggeredAt[i - 1] == 0) continue;
     if (!autoSetpointRuleMet(rules[i], measured)) continue;
-    fireAutoSetpointRule(i, rules[i], now, measured);
-    return;
+    if (fireAutoSetpointRule(i, now, measured, false) == AutoSetpointManualTriggerResult::Triggered)
+      return;
   }
 }
