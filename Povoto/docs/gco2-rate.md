@@ -13,7 +13,7 @@ total = totalMolsEjected + CO2InSolution + headSpaceCO2Mols + expansionTankInven
 | Parcela | Origem |
 |---|---|
 | `CountersData.totalMolsEjected` | CO2 ventilado pelo tanque de expansão (reliefs), com a correção de massa líquida |
-| `CountersData.CO2InSolution` | CO2 dissolvido na cerveja (modo half-life ou immediate) |
+| `CountersData.CO2InSolution` | CO2 dissolvido na cerveja (estados em docs/dissolved-co2.md) |
 | `headSpaceCO2Mols` | P·Vh/(R·T) − P_início·Vh/(R·T_início), com pressão manométrica e o headspace aplicado; mínimo 0 |
 | `expansionTankInventoryMoles()` | CO2 que ainda está no tanque de expansão, no ciclo atual |
 
@@ -22,7 +22,7 @@ total = totalMolsEjected + CO2InSolution + headSpaceCO2Mols + expansionTankInven
 - `processPressure()` roda a cada ~1 s (pelo `pressureControl()`) e ao fim de cada relief. Em cada chamada, uma amostra `{millis, total, pressão}` só entra se já tiverem passado **60 s** desde a anterior (`CO2_EVOLUTION_SAMPLE_MS`). Na prática, 1 amostra por minuto.
 - Nenhuma amostra nos **2 primeiros minutos** depois do boot.
 - Buffer circular de **71 amostras** (`CO2_EVOLUTION_HISTORY_SIZE`), cerca de 70 min. Cheio, a mais antiga é substituída.
-- A pressão de cada amostra também é usada pelo critério de fermentação ativa do CO2 dissolvido (pressão de 10 min atrás).
+- Cada amostra também guarda a fase gasosa (ejetado + headspace + tanque de expansão) e um indicador de degrau externo, usados pela taxa da fase gasosa que decide o estado do CO2 dissolvido (docs/dissolved-co2.md; coluna Cold `GasCO2Rate`).
 
 ## 3. Cálculo da taxa
 
@@ -36,7 +36,7 @@ taxa [g/L/d] = ΔCO2 [mol] × 44,01 [g/mol] × 86 400 000 [ms/d] / (volume de ce
 
 - A taxa é **com sinal** (`beerCO2EvolutionGramsPerLiterPerDay`). A exibição corta valores negativos em 0.
 - Volume de cerveja inválido, CO2 total não finito ou Δt ≤ 0: taxa = 0.
-- **Rebase:** quando o CO2 dissolvido passa de half-life para immediate, o salto do modelo é somado a todas as amostras do buffer (`rebaseCO2Evolution()`), para não aparecer como produção.
+- **Rebase:** quando o CO2 dissolvido entra no equilíbrio (vindo do half-life ou do armado), o salto do modelo é somado a todas as amostras do buffer (`rebaseCO2Evolution()`), para não aparecer como produção. O mesmo vale para o CO2 que sai com a cerveja num dump durante o half-life.
 - Mudança do headspace aplicado (média de 24 h, dump) muda `headSpaceCO2Mols` e aparece na taxa como um degrau pequeno (≈ P·ΔVh/RT; 1 L a 0,8 bar ≈ 0,03 mol).
 
 Janela em função do tempo desde o boot:

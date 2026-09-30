@@ -260,6 +260,7 @@ void doDataLog() {
     GLogAddData("DumpEndMillis");
     GLogAddData("DumpDeltaH");
     GLogAddData("gCO2Source"); // "calculated" or "held" (after a reboot)
+    GLogAddData("GasCO2Rate"); // gas-phase g/L/d of the dissolved-CO2 state (empty = no decision)
 
     GLogSend();
     headerWritten = true;
@@ -339,6 +340,7 @@ void doDataLog() {
       for (int i = 0; i < 5; i++) GLogAddData("");
     }
     GLogAddData(getCO2EvolutionSource());
+    GLogAddData(co2.gasRate, 3);
     GLogSend();
   }
 }

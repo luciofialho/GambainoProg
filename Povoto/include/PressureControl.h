@@ -24,8 +24,16 @@ struct DissolvedCO2LogData {
   float previousPressure;
   float reliefIntervalSeconds;
   float sinceLastReliefSeconds;
+  float gasRate; // gas-phase CO2 rate, g/L/d (NAN = no decision)
 };
 DissolvedCO2LogData getDissolvedCO2LogData();
+// Dissolved-CO2 state (docs/dissolved-co2.md).
+void notifyFermentablesAdded();
+void resetCO2DissolvedStateForNewBatch();
+void scaleDissolvedCO2ForBeerVolume(float volumeBefore, float volumeAfter);
+uint8_t getCO2DissolvedState(); // CountersData.co2DissolvedMode values
+const char *getCO2DissolvedStateLabel(uint8_t state);
+bool setCO2DissolvedStateManually(uint8_t state); // Counters page
 char *getPressureControlStatus(char *st);
 void handlePressureHistoryCSV(AsyncWebServerRequest *request);
 void handlePressureDumpCSV(AsyncWebServerRequest *request);

@@ -75,23 +75,55 @@ static constexpr uint16_t CO2_EVOLUTION_HISTORY_SIZE = 71;
 // until which the saved rate is reported after a reboot.
 static constexpr uint16_t CO2_EVOLUTION_MATURE_SAMPLES = 15;
 static constexpr uint32_t CO2_RATE_HELD_MAX_AGE_S = 2UL * 3600UL;
-static constexpr unsigned long CO2_IMMEDIATE_PERCEPTION_DELAY_MS = 10UL * MINUTESms;
-enum CO2DissolvedEstimationMode : uint8_t {
-  CO2_DISSOLVED_HALF_LIFE,
-  CO2_DISSOLVED_IMMEDIATE
+// Dissolved-CO2 state (docs/dissolved-co2.md), persisted in
+// CountersData.co2DissolvedMode; values 0 and 1 keep their previous meaning.
+enum CO2DissolvedState : uint8_t {
+  CO2_STATE_HALF_LIFE = 0,       // no generation: dissolved moves only with the gas phase
+  CO2_STATE_EQUILIBRIUM = 1,     // generation confirmed: Henry at the relief threshold
+  CO2_STATE_INITIAL = 2,         // batch start, before reliefs: Henry at the current pressure
+  CO2_STATE_HALF_LIFE_ARMED = 3  // half-life after fermentables were added: easier return
 };
-static CO2DissolvedEstimationMode co2DissolvedEstimationMode = CO2_DISSOLVED_HALF_LIFE;
-static unsigned long co2ActiveFermentationCriteriaSinceMillis = 0;
-static unsigned long co2FermentationConfirmationMs = CO2_IMMEDIATE_PERCEPTION_DELAY_MS;
-// After a reboot, keep a restored immediate mode while the criteria rebuild
-// their history (observation window + relief confirmation).
-static constexpr unsigned long CO2_RESTORED_MODE_GRACE_MS = 30UL * MINUTESms;
-// Mode seen by the last dissolved-CO2 update; detects the half-life->immediate step.
-static bool co2PreviousModeImmediate = false;
+static CO2DissolvedState co2DissolvedState = CO2_STATE_INITIAL;
+// State seen by the last dissolved-CO2 update; detects model steps.
+static CO2DissolvedState co2PreviousDissolvedState = CO2_STATE_INITIAL;
+static bool co2StateIsHalfLife(CO2DissolvedState s) {
+  return s == CO2_STATE_HALF_LIFE || s == CO2_STATE_HALF_LIFE_ARMED;
+}
+// Transitions, calibrated on batches 159 and 160 with the gas-phase CO2 rate
+// (ejected + headspace + expansion tank, independent of the dissolved model).
+// The armed values have no data yet (no fermentables addition logged).
+static constexpr uint32_t CO2_INITIAL_CONFIRM_RELIEFS = 3;
+static constexpr float CO2_GAS_RATE_EXIT = 0.3f;         // g/L/d: below it, no generation
+static constexpr float CO2_GAS_RATE_RETURN = 0.5f;       // g/L/d: above it, generation again
+static constexpr float CO2_GAS_RATE_RETURN_ARMED = 0.3f; // g/L/d, after fermentables
+static constexpr unsigned long CO2_EXIT_HOLD_MS = 180UL * MINUTESms;         // uninterrupted
+static constexpr unsigned long CO2_RETURN_HOLD_MS = 360UL * MINUTESms;       // uninterrupted
+static constexpr unsigned long CO2_RETURN_ARMED_HOLD_MS = 60UL * MINUTESms;  // uninterrupted
+static constexpr uint32_t CO2_ARMED_MAX_AGE_S = 7UL * 24UL * 3600UL;
+// Half-life: gas changes smaller than this keep the baseline. Without it the
+// oscillation of the gas phase (cooling cycles, sensor noise) ratchets: every
+// fall is absorbed and every rise counts as production (+1.8 mol in the cold
+// crash of batch 159; ~0 with 0.02-0.05 mol).
+static constexpr double CO2_HALF_LIFE_GAS_DEADBAND_MOLS = 0.05;
+static constexpr uint16_t CO2_GAS_RATE_MIN_SAMPLES = 60;               // ~1 h window
+static constexpr unsigned long CO2_TASK_QUIET_MS = 80UL * MINUTESms;   // window + 10 min
+// Gas-phase step between two samples, without a relief, too fast for a
+// fermentation (gas added outside a task): the rate window gives no decision.
+static constexpr float CO2_EXTERNAL_STEP_GPLD = 50.0f; // g/L/d over one sample
+static float co2GasRate = NAN;                        // g/L/d, NAN = no decision
+static const char *co2StateDecision = "no-decision";
+static unsigned long co2StateConditionSinceMillis = 0; // 0 = no condition running
+static unsigned long co2StateHoldMs = 0;
+// Half-life: the dissolved CO2 follows the measured gas phase (docs/dissolved-co2.md).
+static bool co2GasBaselineValid = false;
+static double co2GasBaselineMols = 0.0;
+static uint32_t co2EvolutionLastReliefCount = 0; // relief count at the last CO2 sample
 struct CO2EvolutionSample {
   unsigned long millisStamp;
   double totalMols;
   float pressure;
+  double gasMols;       // ejected + headspace + expansion tank
+  bool externalStep;    // pressure jump without relief (e.g. gas added): no decision
 };
 static CO2EvolutionSample co2EvolutionHistory[CO2_EVOLUTION_HISTORY_SIZE];
 static uint16_t co2EvolutionStart = 0;
@@ -102,6 +134,9 @@ static unsigned long int timeToFinishExpansion    = 0;
 static unsigned long int timeToRegisterPressure = 0; // after a relief event
 static unsigned long int noPressureReadUntil = 0;
 static unsigned long reliefValveOpenedMillis = 0;
+// A relief opened during a task (or its nucleation window) does not measure the
+// headspace: gas and volume are changing by unknown amounts.
+static bool reliefOpenedDuringTask = false;
 static unsigned long reliefValveClosedMillis = 0;
 static constexpr unsigned long POLYTROPIC_SETTLE_MS = 3UL * MINUTESms;
 static constexpr unsigned long POLYTROPIC_SAMPLE_INTERVAL_MS = 30UL * 1000UL;
@@ -456,132 +491,6 @@ float CO2DissolvedMols(float pressureBar, float sg, float temperatureC, float vo
   return molPerL * volumeL;
 }
 
-enum class FermentationCriteria : uint8_t { Inactive, Active, Imprecise };
-static FermentationCriteria fermentationCriteria = FermentationCriteria::Inactive;
-static DissolvedCO2LogData dissolvedCO2LogData = {};
-
-static const char *fermentationCriteriaLabel(FermentationCriteria state) {
-  switch (state) {
-    case FermentationCriteria::Active: return "active";
-    case FermentationCriteria::Imprecise: return "imprecise";
-    default: return "inactive";
-  }
-}
-
-static FermentationCriteria hasActiveFermentationCriteria() {
-  const unsigned long now = millis();
-  // A 20-minute relief cadence is enough evidence of sustained CO2 production.
-  // Keep five minutes of margin for scheduling and measurement variation.
-  static constexpr unsigned long reliefConfirmationMs = 20UL * MINUTESms;
-  static constexpr unsigned long maximumReliefIntervalMs = 25UL * MINUTESms;
-  static constexpr unsigned long observationWindowMs = 10UL * MINUTESms;
-  static constexpr uint16_t observationSamples = observationWindowMs / CO2_EVOLUTION_SAMPLE_MS;
-  static constexpr float CO2PressurePerceptionThresholdForWindow = 0.05f; // Example threshold value
-
-  static bool timingCriteria = false;
-  static bool timingReliefCriteria = false;
-  static unsigned long reliefCriteriaSinceMillis = 0;
-  static unsigned long pressureCriteriaSinceMillis = 0;
-
-  bool criteriaWithoutReliefs = false;
-  bool criteriaWithReliefs = false;
-  FermentationCriteria result = FermentationCriteria::Inactive;
-  co2FermentationConfirmationMs = CO2_IMMEDIATE_PERCEPTION_DELAY_MS;
-
-  const float pressure = ControlData.pressure;
-  dissolvedCO2LogData.withReliefsState = "not evaluated";
-  dissolvedCO2LogData.withoutReliefsState = "not evaluated";
-  dissolvedCO2LogData.withReliefsElapsedMillis = 0;
-  dissolvedCO2LogData.withoutReliefsElapsedMillis = 0;
-  dissolvedCO2LogData.previousPressure = NAN;
-  if (SetPointData.mode != MODE_FERMENTING) {
-    timingCriteria = false;
-    timingReliefCriteria = false;
-    co2ActiveFermentationCriteriaSinceMillis = 0;
-  }
-  else if (taskWindowType != 0 || now - lastTaskMillis < observationWindowMs ||
-             !isfinite(pressure) || !isfinite(SetPointData.setPointPressure)) {
-    timingCriteria = false;
-    timingReliefCriteria = false;
-    co2ActiveFermentationCriteriaSinceMillis = 0;
-    criteriaWithoutReliefs = false;
-  } else {
-    const bool reducingPressure = SetPointData.setPointSlowPressure != NOTaTEMP &&
-        SetPointData.setPointSlowPressure < SetPointData.setPointPressure;
-
-    // "With reliefs" determination
-    if (!reducingPressure && reliefMillisCount >= 2 &&
-        isfinite(pressureAfterRelief) && pressureAfterRelief < SetPointData.setPointPressure) {
-      const uint8_t lastIndex = (reliefMillisIndex + RELIEFS_WINDOW_SIZE - 1) % RELIEFS_WINDOW_SIZE;
-      const uint8_t previousIndex = (lastIndex + RELIEFS_WINDOW_SIZE - 1) % RELIEFS_WINDOW_SIZE;
-      const unsigned long lastRelief = reliefMillisWindow[lastIndex];
-      const unsigned long interval = lastRelief - reliefMillisWindow[previousIndex];
-      // A pair of old, close reliefs must not keep the criterion true indefinitely.
-      criteriaWithReliefs = interval > 0 && interval < maximumReliefIntervalMs && now - lastRelief < maximumReliefIntervalMs;
-
-    }
-
-    FermentationCriteria withReliefsResult = FermentationCriteria::Inactive;
-    if (criteriaWithReliefs) {
-      if (!timingReliefCriteria) {
-        reliefCriteriaSinceMillis = now;
-        timingReliefCriteria = true;
-      }
-      withReliefsResult = now - reliefCriteriaSinceMillis >= reliefConfirmationMs
-          ? FermentationCriteria::Active : FermentationCriteria::Imprecise;
-    } else if (timingReliefCriteria) {
-      timingReliefCriteria = false;
-    }
-
-    // "Without reliefs" determination
-    // Samples are approximately one minute apart.
-    const float previousPressure = co2EvolutionCount > observationSamples
-        ? co2EvolutionHistory[(co2EvolutionStart + co2EvolutionCount - 1 - observationSamples) % CO2_EVOLUTION_HISTORY_SIZE].pressure
-        : NAN;
-    criteriaWithoutReliefs = pressure < SetPointData.setPointPressure && isfinite(previousPressure) && pressure > previousPressure+CO2PressurePerceptionThresholdForWindow;
-    dissolvedCO2LogData.previousPressure = previousPressure;
-
-    FermentationCriteria withoutReliefsResult = FermentationCriteria::Inactive;
-    if (criteriaWithoutReliefs) {
-      if (!timingCriteria) {
-        pressureCriteriaSinceMillis = now;
-        timingCriteria = true;
-      }
-      withoutReliefsResult = now - pressureCriteriaSinceMillis >= CO2_IMMEDIATE_PERCEPTION_DELAY_MS
-          ? FermentationCriteria::Active : FermentationCriteria::Imprecise;
-    } else {
-      timingCriteria = false;
-      if (pressure < SetPointData.setPointPressure && !isfinite(previousPressure)) {
-        withoutReliefsResult = FermentationCriteria::Imprecise;
-      }
-    }
-
-    if (withReliefsResult == FermentationCriteria::Active ||
-        withoutReliefsResult == FermentationCriteria::Active) {
-      result = FermentationCriteria::Active;
-    } else if (withReliefsResult == FermentationCriteria::Imprecise &&
-               withoutReliefsResult == FermentationCriteria::Imprecise) {
-      result = FermentationCriteria::Imprecise;
-    }
-
-    dissolvedCO2LogData.withReliefsState = fermentationCriteriaLabel(withReliefsResult);
-    dissolvedCO2LogData.withoutReliefsState = fermentationCriteriaLabel(withoutReliefsResult);
-    dissolvedCO2LogData.withReliefsElapsedMillis = timingReliefCriteria ? now - reliefCriteriaSinceMillis : 0;
-    dissolvedCO2LogData.withoutReliefsElapsedMillis = timingCriteria ? now - pressureCriteriaSinceMillis : 0;
-
-    // Report the timer of a criterion supporting the selected state.
-    if (timingReliefCriteria && withReliefsResult == result) {
-      co2ActiveFermentationCriteriaSinceMillis = reliefCriteriaSinceMillis;
-      co2FermentationConfirmationMs = reliefConfirmationMs;
-    } else if (timingCriteria && withoutReliefsResult == result) {
-      co2ActiveFermentationCriteriaSinceMillis = pressureCriteriaSinceMillis;
-    } else {
-      co2ActiveFermentationCriteriaSinceMillis = 0;
-    }
-  }
-  return result;
-}
-
 static float expansionPressureThreshold() {
   if (SetPointData.setPointPressure <= 0.0f ||
       !isfinite(pressureDropFactor) || pressureDropFactor <= 0.0f) {
@@ -853,57 +762,157 @@ static void finishGasExpansion(unsigned long now) {
     gasProjectedPressures.difference);
 }
 
-static void updateCO2DissolvedEstimationMode() {
-  fermentationCriteria = hasActiveFermentationCriteria();
-  CO2DissolvedEstimationMode nextMode = co2DissolvedEstimationMode;
-  if (fermentationCriteria == FermentationCriteria::Inactive) {
-    // A mode restored as immediate survives the post-boot rebuild of the criteria.
-    const bool restoredImmediateGrace =
-        co2DissolvedEstimationMode == CO2_DISSOLVED_IMMEDIATE &&
-        CountersData.co2DissolvedMode == 1 &&
-        SetPointData.mode == MODE_FERMENTING &&
-        millis() < CO2_RESTORED_MODE_GRACE_MS;
-    if (!restoredImmediateGrace) nextMode = CO2_DISSOLVED_HALF_LIFE;
-  } else if (fermentationCriteria == FermentationCriteria::Active) {
-    nextMode = CO2_DISSOLVED_IMMEDIATE;
+static const char *co2DissolvedStateLabel(CO2DissolvedState state) {
+  switch (state) {
+    case CO2_STATE_EQUILIBRIUM:     return "immediate"; // label kept for log continuity
+    case CO2_STATE_INITIAL:         return "initial";
+    case CO2_STATE_HALF_LIFE_ARMED: return "half-life-armed";
+    default:                        return "half-life";
   }
-  if (nextMode != co2DissolvedEstimationMode) {
-    co2DissolvedEstimationMode = nextMode;
-    CountersData.co2DissolvedMode = nextMode == CO2_DISSOLVED_IMMEDIATE ? 1 : 0;
+}
+
+static const char *co2DissolvedEstimationModeLabel() {
+  return co2DissolvedStateLabel(co2DissolvedState);
+}
+
+// Measured CO2 outside the liquid: vented, in the headspace and in the expansion tank.
+static double gasPhaseCO2Mols() {
+  return CountersData.totalMolsEjected + double(headSpaceCO2Mols) + expansionTankInventoryMoles();
+}
+
+// State changes are persisted at once, so a reboot keeps the state.
+static void setCO2DissolvedState(CO2DissolvedState next, const char *reason) {
+  if (next == co2DissolvedState) return;
+  Serial.printf("[CO2 STATE] %s -> %s (%s), dissolved %.3f mol, gas rate %.2f g/L/d\n",
+                co2DissolvedStateLabel(co2DissolvedState), co2DissolvedStateLabel(next),
+                reason, CountersData.CO2InSolution, co2GasRate);
+  co2DissolvedState = next;
+  CountersData.co2DissolvedMode = (uint8_t)next;
+  if (next == CO2_STATE_HALF_LIFE_ARMED) CountersData.co2ArmedAt = NTPEpoch(); // 0 = no NTP yet
+  else CountersData.co2ArmedAt = 0;
+  co2StateConditionSinceMillis = 0;
+  co2StateHoldMs = 0;
+  co2GasBaselineValid = false; // half-life starts from the gas phase at entry
+  writeCountersDataToNIV();
+}
+
+uint8_t getCO2DissolvedState() {
+  return (uint8_t)co2DissolvedState;
+}
+
+const char *getCO2DissolvedStateLabel(uint8_t state) {
+  return co2DissolvedStateLabel((CO2DissolvedState)state);
+}
+
+// Manual intervention from the Counters page: same path as the automatic
+// transitions (persistence, armed time, baseline, rebase of the gCO2 window).
+bool setCO2DissolvedStateManually(uint8_t state) {
+  if (state > CO2_STATE_HALF_LIFE_ARMED) return false;
+  setCO2DissolvedState((CO2DissolvedState)state, "manual");
+  return true;
+}
+
+// CountersData was reset for a new batch (co2DissolvedMode = initial).
+void resetCO2DissolvedStateForNewBatch() {
+  co2DissolvedState = (CO2DissolvedState)CountersData.co2DissolvedMode;
+  co2PreviousDissolvedState = co2DissolvedState;
+  co2StateConditionSinceMillis = 0;
+  co2StateHoldMs = 0;
+  co2GasBaselineValid = false;
+  co2GasRate = NAN;
+  co2StateDecision = "no-decision";
+}
+
+// Fermentables were added (BatchData.addedPlato increased): a refermentation
+// is expected, so the half-life returns to equilibrium with a lower threshold.
+void notifyFermentablesAdded() {
+  if (co2DissolvedState == CO2_STATE_HALF_LIFE) {
+    setCO2DissolvedState(CO2_STATE_HALF_LIFE_ARMED, "fermentables added");
+  } else if (co2DissolvedState == CO2_STATE_HALF_LIFE_ARMED) {
+    CountersData.co2ArmedAt = NTPEpoch(); // a new addition restarts the 7 days
+    Serial.println("[CO2 STATE] half-life-armed renewed (fermentables added)");
     writeCountersDataToNIV();
   }
 }
 
-static unsigned long co2DissolvedCriteriaElapsedMillis(unsigned long now) {
-  if (co2ActiveFermentationCriteriaSinceMillis == 0) {
-    return 0;
+// Initial -> equilibrium once reliefs show CO2 leaving the liquid; the armed
+// half-life expires after CO2_ARMED_MAX_AGE_S (by NTP; without NTP it waits).
+static void updateCO2DissolvedStateFromEvents() {
+  if (co2DissolvedState == CO2_STATE_INITIAL &&
+      (SetPointData.mode == MODE_FERMENTING || SetPointData.mode == MODE_CONDITIONING) &&
+      CountersData.totalReliefCount >= CO2_INITIAL_CONFIRM_RELIEFS)
+    setCO2DissolvedState(CO2_STATE_EQUILIBRIUM, "reliefs started");
+  if (co2DissolvedState == CO2_STATE_HALF_LIFE_ARMED) {
+    const unsigned long epoch = NTPEpoch();
+    if (epoch != 0 && CountersData.co2ArmedAt == 0) {
+      CountersData.co2ArmedAt = epoch; // armed before NTP: count from now
+    } else if (epoch != 0 && epoch >= CountersData.co2ArmedAt &&
+               epoch - CountersData.co2ArmedAt > CO2_ARMED_MAX_AGE_S) {
+      setCO2DissolvedState(CO2_STATE_HALF_LIFE, "armed expired");
+    }
   }
-  return now - co2ActiveFermentationCriteriaSinceMillis;
 }
 
+// Called once per CO2 sample (~1/min) with the gas-phase rate (NAN = no decision).
+// A condition must hold without interruption; any other result restarts it.
+static void updateCO2DissolvedStateFromGasRate(unsigned long now, float rate) {
+  co2GasRate = rate;
+  const bool armed = co2DissolvedState == CO2_STATE_HALF_LIFE_ARMED;
+  const float returnRate = armed ? CO2_GAS_RATE_RETURN_ARMED : CO2_GAS_RATE_RETURN;
+  const bool decide = isfinite(rate) &&
+      (SetPointData.mode == MODE_FERMENTING || SetPointData.mode == MODE_CONDITIONING);
+  if (!decide) co2StateDecision = "no-decision";
+  else if (rate > returnRate) co2StateDecision = "generating";
+  else if (rate < CO2_GAS_RATE_EXIT) co2StateDecision = "idle";
+  else co2StateDecision = "between";
+
+  unsigned long hold = 0;
+  CO2DissolvedState next = co2DissolvedState;
+  if (decide && co2DissolvedState == CO2_STATE_EQUILIBRIUM && rate < CO2_GAS_RATE_EXIT) {
+    hold = CO2_EXIT_HOLD_MS;
+    next = CO2_STATE_HALF_LIFE;
+  } else if (decide && co2StateIsHalfLife(co2DissolvedState) && rate > returnRate) {
+    hold = armed ? CO2_RETURN_ARMED_HOLD_MS : CO2_RETURN_HOLD_MS;
+    next = CO2_STATE_EQUILIBRIUM;
+  }
+  if (next == co2DissolvedState) {
+    co2StateConditionSinceMillis = 0;
+    co2StateHoldMs = 0;
+    return;
+  }
+  if (!co2StateConditionSinceMillis) co2StateConditionSinceMillis = now;
+  co2StateHoldMs = hold;
+  if (now - co2StateConditionSinceMillis >= hold)
+    setCO2DissolvedState(next, next == CO2_STATE_HALF_LIFE ? "gas rate below exit" : "gas rate above return");
+}
+
+static unsigned long co2DissolvedCriteriaElapsedMillis(unsigned long now) {
+  return co2StateConditionSinceMillis ? now - co2StateConditionSinceMillis : 0;
+}
+
+// Equilibrium uses the relief threshold (top of the relief cycle, stable);
+// before the reliefs and for the half-life limits, the current pressure.
 static float dissolvedCO2CalculationPressure() {
-  return co2DissolvedEstimationMode == CO2_DISSOLVED_IMMEDIATE
+  return co2DissolvedState == CO2_STATE_EQUILIBRIUM
       ? expansionPressureThreshold()
       : ControlData.pressure;
 }
 
-static const char *co2DissolvedEstimationModeLabel() {
-  return co2DissolvedEstimationMode == CO2_DISSOLVED_IMMEDIATE
-      ? "immediate"
-      : "half-life";
-}
-
 DissolvedCO2LogData getDissolvedCO2LogData() {
-  DissolvedCO2LogData data = dissolvedCO2LogData;
+  DissolvedCO2LogData data = {};
   const unsigned long now = millis();
   data.mode = co2DissolvedEstimationModeLabel();
-  data.criteriaState = fermentationCriteriaLabel(fermentationCriteria);
-  if (!data.withReliefsState) data.withReliefsState = "not evaluated";
-  if (!data.withoutReliefsState) data.withoutReliefsState = "not evaluated";
+  data.criteriaState = co2StateDecision;
+  // The relief-cadence and 10-minute pressure criteria were replaced by the
+  // gas-phase rate; their columns stay empty until the log is revised.
+  data.withReliefsState = "";
+  data.withoutReliefsState = "";
   data.criteriaElapsedMillis = co2DissolvedCriteriaElapsedMillis(now);
-  data.confirmationMillis = co2FermentationConfirmationMs;
+  data.confirmationMillis = co2StateHoldMs;
   data.calculationPressure = dissolvedCO2CalculationPressure();
   data.equilibriumMols = CO2DissolvedMols(data.calculationPressure, beerSG, ControlData.temperature, beerVolume);
+  data.previousPressure = NAN;
+  data.gasRate = co2GasRate;
   data.reliefIntervalSeconds = NAN;
   data.sinceLastReliefSeconds = NAN;
   if (reliefMillisCount > 0) {
@@ -918,7 +927,6 @@ DissolvedCO2LogData getDissolvedCO2LogData() {
 }
 
 // Shifts the stored CO2 totals by a model step so the rate window ignores it.
-// Called only when the dissolved-CO2 mode changes to immediate.
 static void rebaseCO2Evolution(double deltaMols) {
   if (!isfinite(deltaMols) || deltaMols == 0.0) return;
   for (uint16_t i = 0; i < co2EvolutionCount; ++i) {
@@ -926,65 +934,99 @@ static void rebaseCO2Evolution(double deltaMols) {
   }
 }
 
+// A dump removes beer with its dissolved CO2; in the half-life the amount is
+// not recomputed from Henry, so it follows the volume.
+void scaleDissolvedCO2ForBeerVolume(float volumeBefore, float volumeAfter) {
+  if (!co2StateIsHalfLife(co2DissolvedState)) return;
+  if (!isfinite(volumeBefore) || !isfinite(volumeAfter) || volumeBefore <= 0.0f ||
+      volumeAfter <= 0.0f || volumeAfter >= volumeBefore) return;
+  const double removed = CountersData.CO2InSolution * (1.0 - double(volumeAfter) / volumeBefore);
+  CountersData.CO2InSolution -= removed;
+  rebaseCO2Evolution(-removed); // CO2 that left with the beer is not negative production
+  co2GasBaselineValid = false;
+  Serial.printf("[CO2 DUMP] dissolved -%.3f mol (%.1f -> %.1f L)\n", removed, volumeBefore, volumeAfter);
+}
+
 static void recomputeDissolvedCO2MolsFromCurrentState() {
-    static unsigned long lastUpdateMillis = 0;
+  static unsigned long lastUpdateMillis = 0;
+  static bool startGuardActive = false;
+  const unsigned long now = millis();
 
-    const unsigned long now = millis();
-
-    // Preserva o CO₂ já inicializado ou restaurado dos contadores.
-    if (!lastUpdateMillis) {
-        lastUpdateMillis = now;
-        return;
-    }
-
-    if (CountersData.totalReliefCount == 0 &&
-        ControlData.pressure <= BatchData.startPressure) {
-      CountersData.CO2InSolution = 0.0;
-      lastUpdateMillis = now;
-      return;
-    }
-
-    const float calculationPressure = dissolvedCO2CalculationPressure();
-    const double equilibriumMols = CO2DissolvedMols(
-        calculationPressure, beerSG, ControlData.temperature, beerVolume);
-
-    if (co2DissolvedEstimationMode == CO2_DISSOLVED_IMMEDIATE) {
-      const double previousMols = CountersData.CO2InSolution;
-      CountersData.CO2InSolution = equilibriumMols;
-      if (!co2PreviousModeImmediate) {
-        // The step corrects the model, it is not production: keep it out of gCO2/L/d.
-        const double stepMols = CountersData.CO2InSolution - previousMols;
-        rebaseCO2Evolution(stepMols);
-        Serial.printf("[CO2 REBASE] half-life->immediate step=%.3f mol, samples=%u\n",
-                      stepMols, (unsigned)co2EvolutionCount);
-        co2PreviousModeImmediate = true;
-      }
-      lastUpdateMillis = now;
-      return;
-    }
-    co2PreviousModeImmediate = false;
-
-    if (!MILLISDIFF(lastUpdateMillis, 30000UL)) 
-      return;
-
-    double dtSeconds = (millis() - lastUpdateMillis) / 1000.0;
-
-    if (dtSeconds<0.0 || dtSeconds > 60.0) // Ignore if the time difference is negative or greater than 1 minute
-      dtSeconds = 30.0;
-
+  // Preserva o CO2 já inicializado ou restaurado dos contadores.
+  if (!lastUpdateMillis) {
     lastUpdateMillis = now;
+    return;
+  }
+  lastUpdateMillis = now;
 
-    const double t50Seconds = double(FMTData.co2TransferTime) * 3600.0;
+  // Batch start: no dissolved CO2 until the pressure rises above the start
+  // pressure; the equilibrium amount then counts as produced (it is the air in
+  // the headspace that makes it an overestimate, until the reliefs purge it).
+  if (CountersData.totalReliefCount == 0 &&
+      ControlData.pressure <= BatchData.startPressure) {
+    CountersData.CO2InSolution = 0.0;
+    startGuardActive = true;
+    co2GasBaselineValid = false;
+    co2PreviousDissolvedState = co2DissolvedState;
+    return;
+  }
+  const bool leavingStartGuard = startGuardActive;
+  startGuardActive = false;
 
-    if (t50Seconds > 0.0) {
-        const double alpha =
-            -expm1(-0.6931471805599453 * dtSeconds / t50Seconds);
-
-        CountersData.CO2InSolution +=
-            alpha * (equilibriumMols - CountersData.CO2InSolution);
-    } else {
-        CountersData.CO2InSolution = equilibriumMols;
+  if (!co2StateIsHalfLife(co2DissolvedState)) {
+    const double previousMols = CountersData.CO2InSolution;
+    CountersData.CO2InSolution = CO2DissolvedMols(
+        dissolvedCO2CalculationPressure(), beerSG, ControlData.temperature, beerVolume);
+    if (co2PreviousDissolvedState != co2DissolvedState && !leavingStartGuard) {
+      // A model step is not production: keep it out of gCO2/L/d.
+      const double stepMols = CountersData.CO2InSolution - previousMols;
+      rebaseCO2Evolution(stepMols);
+      Serial.printf("[CO2 REBASE] %s->%s step=%.3f mol, samples=%u\n",
+                    co2DissolvedStateLabel(co2PreviousDissolvedState),
+                    co2DissolvedStateLabel(co2DissolvedState), stepMols, (unsigned)co2EvolutionCount);
     }
+    co2PreviousDissolvedState = co2DissolvedState;
+    co2GasBaselineValid = false;
+    return;
+  }
+  co2PreviousDissolvedState = co2DissolvedState;
+
+  // Half-life (hybrid, by measurement; docs/dissolved-co2.md): the dissolved
+  // CO2 moves only with the measured gas phase G, bounded by Henry H at the
+  // current pressure.
+  //   G rises:  first from the CO2 above H (release), the rest is production.
+  //   G falls:  into the liquid up to H (absorption), the rest is debt.
+  // During dry/dynamic hopping (and their nucleation window) any gas that
+  // appears comes from the liquid, down to zero. Other tasks move gas or
+  // volume by unknown amounts: the dissolved CO2 is kept. Changes are applied
+  // only beyond CO2_HALF_LIFE_GAS_DEADBAND_MOLS from the baseline.
+  // Wait for pressure and headspace to settle after a boot.
+  if (now < 120000UL) {
+    co2GasBaselineValid = false;
+    return;
+  }
+  const double gas = gasPhaseCO2Mols();
+  const double equilibrium = CO2DissolvedMols(ControlData.pressure, beerSG, ControlData.temperature, beerVolume);
+  if (!isfinite(gas) || !isfinite(equilibrium)) {
+    co2GasBaselineValid = false;
+    return;
+  }
+  const bool hopTask = taskWindowType == 4 || taskWindowType == 5;
+  const bool otherTask = taskWindowType != 0 && !hopTask;
+  if (co2GasBaselineValid && !otherTask) {
+    const double deltaGas = gas - co2GasBaselineMols;
+    if (fabs(deltaGas) < CO2_HALF_LIFE_GAS_DEADBAND_MOLS) return; // keep the baseline
+    double dissolved = CountersData.CO2InSolution;
+    if (deltaGas > 0.0) {
+      const double releasable = hopTask ? dissolved : fmax(0.0, dissolved - equilibrium);
+      dissolved -= fmin(deltaGas, releasable);
+    } else if (deltaGas < 0.0) {
+      dissolved += fmin(-deltaGas, fmax(0.0, equilibrium - dissolved));
+    }
+    CountersData.CO2InSolution = fmax(0.0, dissolved);
+  }
+  co2GasBaselineMols = gas;
+  co2GasBaselineValid = true;
 }
 
 static void recomputeHeadspaceCO2MolsFromCurrentState() {
@@ -1012,6 +1054,8 @@ static bool applyHeadspaceValue(float headspace) {
     return false;
   }
 
+  // The headspace CO2 is recomputed with the new volume: not a gas movement.
+  if (headspace != CountersData.headSpaceVolume) co2GasBaselineValid = false;
   CountersData.headSpaceVolume = headspace;
   beerVolume = FMTData.FMTVolume - headspace;
   if (isfinite(FMTData.FMTReliefVolume) && FMTData.FMTReliefVolume > 0.0f) {
@@ -1166,6 +1210,36 @@ static void resetBeerCO2Evolution() {
   beerCO2EvolutionGramsPerLiterPerDay = 0.0f;
 }
 
+// Gas-phase CO2 rate (g/L/d) over the gCO2 window, with the same end
+// averaging; it does not depend on the dissolved model. NAN (no decision)
+// with a short window, during a task and CO2_TASK_QUIET_MS after it, or with
+// an external gas step in the window.
+static float gasPhaseCO2Rate(unsigned long now) {
+  if (co2EvolutionCount < CO2_GAS_RATE_MIN_SAMPLES || taskWindowType != 0 ||
+      (lastTaskMillis != 0 && now - lastTaskMillis < CO2_TASK_QUIET_MS) ||
+      !isfinite(beerVolume) || beerVolume <= 0.0f)
+    return NAN;
+  for (uint16_t i = 0; i < co2EvolutionCount; ++i) {
+    const CO2EvolutionSample &s = co2EvolutionHistory[(co2EvolutionStart + i) % CO2_EVOLUTION_HISTORY_SIZE];
+    if (s.externalStep || !isfinite(s.gasMols)) return NAN;
+  }
+  const uint16_t avgWindow = co2EvolutionCount / 3 < 10 ? co2EvolutionCount / 3 : 10;
+  const unsigned long firstMillis = co2EvolutionHistory[co2EvolutionStart].millisStamp;
+  double firstMols = 0.0, lastMols = 0.0, firstTime = 0.0, lastTime = 0.0;
+  for (uint16_t i = 0; i < avgWindow; ++i) {
+    const CO2EvolutionSample &first = co2EvolutionHistory[(co2EvolutionStart + i) % CO2_EVOLUTION_HISTORY_SIZE];
+    const CO2EvolutionSample &last = co2EvolutionHistory[(co2EvolutionStart + co2EvolutionCount - avgWindow + i) % CO2_EVOLUTION_HISTORY_SIZE];
+    firstMols += first.gasMols;
+    lastMols += last.gasMols;
+    firstTime += first.millisStamp - firstMillis;
+    lastTime += last.millisStamp - firstMillis;
+  }
+  const double elapsedMs = (lastTime - firstTime) / avgWindow;
+  if (elapsedMs <= 0.0) return NAN;
+  return (lastMols - firstMols) / avgWindow * CO2MOLAR_MASS * 86400000.0
+      / (double(beerVolume) * elapsedMs);
+}
+
 static void recomputeBeerCO2EvolutionFromCurrentState() {
   const unsigned long now = millis();
   if (now < 120000UL) {
@@ -1192,9 +1266,22 @@ static void recomputeBeerCO2EvolutionFromCurrentState() {
     --co2EvolutionCount;
   }
 
+  const double gasMols = gasPhaseCO2Mols();
+  bool externalStep = false;
+  if (co2EvolutionCount > 0 && CountersData.totalReliefCount == co2EvolutionLastReliefCount) {
+    const CO2EvolutionSample &previous =
+        co2EvolutionHistory[(co2EvolutionStart + co2EvolutionCount - 1) % CO2_EVOLUTION_HISTORY_SIZE];
+    const double stepMs = double(now - previous.millisStamp);
+    externalStep = stepMs > 0.0 && (gasMols - previous.gasMols) * CO2MOLAR_MASS * 86400000.0
+        / (double(beerVolume) * stepMs) > CO2_EXTERNAL_STEP_GPLD;
+  }
+  co2EvolutionLastReliefCount = CountersData.totalReliefCount;
+
   const uint16_t index = (co2EvolutionStart + co2EvolutionCount) % CO2_EVOLUTION_HISTORY_SIZE;
-  co2EvolutionHistory[index] = {now, totalMols, ControlData.pressure};
+  co2EvolutionHistory[index] = {now, totalMols, ControlData.pressure, gasMols, externalStep};
   ++co2EvolutionCount;
+
+  updateCO2DissolvedStateFromGasRate(now, gasPhaseCO2Rate(now));
 
   if (co2EvolutionCount < 5) {
     beerCO2EvolutionGramsPerLiterPerDay = 0.0f;
@@ -1445,9 +1532,10 @@ float RealPlatoToSG(float realPlato) {
 static void restoreDerivedStateFromCounters() {
   dailyHsRestore(); // [DAILY-HS]
   // Restore the dissolved-CO2 mode saved before the reboot.
-  co2DissolvedEstimationMode = CountersData.co2DissolvedMode == 1
-      ? CO2_DISSOLVED_IMMEDIATE : CO2_DISSOLVED_HALF_LIFE;
-  co2PreviousModeImmediate = co2DissolvedEstimationMode == CO2_DISSOLVED_IMMEDIATE;
+  // (values validated by PovotoData: 0..3).
+  co2DissolvedState = (CO2DissolvedState)CountersData.co2DissolvedMode;
+  co2PreviousDissolvedState = co2DissolvedState;
+  co2GasBaselineValid = false;
 
   if (CountersData.headSpaceVolume > 0.0f) {
     updateBeerVolumeFromHeadspace();
@@ -2188,7 +2276,8 @@ void processPressure(bool afterRelief) {
       }
     }
 
-    if (isfinite(instantPressureDropFactor) && instantPressureDropFactor > 0.0f &&
+    const bool skipTaskWindow = reliefOpenedDuringTask || taskWindowType != 0;
+    if (!skipTaskWindow && isfinite(instantPressureDropFactor) && instantPressureDropFactor > 0.0f &&
         instantPressureDropFactor < 1.0f) {
       const float headspaceMeasured =
         volumeEstimationFromPressureDrop(instantPressureDropFactor);
@@ -2228,6 +2317,8 @@ void processPressure(bool afterRelief) {
       gasHeadspaceUpdateStatus = "updated_adjusted_equilibrium";
     } else if (gasFlowCycle && collectingInitialHeadspaceSamples) {
       gasHeadspaceUpdateStatus = "collecting_initial_samples";
+    } else if (gasFlowCycle && skipTaskWindow) {
+      gasHeadspaceUpdateStatus = "skipped_task_window";
     } else if (gasFlowCycle &&
                strcmp(gasHeadspaceUpdateStatus, "missing_pressure_rise_reference") != 0 &&
                strcmp(gasHeadspaceUpdateStatus, "invalid_pressure_compensation") != 0) {
@@ -2510,6 +2601,7 @@ bool processReliefCycle() {
         currentOnReliefMeasured = currentReading;
         ReliefStartPressureTime = millis();
         reliefValveOpenedMillis = ReliefStartPressureTime;
+        reliefOpenedDuringTask = taskWindowType != 0;
         capturePreviousTankVenting(ReliefStartPressureTime);
         if (gasFlowCycle) {
           timeToFinishExpansion = expansionTimeMilliseconds(pressureOnReliefMeas);
@@ -3446,7 +3538,7 @@ void pressureControl() {
   }
   processSlowPressureTarget();
   updatePressureStability();
-  updateCO2DissolvedEstimationMode();
+  updateCO2DissolvedStateFromEvents();
 
   if (SetPointData.mode != MODE_OFF &&
       !volumeDeterminationActive &&
@@ -3565,12 +3657,9 @@ char *getPressureControlStatus(char *st) {
 
     const unsigned long criteriaElapsedMs = co2DissolvedCriteriaElapsedMillis(now);
     snprintf(tmp, sizeof(tmp),
-             "CO2 dissolved estimation: %s; active-fermentation criteria: %s for %.1f / %.1f s; calculation pressure: %.3f bar<br>",
-             co2DissolvedEstimationModeLabel(),
-             fermentationCriteria == FermentationCriteria::Active ? "met" :
-                 fermentationCriteria == FermentationCriteria::Imprecise ? "imprecise" : "not met",
-             criteriaElapsedMs / 1000.0f,
-             co2FermentationConfirmationMs / 1000.0f,
+             "CO2 dissolved estimation: %s; gas-phase rate %.2f g/L/d (%s) for %.0f / %.0f min; calculation pressure: %.3f bar<br>",
+             co2DissolvedEstimationModeLabel(), co2GasRate, co2StateDecision,
+             criteriaElapsedMs / 60000.0f, co2StateHoldMs / 60000.0f,
              co2CalculationPressure);
     strnncat(st, tmp, PRESSURE_STATUS_SIZE);
 

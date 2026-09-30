@@ -21,7 +21,7 @@ STRING_MAX = {
     "tempStableSinceText": 19,                    # ISO local time
     "getPressStateLabel()": 15,
     "pressStableSinceText": 19,
-    "co2.mode": 9,                                # "half-life" / "immediate"
+    "co2.mode": 15,                               # "half-life-armed"
     "co2.criteriaState": 12,
     "co2.withReliefsState": 12,
     "co2.withoutReliefsState": 12,

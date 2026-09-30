@@ -14,6 +14,9 @@ only this key, on a new hour, a rebase (dump) or a clear (liquid, dry/dynamic
 hopping). See docs/spec_headspace_24h.md.
 CountersData.co2RateHeld / co2RateHeldAt (keys `co2RateHeld`, `co2RateAt`) keep
 the last gCO2/L/d from a mature window and its NTP time; see docs/gco2-rate.md.
+CountersData.co2DissolvedMode (key `co2Mode`, 0..3; other values read as 2)
+and co2ArmedAt (key `co2ArmedAt`) keep the dissolved-CO2 state; see
+docs/dissolved-co2.md.
 
 To add a field, declare it and its default, then add its get/put calls to the
 corresponding read/write functions. Keep keys within the NVS 15-character limit.

@@ -1041,8 +1041,11 @@ void handleBatchDataUpdate(AsyncWebServerRequest *request) {
   if (request->hasParam("batchOG", true)) {
     BatchData.batchOG = request->getParam("batchOG", true)->value().toFloat();
   }
+  bool fermentablesAdded = false;
   if (request->hasParam("addedPlato", true)) {
-    BatchData.addedPlato = request->getParam("addedPlato", true)->value().toFloat();
+    const float addedPlato = request->getParam("addedPlato", true)->value().toFloat();
+    fermentablesAdded = isfinite(addedPlato) && addedPlato > BatchData.addedPlato;
+    BatchData.addedPlato = addedPlato;
   }
   if (request->hasParam("initialBeerVolume", true)) {
     const float volume = request->getParam("initialBeerVolume", true)->value().toFloat();
@@ -1062,6 +1065,8 @@ void handleBatchDataUpdate(AsyncWebServerRequest *request) {
   
   writeBatchDataToNIV();
   writeCountersDataToNIV();
+  // A refermentation is expected: the half-life returns to equilibrium sooner.
+  if (fermentablesAdded) notifyFermentablesAdded();
   
   String html = "<!DOCTYPE html><html><head>";
   html += "<meta charset='UTF-8'>";
@@ -1077,8 +1082,63 @@ void handleBatchDataUpdate(AsyncWebServerRequest *request) {
 
 // ========== COUNTERS DATA HANDLERS ==========
 
+// Select with the four stability states (TEMP_STATE_* values).
+static void appendStabilityControls(char *html, size_t size, const char *prefix, const char *title,
+                                    uint8_t state, uint32_t stableSince) {
+  static const char *const labels[] = {"STABLE", "CHANGING_DIRECT", "CHANGING_SLOW", "UNSTABLE"};
+  char buffer[400];
+  snprintf(buffer, sizeof(buffer),
+           "<div class='form-group'><label for='%sState'>%s stability:</label><select id='%sState' name='%sState'>",
+           prefix, title, prefix, prefix);
+  strncat(html, buffer, size - strlen(html) - 1);
+  for (uint8_t i = 0; i < 4; ++i) {
+    snprintf(buffer, sizeof(buffer), "<option value='%u'%s>%s</option>", i, i == state ? " selected" : "", labels[i]);
+    strncat(html, buffer, size - strlen(html) - 1);
+  }
+  const unsigned long now = NTPEpoch();
+  char current[24] = "";
+  if (state == TEMP_STATE_STABLE && stableSince != 0 && now >= stableSince)
+    snprintf(current, sizeof(current), "%.2f", (now - stableSince) / 3600.0f);
+  snprintf(buffer, sizeof(buffer),
+           "</select><input type='number' name='%sStableHours' value='' step='any' min='0' placeholder='stable for (h): %s'>"
+           "<small>STABLE: stable for the hours given (empty = keep, or now if it was not stable). "
+           "Other states restart the stability time.</small></div>",
+           prefix, current[0] ? current : "-");
+  strncat(html, buffer, size - strlen(html) - 1);
+}
+
+// Applies a manual stability state. Returns false when STABLE needs NTP and there is none.
+static bool applyStabilityControls(AsyncWebServerRequest *request, const char *prefix,
+                                   uint8_t &state, uint32_t &stableSince, bool &changed) {
+  char name[24];
+  snprintf(name, sizeof(name), "%sState", prefix);
+  changed = false;
+  if (!request->hasParam(name, true)) return true;
+  const long requested = request->getParam(name, true)->value().toInt();
+  if (requested < 0 || requested > TEMP_STATE_UNSTABLE) return true;
+  snprintf(name, sizeof(name), "%sStableHours", prefix);
+  String hoursText = request->hasParam(name, true) ? request->getParam(name, true)->value() : String();
+  hoursText.trim();
+  if ((uint8_t)requested == state && hoursText.length() == 0) return true; // unchanged
+  if (requested != TEMP_STATE_STABLE) {
+    state = (uint8_t)requested;
+    stableSince = 0;
+    changed = true;
+    return true;
+  }
+  const unsigned long now = NTPEpoch();
+  if (now == 0) return false;
+  float hours = hoursText.length() ? hoursText.toFloat() : 0.0f;
+  if (!isfinite(hours) || hours < 0.0f) hours = 0.0f;
+  const uint32_t shift = (uint32_t)(hours * 3600.0f);
+  state = TEMP_STATE_STABLE;
+  stableSince = now > shift ? now - shift : 1;
+  changed = true;
+  return true;
+}
+
 void handleCountersDataPage(AsyncWebServerRequest *request) {
-  const size_t BUFFER_SIZE = 5500;
+  const size_t BUFFER_SIZE = 8000;
   char* html = (char*)malloc(BUFFER_SIZE);
   if (!html) {
     request->send(500, "text/plain", "Out of memory");
@@ -1115,7 +1175,7 @@ void handleCountersDataPage(AsyncWebServerRequest *request) {
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "label { display: block; margin-bottom: 5px; color: #666; font-weight: bold; }", remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "input { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }", remaining);
+  strncat(html, "input, select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; } select { margin-bottom: 6px; }", remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "input[readonly] { background: #f3f3f3; color: #555; }", remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -1244,6 +1304,28 @@ void handleCountersDataPage(AsyncWebServerRequest *request) {
   strncat(html, "</div>", remaining);
 
   remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "<div class='readonly-group'><h2>States</h2>", remaining);
+  {
+    const uint8_t co2State = getCO2DissolvedState();
+    remaining = BUFFER_SIZE - strlen(html) - 1;
+    strncat(html, "<div class='form-group'><label for='co2DissolvedState'>Dissolved CO2 state:</label><select id='co2DissolvedState' name='co2DissolvedState'>", remaining);
+    static const uint8_t order[] = {2, 1, 0, 3}; // initial, equilibrium, half-life, armed
+    for (uint8_t i = 0; i < 4; ++i) {
+      snprintf(buffer, sizeof(buffer), "<option value='%u'%s>%s</option>", order[i],
+               order[i] == co2State ? " selected" : "", getCO2DissolvedStateLabel(order[i]));
+      remaining = BUFFER_SIZE - strlen(html) - 1;
+      strncat(html, buffer, remaining);
+    }
+    remaining = BUFFER_SIZE - strlen(html) - 1;
+    strncat(html, "</select><small>immediate = equilibrium at the relief threshold. A manual change is kept until the automatic "
+                  "criteria change it again (docs/dissolved-co2.md).</small></div>", remaining);
+  }
+  appendStabilityControls(html, BUFFER_SIZE, "temp", "Temperature", CountersData.tempState, CountersData.tempStableSince);
+  appendStabilityControls(html, BUFFER_SIZE, "press", "Pressure", CountersData.pressState, CountersData.pressStableSince);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "</div>", remaining);
+
+  remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<button type='submit'>Save</button> <button type='button' class='btn-secondary' onclick='window.location=\"/\"'>Cancel</button></form></div></body></html>", remaining);
 
   request->send(200, "text/html", html);
@@ -1290,6 +1372,37 @@ void handleCountersDataUpdate(AsyncWebServerRequest *request) {
     CountersData.totalHeatTime = request->getParam("totalHeatTime", true)->value().toInt();
   }
 
+  // Stability states: persisted by their own writers. CountersData is
+  // packed, so the fields go through local copies.
+  String notes;
+  bool stabilityChanged = false;
+  uint8_t state = CountersData.tempState;
+  uint32_t since = CountersData.tempStableSince;
+  if (!applyStabilityControls(request, "temp", state, since, stabilityChanged)) {
+    notes += "Temperature not set to STABLE: no NTP time.<br>";
+  } else if (stabilityChanged) {
+    CountersData.tempState = state;
+    CountersData.tempStableSince = since;
+    writeTempStabilityToNIV();
+  }
+  state = CountersData.pressState;
+  since = CountersData.pressStableSince;
+  if (!applyStabilityControls(request, "press", state, since, stabilityChanged)) {
+    notes += "Pressure not set to STABLE: no NTP time.<br>";
+  } else if (stabilityChanged) {
+    CountersData.pressState = state;
+    CountersData.pressStableSince = since;
+    writePressureStabilityToNIV();
+  }
+
+  // Dissolved-CO2 state: persisted by setCO2DissolvedState(); the restore
+  // requested below reads CountersData.co2DissolvedMode, so it keeps it.
+  if (request->hasParam("co2DissolvedState", true)) {
+    const long state = request->getParam("co2DissolvedState", true)->value().toInt();
+    if (state >= 0 && state <= 3 && (uint8_t)state != getCO2DissolvedState())
+      setCO2DissolvedStateManually((uint8_t)state);
+  }
+
   writeCountersDataToNIV();
   if (co2ProducedPerLiterChanged) {
     resetCO2MolsProducedPerLiterTracking();
@@ -1304,6 +1417,7 @@ void handleCountersDataUpdate(AsyncWebServerRequest *request) {
   html += "<style>body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }</style>";
   html += "</head><body>";
   html += "<h1>Counters Data Saved!</h1>";
+  if (notes.length()) html += "<p>" + notes + "</p>";
   html += "<p>Redirecting back to counters page...</p>";
   html += "</body></html>";
 

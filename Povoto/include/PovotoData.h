@@ -150,7 +150,8 @@ struct CountersData_t {
   float correctionPlato;
   long int totalChillTime; // seconds
   long int totalHeatTime;  // seconds
-  // Dissolved-CO2 estimation mode (0 = half-life, 1 = immediate), restored after reboot.
+  // Dissolved-CO2 state, restored after reboot (docs/dissolved-co2.md):
+  // 0 = half-life, 1 = equilibrium (immediate), 2 = initial, 3 = half-life armed.
   uint8_t co2DissolvedMode;
   // Temperature stability phase (TEMP_STATE_*) and the local NTP epoch
   // (UTC-3) at which it became stable (0 = not yet stable).
@@ -166,6 +167,9 @@ struct CountersData_t {
   // after a reboot while the new window is short (docs/gco2-rate.md).
   float co2RateHeld;
   uint32_t co2RateHeldAt;
+  // Local NTP epoch at which the half-life was armed by added fermentables
+  // (0 = not armed, or armed before NTP).
+  uint32_t co2ArmedAt;
 } __attribute__((packed));
 
 #define TEMP_STATE_STABLE          0

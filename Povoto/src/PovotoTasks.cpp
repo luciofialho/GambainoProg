@@ -54,6 +54,7 @@ void endDumpTask() {
   // The headspace recalculation treats the pressure loss during a dump as
   // liquid removal. Accumulate only a validated, positive inferred loss.
   const float dumpedThisTask = dumpStartBeerVolumeL - beerVolume;
+  scaleDissolvedCO2ForBeerVolume(dumpStartBeerVolumeL, beerVolume);
   if (isfinite(dumpedThisTask) && dumpedThisTask > 0.0f) {
     CountersData.dumpedVolume += dumpedThisTask;
     writeCountersDataToNIV();

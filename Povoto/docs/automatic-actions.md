@@ -41,6 +41,7 @@ Exemplos (f = 0,90): alvo 1,0 → entrada 0,949–1,054, saída 0,900–1,111; a
 - Gravação na NVS só nas transições.
 - Após reboot, o estado é restaurado e a avaliação continua.
 - Primeiro boot com o firmware novo: estado `CHANGING_DIRECT` até estabilizar.
+- **Intervenção manual** na página **Counters** (`/counters`, seção "States"): escolher o estado de temperatura e de pressão. `STABLE` com "stable for (h)" grava `stableSince` = agora − horas (vazio = agora, ou mantém se já estava `STABLE`); exige NTP válido, senão a página avisa e nada muda. Os outros estados zeram `stableSince`. Depois disso a máquina de estados segue normalmente: `CHANGING_*` volta a `STABLE` assim que a leitura entrar na faixa; `STABLE` fora da faixa de saída cai para `UNSTABLE`.
 
 ## 2. Regras
 
@@ -125,6 +126,7 @@ Até **8 regras**. Cada uma:
 - **Página de debug** (`/debugparams`, só em modo debug):
   - Pressure / Temperature: vazio = lê INA / Dallas; preenchido = override com esse valor;
   - Add to stability time (h): recua o "stable since" de temperatura e pressão (só em `STABLE`) para simular o tempo passando.
+- **Página Counters** (`/counters`, sempre disponível): estado de estabilidade e horas de estável, para intervenção (seção 1).
 
 ### Testes manuais
 

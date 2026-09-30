@@ -92,14 +92,15 @@ CountersData_t CountersData = {
   .correctionPlato = 0.0f,
   .totalChillTime = 0,
   .totalHeatTime = 0,
-  .co2DissolvedMode = 0,
+  .co2DissolvedMode = 2, // initial
   .tempState = TEMP_STATE_CHANGING_DIRECT,
   .tempStableSince = 0,
   .pressState = TEMP_STATE_CHANGING_DIRECT,
   .pressStableSince = 0,
   .dailyHs = {{}, NAN}, // [DAILY-HS] empty bins, no held value
   .co2RateHeld = NAN,
-  .co2RateHeldAt = 0
+  .co2RateHeldAt = 0,
+  .co2ArmedAt = 0
 };
 
 // =============
@@ -386,7 +387,7 @@ bool readCountersDataFromEEPROM() {
   CountersData.totalChillTime = store.getInt("chillTime", defaultCountersData.totalChillTime);
   CountersData.totalHeatTime = store.getInt("heatTime", defaultCountersData.totalHeatTime);
   CountersData.co2DissolvedMode = store.getUChar("co2Mode", defaultCountersData.co2DissolvedMode);
-  if (CountersData.co2DissolvedMode > 1) CountersData.co2DissolvedMode = defaultCountersData.co2DissolvedMode;
+  if (CountersData.co2DissolvedMode > 3) CountersData.co2DissolvedMode = defaultCountersData.co2DissolvedMode;
   CountersData.tempState = store.getUChar("tempState", defaultCountersData.tempState);
   CountersData.tempStableSince = store.getUInt("tempStableAt", defaultCountersData.tempStableSince);
   // STABLE requires a timestamp and CHANGING_* must not carry one.
@@ -415,6 +416,7 @@ bool readCountersDataFromEEPROM() {
     CountersData.co2RateHeld = defaultCountersData.co2RateHeld;
     CountersData.co2RateHeldAt = defaultCountersData.co2RateHeldAt;
   }
+  CountersData.co2ArmedAt = store.getUInt("co2ArmedAt", defaultCountersData.co2ArmedAt);
   store.end();
   return true;
 }
@@ -444,6 +446,7 @@ bool writeCountersDataToNIV() {
   saved = (store.putBytes("dailyHs", &CountersData.dailyHs, sizeof(CountersData.dailyHs)) == sizeof(CountersData.dailyHs)) && saved; // [DAILY-HS]
   saved = (store.putFloat("co2RateHeld", CountersData.co2RateHeld) == sizeof(CountersData.co2RateHeld)) && saved;
   saved = (store.putUInt("co2RateAt", CountersData.co2RateHeldAt) == sizeof(CountersData.co2RateHeldAt)) && saved;
+  saved = (store.putUInt("co2ArmedAt", CountersData.co2ArmedAt) == sizeof(CountersData.co2ArmedAt)) && saved;
   store.end();
   if (!saved) Serial.println("NVS: CountersData save incomplete");
   return saved;
@@ -611,13 +614,15 @@ void resetCountersForNewBatch() {
   CountersData.dumpedVolume = 0.0f;
   CountersData.totalChillTime = 0;
   CountersData.totalHeatTime = 0;
-  CountersData.co2DissolvedMode = 0;
+  CountersData.co2DissolvedMode = 2; // initial
+  CountersData.co2ArmedAt = 0;
   resetDailyHeadspaceTracking(); // [DAILY-HS] persisted by writeCountersDataToNIV() below
   CountersData.co2RateHeld = NAN; // the previous batch's rate must not be reported
   CountersData.co2RateHeldAt = 0;
 
   resetHeadspaceFilterTracking();
   resetCO2MolsProducedPerLiterTracking();
+  resetCO2DissolvedStateForNewBatch();
 
   writeCountersDataToNIV();
   resetAllAutoSetpointTriggers();
