@@ -259,6 +259,7 @@ void doDataLog() {
     GLogAddData("DumpStartMillis");
     GLogAddData("DumpEndMillis");
     GLogAddData("DumpDeltaH");
+    GLogAddData("gCO2Source"); // "calculated" or "held" (after a reboot)
 
     GLogSend();
     headerWritten = true;
@@ -272,7 +273,7 @@ void doDataLog() {
     GLogAddData(SetPointData.setPointTemp, 2);
     GLogAddData(ControlData.pressure, 6);
     GLogAddData(SetPointData.setPointPressure, 6);
-    GLogAddData(beerCO2EvolutionGramsPerLiterPerDay,3);
+    GLogAddData(getReportedCO2EvolutionGramsPerLiterPerDay(), 3); // source in gCO2Source
     GLogAddData(CountersData.headSpaceVolume, 3);
     GLogAddData(beerVolume, 3);
     GLogAddData(CountersData.dumpedVolume, 3);
@@ -337,6 +338,7 @@ void doDataLog() {
     } else {
       for (int i = 0; i < 5; i++) GLogAddData("");
     }
+    GLogAddData(getCO2EvolutionSource());
     GLogSend();
   }
 }

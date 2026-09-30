@@ -162,6 +162,10 @@ struct CountersData_t {
   uint32_t pressStableSince;
   // [DAILY-HS] Hourly bins and held value of the 24-hour headspace average.
   DailyHeadspace_t dailyHs;
+  // Last gCO2/L/d from a mature window and its local NTP epoch, reported
+  // after a reboot while the new window is short (docs/gco2-rate.md).
+  float co2RateHeld;
+  uint32_t co2RateHeldAt;
 } __attribute__((packed));
 
 #define TEMP_STATE_STABLE          0

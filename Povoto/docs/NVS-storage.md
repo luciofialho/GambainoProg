@@ -12,6 +12,8 @@ CountersData.dailyHs (24-hour headspace average, 24 hourly bins + held value,
 it empty. Besides writeCountersDataToNIV(), writeDailyHeadspaceToNIV() writes
 only this key, on a new hour, a rebase (dump) or a clear (liquid, dry/dynamic
 hopping). See docs/spec_headspace_24h.md.
+CountersData.co2RateHeld / co2RateHeldAt (keys `co2RateHeld`, `co2RateAt`) keep
+the last gCO2/L/d from a mature window and its NTP time; see docs/gco2-rate.md.
 
 To add a field, declare it and its default, then add its get/put calls to the
 corresponding read/write functions. Keep keys within the NVS 15-character limit.

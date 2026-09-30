@@ -8,6 +8,7 @@ Firmware ESP32 que monitora e controla fermentação de cerveja (pressão e temp
 - `PovotoTasks.cpp`: janelas de tarefa (Dump, Gas, Liquid, Dry Hopping, Dynamic Hopping).
 - `AutoSetpoints.cpp` (+ `PovotoMail.cpp`): ações automáticas. Documentação: `docs/automatic-actions.md`.
 - Persistência: `docs/NVS-storage.md`; teste estrutural: `python tests/check_storage_schema.py`.
+- Taxa gCO2/L/d: `docs/gco2-rate.md`. Ao acrescentar colunas de log ou linhas no /getstatus, rodar `python tests/check_log_sizes.py` e `python tests/check_status_sizes.py` (limites de buffer).
 
 ## Regras de trabalho
 - Pode haver fermentação em andamento com o equipamento em produção. Nunca gravar na placa (upload/OTA) sem confirmação explícita.

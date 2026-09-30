@@ -4,8 +4,9 @@
 #include <Arduino.h>
 #include <ESPAsyncWebServer.h>
 
-// Size of the buffer passed to getPressureControlStatus().
-constexpr size_t PRESSURE_STATUS_SIZE = 3072;
+// Size of the buffer passed to getPressureControlStatus(). Worst case of the
+// section (all branches, widest values) is about 3.1 KB; keep a margin.
+constexpr size_t PRESSURE_STATUS_SIZE = 4096;
 
 void pressureRelief(bool fromVolumeDetermination);
 void pressureControl();
@@ -73,6 +74,10 @@ float CO2Mass(float mols=-1);
 float getTotalCO2Mols();
 // g CO2/L/day; presentation clamps negative evolution to zero.
 float getBeerCO2EvolutionGramsPerLiterPerDay();
+// Signed; after a reboot, the saved rate while the new window is short
+// (docs/gco2-rate.md). Automatic rules use beerCO2EvolutionGramsPerLiterPerDay.
+float getReportedCO2EvolutionGramsPerLiterPerDay();
+const char *getCO2EvolutionSource(); // "calculated" or "held"
 float CO2DissolvedMols(float pressureBar, float sg, float temperatureC, float volumeL);
 boolean inPressureNoiseWindow();
 void getReliefsPerHourText(char *out, size_t outSize);

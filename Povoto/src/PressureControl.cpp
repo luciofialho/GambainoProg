@@ -71,6 +71,10 @@ float sgPointGenerationTime = 0.0f;
 
 static constexpr unsigned long CO2_EVOLUTION_SAMPLE_MS = 60000UL;
 static constexpr uint16_t CO2_EVOLUTION_HISTORY_SIZE = 71;
+// Window (samples, ~1/min) from which a rate is trusted enough to be saved, and
+// until which the saved rate is reported after a reboot.
+static constexpr uint16_t CO2_EVOLUTION_MATURE_SAMPLES = 15;
+static constexpr uint32_t CO2_RATE_HELD_MAX_AGE_S = 2UL * 3600UL;
 static constexpr unsigned long CO2_IMMEDIATE_PERCEPTION_DELAY_MS = 10UL * MINUTESms;
 enum CO2DissolvedEstimationMode : uint8_t {
   CO2_DISSOLVED_HALF_LIFE,
@@ -1221,10 +1225,42 @@ static void recomputeBeerCO2EvolutionFromCurrentState() {
   beerCO2EvolutionGramsPerLiterPerDay = deltaMols
       * CO2MOLAR_MASS * 86400000.0
       / (double(beerVolume) * elapsedMs);
+
+  // Keep the last rate from a mature window, with its time, so that after a
+  // reboot it can be reported while the new window is still short. Persisted
+  // with the other counters (writeCountersDataToNIV), no extra flash writes.
+  if (co2EvolutionCount >= CO2_EVOLUTION_MATURE_SAMPLES) {
+    const unsigned long epoch = NTPEpoch();
+    if (epoch != 0) {
+      CountersData.co2RateHeld = beerCO2EvolutionGramsPerLiterPerDay;
+      CountersData.co2RateHeldAt = epoch;
+    }
+  }
+}
+
+// The rate saved before a reboot replaces the calculated one only while the
+// new window has fewer than CO2_EVOLUTION_MATURE_SAMPLES and the saved value
+// is at most CO2_RATE_HELD_MAX_AGE_S old (by NTP; without NTP it is not used).
+static bool co2RateHeldApplies() {
+  if (co2EvolutionCount >= CO2_EVOLUTION_MATURE_SAMPLES) return false;
+  if (!isfinite(CountersData.co2RateHeld) || CountersData.co2RateHeldAt == 0) return false;
+  const unsigned long now = NTPEpoch();
+  return now != 0 && now >= CountersData.co2RateHeldAt &&
+         now - CountersData.co2RateHeldAt <= CO2_RATE_HELD_MAX_AGE_S;
+}
+
+// Signed rate for display and logs; automatic rules use only the calculated
+// beerCO2EvolutionGramsPerLiterPerDay.
+float getReportedCO2EvolutionGramsPerLiterPerDay() {
+  return co2RateHeldApplies() ? CountersData.co2RateHeld : beerCO2EvolutionGramsPerLiterPerDay;
+}
+
+const char *getCO2EvolutionSource() {
+  return co2RateHeldApplies() ? "held" : "calculated";
 }
 
 float getBeerCO2EvolutionGramsPerLiterPerDay() {
-  return fmaxf(0.0f, beerCO2EvolutionGramsPerLiterPerDay);
+  return fmaxf(0.0f, getReportedCO2EvolutionGramsPerLiterPerDay());
 }
 
 static void releasePressureReliefHistory() {
@@ -2420,7 +2456,7 @@ void processPressure(bool afterRelief) {
     reliefLog.beerABV = beerABV;
     reliefLog.totalReliefCount = CountersData.totalReliefCount;
     reliefLog.reliefsPerHour = reliefsPerHourValue;
-    reliefLog.beerCO2EvolutionGramsPerLiterPerDay = beerCO2EvolutionGramsPerLiterPerDay;
+    reliefLog.beerCO2EvolutionGramsPerLiterPerDay = getReportedCO2EvolutionGramsPerLiterPerDay();
     reliefLog.polytropicSourceReliefNumber = polytropicSourceReliefNumber;
     reliefLog.polytropicSampleCount = polytropicResultSampleCount;
     reliefLog.polytropicBackExtrapolatedPressure = polytropicBackExtrapolatedPressure;
@@ -3564,8 +3600,9 @@ char *getPressureControlStatus(char *st) {
       snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;Reliefs/hour: %.2f<br>", reliefsPerHourValue);
     }
     strnncat(st, tmp, PRESSURE_STATUS_SIZE);
-    snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;gCO2/L/d: %.2f<br>",
-             getBeerCO2EvolutionGramsPerLiterPerDay());
+    snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;gCO2/L/d: %.2f (%s; %u samples)<br>",
+             getBeerCO2EvolutionGramsPerLiterPerDay(), getCO2EvolutionSource(),
+             (unsigned)co2EvolutionCount);
     strnncat(st, tmp, PRESSURE_STATUS_SIZE);
     {
       // What currently holds the next expansion back (gas flow mode).

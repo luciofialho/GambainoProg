@@ -97,7 +97,9 @@ CountersData_t CountersData = {
   .tempStableSince = 0,
   .pressState = TEMP_STATE_CHANGING_DIRECT,
   .pressStableSince = 0,
-  .dailyHs = {{}, NAN} // [DAILY-HS] empty bins, no held value
+  .dailyHs = {{}, NAN}, // [DAILY-HS] empty bins, no held value
+  .co2RateHeld = NAN,
+  .co2RateHeldAt = 0
 };
 
 // =============
@@ -407,6 +409,12 @@ bool readCountersDataFromEEPROM() {
   for (int i = 0; dailyHsValid && i < DAILY_HS_BINS; i++)
     dailyHsValid = isfinite(CountersData.dailyHs.bins[i].sum);
   if (!dailyHsValid) CountersData.dailyHs = defaultCountersData.dailyHs;
+  CountersData.co2RateHeld = store.getFloat("co2RateHeld", defaultCountersData.co2RateHeld);
+  CountersData.co2RateHeldAt = store.getUInt("co2RateAt", defaultCountersData.co2RateHeldAt);
+  if (!isfinite(CountersData.co2RateHeld) || CountersData.co2RateHeldAt == 0) {
+    CountersData.co2RateHeld = defaultCountersData.co2RateHeld;
+    CountersData.co2RateHeldAt = defaultCountersData.co2RateHeldAt;
+  }
   store.end();
   return true;
 }
@@ -434,6 +442,8 @@ bool writeCountersDataToNIV() {
   saved = (store.putUChar("pressState", CountersData.pressState) == sizeof(CountersData.pressState)) && saved;
   saved = (store.putUInt("pressStableAt", CountersData.pressStableSince) == sizeof(CountersData.pressStableSince)) && saved;
   saved = (store.putBytes("dailyHs", &CountersData.dailyHs, sizeof(CountersData.dailyHs)) == sizeof(CountersData.dailyHs)) && saved; // [DAILY-HS]
+  saved = (store.putFloat("co2RateHeld", CountersData.co2RateHeld) == sizeof(CountersData.co2RateHeld)) && saved;
+  saved = (store.putUInt("co2RateAt", CountersData.co2RateHeldAt) == sizeof(CountersData.co2RateHeldAt)) && saved;
   store.end();
   if (!saved) Serial.println("NVS: CountersData save incomplete");
   return saved;
@@ -603,6 +613,8 @@ void resetCountersForNewBatch() {
   CountersData.totalHeatTime = 0;
   CountersData.co2DissolvedMode = 0;
   resetDailyHeadspaceTracking(); // [DAILY-HS] persisted by writeCountersDataToNIV() below
+  CountersData.co2RateHeld = NAN; // the previous batch's rate must not be reported
+  CountersData.co2RateHeldAt = 0;
 
   resetHeadspaceFilterTracking();
   resetCO2MolsProducedPerLiterTracking();
