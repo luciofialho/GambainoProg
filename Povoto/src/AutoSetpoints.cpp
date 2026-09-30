@@ -217,6 +217,14 @@ void resetAutoSetpointsToDefaults() {
 // ===== Evaluation =====
 
 static constexpr unsigned long AUTO_SETPOINT_EVALUATION_MS = 10000UL;
+// A gCO2/L/d criterion must hold without interruption for this long.
+static constexpr unsigned long AUTO_SETPOINT_CO2_PERSIST_MS = 20UL * 60UL * 1000UL;
+// millis() since the gCO2 criterion of each rule holds (0 = not holding).
+static unsigned long co2CriterionSince[AUTO_SETPOINT_RULE_COUNT] = {};
+
+static void resetCO2CriterionPersistence() {
+  for (int i = 0; i < AUTO_SETPOINT_RULE_COUNT; i++) co2CriterionSince[i] = 0;
+}
 
 // Each value is NAN when it cannot be used; a criterion on a NAN value is
 // never met.
@@ -233,16 +241,18 @@ static AutoSetpointMeasurements readAutoSetpointMeasurements(uint32_t now) {
                               pressureReadingValid();
   m.pressureStableHours = pressureStable ? float(now - CountersData.pressStableSince) / 3600.0f : NAN;
   m.sg = (isfinite(beerSG) && beerSG > 0.980f && beerSG < 1.200f) ? beerSG : NAN;
-  // The raw rate is 0 until enough samples exist and may be negative; only
-  // a positive computed value is usable.
-  m.co2Rate = (isfinite(beerCO2EvolutionGramsPerLiterPerDay) && beerCO2EvolutionGramsPerLiterPerDay > 0.0f)
-      ? beerCO2EvolutionGramsPerLiterPerDay : NAN;
+  // Only a positive calculated rate over a 30-min window (never the value
+  // held from before a reboot).
+  m.co2Rate = getRuleCO2EvolutionGramsPerLiterPerDay();
   return m;
 }
 
-static bool autoSetpointRuleMet(const AutoSetpointRule_t &rule, const AutoSetpointMeasurements &m) {
+static bool autoSetpointRuleMet(int index, const AutoSetpointRule_t &rule, const AutoSetpointMeasurements &m) {
   if (rule.manualOnly) return false;
   if (!autoSetpointRuleHasTrigger(rule)) return false;
+  if (!isnan(rule.co2RateBelow) &&
+      (co2CriterionSince[index] == 0 || millis() - co2CriterionSince[index] < AUTO_SETPOINT_CO2_PERSIST_MS))
+    return false;
   if (!isnan(rule.stableHours) && !(m.stableHours > rule.stableHours)) return false;
   if (!isnan(rule.pressureStableHours) && !(m.pressureStableHours > rule.pressureStableHours)) return false;
   if (!isnan(rule.sgBelow) && !(m.sg < rule.sgBelow)) return false;
@@ -296,7 +306,7 @@ String describeAutoSetpointFiring(const AutoSetpointFiring_t &firing) {
     if (!isnan(r.sgBelow))
       criteria += "SG < " + String(r.sgBelow, 3) + " (measured " + String(m.sg, 4) + ")\n";
     if (!isnan(r.co2RateBelow))
-      criteria += "gCO2/L/d < " + String(r.co2RateBelow, 2) + " (measured " + String(m.co2Rate, 2) + ")\n";
+      criteria += "gCO2/L/d < " + String(r.co2RateBelow, 2) + " for 20 min (measured " + String(m.co2Rate, 2) + ")\n";
   }
   if (r.requiresPrevious && firing.index > 0)
     criteria += "rule " + String(firing.index) + " already triggered\n";
@@ -326,7 +336,7 @@ static AutoSetpointManualTriggerResult fireAutoSetpointRule(
   else if (index > 0 && autoSetpointRules[index].requiresPrevious &&
            autoSetpointStatus.triggeredAt[index - 1] == 0)
     result = AutoSetpointManualTriggerResult::PreviousNotTriggered;
-  else if (!manuallyTriggered && !autoSetpointRuleMet(autoSetpointRules[index], measured))
+  else if (!manuallyTriggered && !autoSetpointRuleMet(index, autoSetpointRules[index], measured))
     result = AutoSetpointManualTriggerResult::InvalidRule;
   else {
     rule = autoSetpointRules[index];
@@ -370,7 +380,10 @@ void evaluateAutoSetpoints() {
   static unsigned long lastEvaluation = 0;
   if (!MILLISDIFF(lastEvaluation, AUTO_SETPOINT_EVALUATION_MS)) return;
   lastEvaluation = millis();
-  if (SetPointData.mode != MODE_FERMENTING) return;
+  if (SetPointData.mode != MODE_FERMENTING) {
+    resetCO2CriterionPersistence();
+    return;
+  }
 
   AutoSetpointRule_t rules[AUTO_SETPOINT_RULE_COUNT];
   AutoSetpointStatus_t status;
@@ -381,18 +394,32 @@ void evaluateAutoSetpoints() {
   for (int i = 0; i < AUTO_SETPOINT_RULE_COUNT; i++)
     pending = pending || (status.triggeredAt[i] == 0 && !rules[i].manualOnly &&
                           autoSetpointRuleHasTrigger(rules[i]));
-  if (!pending) return;
+  if (!pending) {
+    resetCO2CriterionPersistence();
+    return;
+  }
 
   const uint32_t now = NTPEpoch();
-  if (now == 0) return; // No valid time: nothing fires.
+  if (now == 0) { // No valid time: nothing fires.
+    resetCO2CriterionPersistence();
+    return;
+  }
   const AutoSetpointMeasurements measured = readAutoSetpointMeasurements(now);
+
+  // gCO2 criterion: any evaluation without a usable rate, or with the rate
+  // at or above the limit, restarts the 20 minutes.
+  for (int i = 0; i < AUTO_SETPOINT_RULE_COUNT; i++) {
+    const bool holds = !isnan(rules[i].co2RateBelow) && measured.co2Rate < rules[i].co2RateBelow;
+    if (!holds) co2CriterionSince[i] = 0;
+    else if (co2CriterionSince[i] == 0) co2CriterionSince[i] = millis() ? millis() : 1;
+  }
 
   // In index order, at most one rule per evaluation, so a rule that changes
   // the temperature restarts stability before the next rule is checked.
   for (int i = 0; i < AUTO_SETPOINT_RULE_COUNT; i++) {
     if (status.triggeredAt[i] != 0) continue;
     if (i > 0 && rules[i].requiresPrevious && status.triggeredAt[i - 1] == 0) continue;
-    if (!autoSetpointRuleMet(rules[i], measured)) continue;
+    if (!autoSetpointRuleMet(i, rules[i], measured)) continue;
     if (fireAutoSetpointRule(i, now, measured, false) == AutoSetpointManualTriggerResult::Triggered)
       return;
   }

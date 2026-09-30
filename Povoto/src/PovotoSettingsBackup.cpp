@@ -45,7 +45,8 @@ String savePovotoSettingsBackup() {
   appendNumber(json, "pressure2Bar", FMTData.pressure2Bar, 6);
   appendNumber(json, "pressure2Current", FMTData.pressure2Current, 6);
   appendNumber(json, "maximumPressure", FMTData.maximumPressure, 6);
-  appendNumber(json, "co2TransferTime", FMTData.co2TransferTime, 0);
+  appendNumber(json, "supersatTauDesorbHours", FMTData.supersatTauDesorbHours, 3);
+  appendNumber(json, "supersatTauAbsorbHours", FMTData.supersatTauAbsorbHours, 3);
   appendNumber(json, "nucleationWindow", FMTData.nucleationWindow, 0);
   appendBool(json, "heaterEnabled", FMTData.heater.enabled);
   appendNumber(json, "heaterOnMinutes", FMTData.heater.onMinutes, 6);
@@ -191,7 +192,8 @@ bool loadPovotoSettingsBackup(const String &settings) {
   READ_BACKUP_FLOAT("pressure2Bar", loadedFmt.pressure2Bar);
   READ_BACKUP_FLOAT("pressure2Current", loadedFmt.pressure2Current);
   READ_BACKUP_FLOAT("maximumPressure", loadedFmt.maximumPressure);
-  READ_BACKUP_INT("co2TransferTime", loadedFmt.co2TransferTime);
+  READ_BACKUP_FLOAT("supersatTauDesorbHours", loadedFmt.supersatTauDesorbHours);
+  READ_BACKUP_FLOAT("supersatTauAbsorbHours", loadedFmt.supersatTauAbsorbHours);
   READ_BACKUP_INT("nucleationWindow", loadedFmt.nucleationWindow);
   READ_BACKUP_BOOL("heaterEnabled", loadedFmt.heater.enabled);
   READ_BACKUP_FLOAT("heaterOnMinutes", loadedFmt.heater.onMinutes);

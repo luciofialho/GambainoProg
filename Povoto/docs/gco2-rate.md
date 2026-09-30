@@ -68,6 +68,10 @@ Sem NTP válido não dá para saber a idade, e o valor retido não é usado. Um 
 |---|---|
 | Página inicial, `/getstatus`, Brewfather (`bpm`, só se > 0) | informado (retido ou calculado), cortado em 0 — `getBeerCO2EvolutionGramsPerLiterPerDay()` |
 | Colunas `gCO2/L/d` dos logs Cold e Relief | informado, com sinal — `getReportedCO2EvolutionGramsPerLiterPerDay()`; origem na coluna Cold `gCO2Source` (`calculated` / `held`) |
-| Gatilho "gCO2/L/d < x" das ações automáticas | **só o calculado**, e só se > 0 (`beerCO2EvolutionGramsPerLiterPerDay`) — o valor retido nunca dispara regra |
+| Gatilho "gCO2/L/d < x" das ações automáticas | **só o calculado**, > 0 e com janela ≥ 30 min (`getRuleCO2EvolutionGramsPerLiterPerDay()`), abaixo de x por 20 min seguidos — o valor retido nunca dispara regra (docs/automatic-actions.md) |
 
 O `/getstatus` mostra a origem e o número de amostras: `gCO2/L/d: 3.12 (held; 8 samples)`.
+
+## 6. Dívida do CO2 produzido
+
+`CO2MolsProducedPerLiter` (que dá o SG) só cresce. Uma queda do CO2 total vira dívida (`CountersData.co2CorrectionDebt`, mol), paga pelas subidas seguintes antes de elas contarem como produção. A dívida é gravada com os contadores (chave `co2Debt`) e sobrevive a um reboot; antes ela ficava só na RAM, e um reboot deixava o SG permanentemente baixo depois de uma queda do total. Ela é zerada só quando o integral é definido explicitamente: lote novo ou edição do campo "CO2 Mols Produced Per Liter" na página Counters. Salvar a página Counters sem mudar um campo não mexe em nada: um campo só conta como editado se o valor enviado diferir do mostrado em pelo menos meio dígito da última casa.

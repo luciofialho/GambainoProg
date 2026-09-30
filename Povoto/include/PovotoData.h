@@ -59,7 +59,10 @@ struct FMTData_t {
   float pressure2Bar;
   float pressure2Current;
   float maximumPressure;
-  int   co2TransferTime;
+  // Supersaturation time constants tau_s = 1/kLa (hours), for desorption
+  // (gas leaving the beer) and absorption. Calibration page, docs/dissolved-co2.md.
+  float supersatTauDesorbHours;
+  float supersatTauAbsorbHours;
   int   nucleationWindow;
   HeaterCycle_t heater;
   CoolingCyclePoint_t coolingCycle[3]; // Fixed rows: 20, 10 and 0 degrees C.
@@ -170,6 +173,11 @@ struct CountersData_t {
   // Local NTP epoch at which the half-life was armed by added fermentables
   // (0 = not armed, or armed before NTP).
   uint32_t co2ArmedAt;
+  // CO2 debt of the produced-CO2 integral (mol): falls of the CO2 total, paid
+  // by later rises before they count as production. Survives a reboot.
+  double co2CorrectionDebt;
+  // Supersaturation x = tau_s*F of the dissolved CO2 (mol), held across a reboot.
+  float co2Supersat;
 } __attribute__((packed));
 
 #define TEMP_STATE_STABLE          0

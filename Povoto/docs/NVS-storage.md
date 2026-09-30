@@ -17,6 +17,12 @@ the last gCO2/L/d from a mature window and its NTP time; see docs/gco2-rate.md.
 CountersData.co2DissolvedMode (key `co2Mode`, 0..3; other values read as 2)
 and co2ArmedAt (key `co2ArmedAt`) keep the dissolved-CO2 state; see
 docs/dissolved-co2.md.
+CountersData.co2Supersat (key `co2Supersat`) and FMTData.supersatTauDesorbHours /
+supersatTauAbsorbHours (keys `supersatTauD` / `supersatTauA`) belong to the
+supersaturation model; see docs/dissolved-co2.md. FMTData.co2TransferTime was
+removed without a schema change: its key `co2TransferTime` stays unused in NVS.
+CountersData.co2CorrectionDebt (key `co2Debt`, double) keeps the debt of the
+produced-CO2 integral across reboots; see docs/gco2-rate.md.
 
 To add a field, declare it and its default, then add its get/put calls to the
 corresponding read/write functions. Keep keys within the NVS 15-character limit.

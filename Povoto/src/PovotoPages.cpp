@@ -544,7 +544,7 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
     usingAverageCurrent = true;
   }
 
-  const size_t BUFFER_SIZE = 7000;
+  const size_t BUFFER_SIZE = 8000;
   char* html = (char*)malloc(BUFFER_SIZE);
   if (!html) {
     request->send(500, "text/plain", "Out of memory");
@@ -718,17 +718,29 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "</div>", remaining);
 
-  // CO2 transfer time
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='form-group'>"
-               "<label for='co2TransferTime'>CO2 equilibrim half-time (hours):</label>", remaining);
+  // Supersaturation time constants (docs/dissolved-co2.md)
   snprintf(buffer, sizeof(buffer),
-    "<input type='number' id='co2TransferTime' name='co2TransferTime' value='%d' step='1' min='0'>",
-    FMTData.co2TransferTime);
+    "<div class='form-group'><label for='supersatTauDesorbHours'>Supersaturation &tau;s, gas leaving the beer (h):</label>"
+    "<input type='number' id='supersatTauDesorbHours' name='supersatTauDesorbHours' value='%.2f' step='0.01' min='0' max='24'></div>",
+    FMTData.supersatTauDesorbHours);
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, buffer, remaining);
+  snprintf(buffer, sizeof(buffer),
+    "<div class='form-group'><label for='supersatTauAbsorbHours'>Supersaturation &tau;s, beer absorbing gas (h):</label>"
+    "<input type='number' id='supersatTauAbsorbHours' name='supersatTauAbsorbHours' value='%.2f' step='0.01' min='0' max='24'></div>",
+    FMTData.supersatTauAbsorbHours);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div>", remaining);
+  strncat(html, "<small>Dissolved CO2 = Henry at the 30-min mean pressure + &tau;s &times; gas flux. "
+               "0 = instant equilibrium. To recalibrate, read the Cold log after a pressure rise "
+               "(set point up), a pressure fall (cooling) or a set point down: use TauDesEst "
+               "(gas leaving) or TauAbsEst (absorbing) only on rows where TauEstFRangeDes / "
+               "TauEstFRangeAbs &ge; 2.5 g/L/d, the SE is small compared with the estimate and "
+               "TauEstRate matches the gCO2/L/d of the relief cycles before the change. Take the "
+               "value from the end of the change (the 3-h window then covers it) and repeat over "
+               "a few events before changing it here. In a steady relief cycle the columns stay "
+               "empty: nothing to estimate.</small>", remaining);
 
   // Nucleation window
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -855,8 +867,13 @@ void handleCalibrationDataUpdate(AsyncWebServerRequest *request) {
   if (request->hasParam("maximumPressure", true)) {
     FMTData.maximumPressure = request->getParam("maximumPressure", true)->value().toFloat();
   }
-  if (request->hasParam("co2TransferTime", true)) {
-    FMTData.co2TransferTime = request->getParam("co2TransferTime", true)->value().toInt();
+  if (request->hasParam("supersatTauDesorbHours", true)) {
+    const float value = request->getParam("supersatTauDesorbHours", true)->value().toFloat();
+    if (isfinite(value) && value >= 0.0f && value <= 24.0f) FMTData.supersatTauDesorbHours = value;
+  }
+  if (request->hasParam("supersatTauAbsorbHours", true)) {
+    const float value = request->getParam("supersatTauAbsorbHours", true)->value().toFloat();
+    if (isfinite(value) && value >= 0.0f && value <= 24.0f) FMTData.supersatTauAbsorbHours = value;
   }
   if (request->hasParam("nucleationWindow", true)) {
     FMTData.nucleationWindow = request->getParam("nucleationWindow", true)->value().toInt();
@@ -1332,38 +1349,44 @@ void handleCountersDataPage(AsyncWebServerRequest *request) {
   free(html);
 }
 
+// The form shows rounded values; a field counts as edited only when the
+// posted value differs from the shown one by at least half its last digit.
+// Otherwise saving the page would replace the stored values with rounded ones
+// and restart the CO2 accounting.
+static bool postedCounterChanged(AsyncWebServerRequest *request, const char *name,
+                                 double current, double resolution, double &value) {
+  if (!request->hasParam(name, true)) return false;
+  value = request->getParam(name, true)->value().toDouble();
+  return isfinite(value) && fabs(value - current) >= resolution / 2.0;
+}
+
 void handleCountersDataUpdate(AsyncWebServerRequest *request) {
   bool co2StateChanged = false;
   bool co2ProducedPerLiterChanged = false;
-  if (request->hasParam("totalReliefCount", true)) {
-    const uint32_t value = (uint32_t)request->getParam("totalReliefCount", true)->value().toInt();
-    co2StateChanged |= value != CountersData.totalReliefCount;
-    CountersData.totalReliefCount = value;
+  double value = 0.0;
+  if (postedCounterChanged(request, "totalReliefCount", CountersData.totalReliefCount, 1.0, value) && value >= 0.0) {
+    CountersData.totalReliefCount = (uint32_t)lround(value);
+    co2StateChanged = true;
   }
-  if (request->hasParam("totalMolsEjected", true)) {
-    const float value = request->getParam("totalMolsEjected", true)->value().toFloat();
-    co2StateChanged |= value != CountersData.totalMolsEjected;
+  if (postedCounterChanged(request, "totalMolsEjected", CountersData.totalMolsEjected, 0.001, value)) {
     CountersData.totalMolsEjected = value;
+    co2StateChanged = true;
   }
-  if (request->hasParam("CO2InSolution", true)) {
-    const float value = request->getParam("CO2InSolution", true)->value().toFloat();
-    co2StateChanged |= value != CountersData.CO2InSolution;
+  if (postedCounterChanged(request, "CO2InSolution", CountersData.CO2InSolution, 0.001, value)) {
     CountersData.CO2InSolution = value;
+    co2StateChanged = true;
   }
-  if (request->hasParam("CO2MolsProducedPerLiter", true)) {
-    const double value = request->getParam("CO2MolsProducedPerLiter", true)->value().toFloat();
-    if (isfinite(value) && value >= 0.0) {
-      co2ProducedPerLiterChanged = value != CountersData.CO2MolsProducedPerLiter;
-      CountersData.CO2MolsProducedPerLiter = value;
-    }
+  if (postedCounterChanged(request, "CO2MolsProducedPerLiter", CountersData.CO2MolsProducedPerLiter, 0.000001, value) &&
+      value >= 0.0) {
+    CountersData.CO2MolsProducedPerLiter = value;
+    co2ProducedPerLiterChanged = true;
   }
-  if (request->hasParam("headSpaceVolume", true)) {
-    const float value = request->getParam("headSpaceVolume", true)->value().toFloat();
-    co2StateChanged |= value != CountersData.headSpaceVolume;
-    CountersData.headSpaceVolume = value;
+  if (postedCounterChanged(request, "headSpaceVolume", CountersData.headSpaceVolume, 0.01, value)) {
+    CountersData.headSpaceVolume = (float)value;
+    co2StateChanged = true;
   }
-  if (request->hasParam("correctionPlato", true)) {
-    CountersData.correctionPlato = request->getParam("correctionPlato", true)->value().toFloat();
+  if (postedCounterChanged(request, "correctionPlato", CountersData.correctionPlato, 0.01, value)) {
+    CountersData.correctionPlato = (float)value;
   }
   if (request->hasParam("totalChillTime", true)) {
     CountersData.totalChillTime = request->getParam("totalChillTime", true)->value().toInt();

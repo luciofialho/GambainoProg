@@ -25,6 +25,12 @@ struct DissolvedCO2LogData {
   float reliefIntervalSeconds;
   float sinceLastReliefSeconds;
   float gasRate; // gas-phase CO2 rate, g/L/d (NAN = no decision)
+  // Supersaturation model and tau_s estimator (docs/dissolved-co2.md).
+  float gasFlux;          // g/L/d, 30-min slope of the gas phase (NAN until available)
+  float supersatMols;     // x applied
+  float tauDesEst, tauDesSe, tauAbsEst, tauAbsSe; // hours, NAN = not estimable
+  float tauEstRate;       // g/L/d implied by the fit
+  float tauEstRangeDes, tauEstRangeAbs; // g/L/d, variation of F in the fit window
 };
 DissolvedCO2LogData getDissolvedCO2LogData();
 // Dissolved-CO2 state (docs/dissolved-co2.md).
@@ -83,6 +89,8 @@ float CO2Mass(float mols=-1);
 float getTotalCO2Mols();
 // g CO2/L/day; presentation clamps negative evolution to zero.
 float getBeerCO2EvolutionGramsPerLiterPerDay();
+// Rate for the automatic rules: NAN unless the window has 30 min (docs/automatic-actions.md).
+float getRuleCO2EvolutionGramsPerLiterPerDay();
 // Signed; after a reboot, the saved rate while the new window is short
 // (docs/gco2-rate.md). Automatic rules use beerCO2EvolutionGramsPerLiterPerDay.
 float getReportedCO2EvolutionGramsPerLiterPerDay();
