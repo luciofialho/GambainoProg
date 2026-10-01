@@ -4,6 +4,7 @@
 #include "User_Setup.h"
 #include "PovotoCommon.h"
 #include "Povoto_UI.h"
+#include "PovotoGraphScreen.h"
 #include "PovotoData.h"
 #include "PressureControl.h"
 #include "PovotoTasks.h"
@@ -705,6 +706,7 @@ static void wakeDisplayHardReset() {
 
 void screenSaver(bool enable) {
   if (enable) {
+    dismissGraphScreenForScreenSaver();
     Serial.println(">>> SCREEN SAVER ON <<<");
     screenSaverEnteredAt = millis();
     // Se o teclado estiver aberto, fecha como CANCEL
@@ -1390,6 +1392,7 @@ void processTouch() {
       uint8_t touches = status & 0x0F;  // 0..5
       if (touches == 0 || touches > 5) {
         povotoWiFiNotifyTouchReleased();
+        notifyGraphScreenTouchReleased();
         return;
       }
 
@@ -1431,6 +1434,12 @@ void processTouch() {
         }
 
         if (povotoWiFiHandleTouch(x, y)) {
+          return;
+        }
+
+        // Graph screen consumes touch before the main-screen controls.
+        if (isGraphScreenActive()) {
+          if (i == 0 && touches == 1) handleGraphScreenTouch(x, y);
           return;
         }
 
@@ -1487,6 +1496,26 @@ void processTouch() {
           //Serial.println(">>> RESET DISPLAY <<<");
           delay(100);
           tft.init();
+        }
+
+        // Measured temperature number (not the target fields).
+        if (touches == 1 && x >= 125 && x <= 220 && y >= 88 && y <= 148) {
+          showGraphScreen();
+          return;
+        }
+
+        // Batch name, beer volume and pressure open their respective graphs.
+        if (touches == 1 && x >= 235 && x <= 470 && y <= 55) {
+          showGraphScreen(GraphScreenView::Evolution);
+          return;
+        }
+        if (touches == 1 && x >= 125 && x <= 220 && y >= 162 && y <= 219) {
+          showGraphScreen(GraphScreenView::Attenuation);
+          return;
+        }
+        if (touches == 1 && x >= 125 && x <= 220 && y >= 235 && y <= 301) {
+          showGraphScreen(GraphScreenView::Pressure);
+          return;
         }
 
         // Zona de toque: label "Target" da temperatura (~screen x=270..430, y=88..122)

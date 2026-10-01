@@ -10,6 +10,7 @@
 #include "PovotoTasks.h"
 #include <math.h>
 #include <IOTK_NTP.h>
+#include <WiFi.h>
 
 #define BREWFATHER_SEND_INTERVAL_MS 600000UL  // 10 minutos
 #define BREWFATHER_RETRY_INTERVAL_MS 30000UL  // 15 segundos entre tentativas
@@ -185,12 +186,45 @@ void maybeSendBrewfatherLog() {
   if (finalPoint) conditioningFinalBrewfatherPending = false;
 }
 
+// Logs start only once WiFi and NTP have been up since the boot: before that
+// ESP-NOW may be on a channel other than the SideKick's and the time stamp
+// would be 1970 (batch 160: the Cold header, sent ~10 s after the boot, was
+// lost at every boot from 29/09 on).
+static bool logLinkReady() {
+  static bool ready = false;
+  if (!ready) ready = WiFi.status() == WL_CONNECTED && NTPEpoch() != 0;
+  return ready;
+}
+
+// Sends a header prepared with GLogBegin/GLogAddData. It counts as written
+// once the SideKick acknowledged all its chunks; otherwise it is sent again
+// with the next row. After LOG_HEADER_MAX_ATTEMPTS it counts as written, so a
+// link that never confirms does not repeat it before every row.
+static constexpr unsigned long LOG_HEADER_ACK_TIMEOUT_MS = 300;
+static constexpr uint8_t LOG_HEADER_MAX_ATTEMPTS = 5;
+static bool sendLogHeader(const char *sheet, uint8_t &attempts) {
+  GLogSend();
+  const GLogDelivery delivery = GLogWaitDelivery(LOG_HEADER_ACK_TIMEOUT_MS);
+  if (delivery == GLOG_DELIVERY_OK) {
+    attempts = 0;
+    return true;
+  }
+  ++attempts;
+  Serial.printf("[LOG] %s header not acknowledged (%s), attempt %u/%u\n", sheet,
+                delivery == GLOG_DELIVERY_FAILED ? "failed" : "timeout",
+                (unsigned)attempts, (unsigned)LOG_HEADER_MAX_ATTEMPTS);
+  if (attempts < LOG_HEADER_MAX_ATTEMPTS) return false;
+  attempts = 0;
+  return true;
+}
+
 void doDataLog() {
-  if (!datalogFolderNameInUse[0]) {
+  if (!datalogFolderNameInUse[0] || !logLinkReady()) {
     return;
   }
 
   static bool headerWritten = false;
+  static uint8_t headerAttempts = 0;
   static int lastBatchNum = -1;
 
   if (BatchData.batchNumber == 0) {
@@ -209,6 +243,7 @@ void doDataLog() {
   if (batchNum != lastBatchNum) {
     lastBatchNum = batchNum;
     headerWritten = false;
+    headerAttempts = 0;
   }
   char batchStr[6]; // All uint16_t batch numbers plus the terminator.
   snprintf(batchStr, sizeof(batchStr), "%03d", batchNum);
@@ -280,10 +315,10 @@ void doDataLog() {
     GLogAddData("gCO2Source"); // "calculated", "held" (after a reboot) or "transition"
     GLogAddData("GasCO2Rate"); // gas-phase g/L/d of the dissolved-CO2 state (empty = no decision)
 
-    GLogSend();
-    headerWritten = true;
+    headerWritten = sendLogHeader("Cold", headerAttempts);
   }
-  else {
+  // The row follows its header in the same call.
+  {
     GLogBegin(datalogFolderNameInUse, batchStr, "Cold");
     GLogAddTimeStamp();
     GLogAddData(FMTData.PovotoNum);
@@ -366,11 +401,12 @@ void doDataLog() {
 
 void doReliefDataLog(const ReliefLogData &data) {
   if (!datalogFolderNameInUse[0] || BatchData.batchNumber == 0 ||
-      SetPointData.mode == MODE_CONDITIONING) {
+      SetPointData.mode == MODE_CONDITIONING || !logLinkReady()) {
     return;
   }
 
   static bool headerWritten = false;
+  static uint8_t headerAttempts = 0;
   static int lastBatchNum = -1;
   // A relief is identified by the instant at which its valve was opened.
   // processPressure(true) is expected to run once, but retaining this small
@@ -393,6 +429,7 @@ void doReliefDataLog(const ReliefLogData &data) {
   if (batchNum != lastBatchNum) {
     lastBatchNum = batchNum;
     headerWritten = false;
+    headerAttempts = 0;
   }
 
   char batchStr[6]; // All uint16_t batch numbers plus the terminator.
@@ -477,8 +514,7 @@ void doReliefDataLog(const ReliefLogData &data) {
     GLogAddData("HeadSpaceDaily");
     GLogAddData("DailyHours");
     GLogAddData("DailyState");
-    GLogSend();
-    headerWritten = true;
+    headerWritten = sendLogHeader("Relief", headerAttempts);
   }
 
   // Send the data row separately so the first relief is logged as well.
@@ -572,12 +608,13 @@ void doRecoveryDataLog(unsigned long reliefNumber, float p1, float p1Extrap,
                        float shadowExponent, float shadowHsInstant, float shadowHsFiltered,
                        uint8_t points, const unsigned long *ms, const float *pressure) {
   if (!datalogFolderNameInUse[0] || BatchData.batchNumber == 0 ||
-      SetPointData.mode == MODE_CONDITIONING) return;
+      SetPointData.mode == MODE_CONDITIONING || !logLinkReady()) return;
 
   static bool headerWritten = false;
+  static uint8_t headerAttempts = 0;
   static int lastBatchNum = -1;
   const int batchNum = (int)BatchData.batchNumber;
-  if (batchNum != lastBatchNum) { lastBatchNum = batchNum; headerWritten = false; }
+  if (batchNum != lastBatchNum) { lastBatchNum = batchNum; headerWritten = false; headerAttempts = 0; }
 
   char batchStr[6];
   snprintf(batchStr, sizeof(batchStr), "%03d", batchNum);
@@ -600,8 +637,7 @@ void doRecoveryDataLog(unsigned long reliefNumber, float p1, float p1Extrap,
       snprintf(name, sizeof(name), "t%u_ms", (unsigned)i);  GLogAddData(name);
       snprintf(name, sizeof(name), "p%u", (unsigned)i);     GLogAddData(name);
     }
-    GLogSend();
-    headerWritten = true;
+    headerWritten = sendLogHeader("Recovery", headerAttempts);
   }
 
   GLogBegin(datalogFolderNameInUse, batchStr, "Recovery");

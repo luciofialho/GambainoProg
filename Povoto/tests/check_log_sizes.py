@@ -82,11 +82,11 @@ def check(sheet, header_block, data_block):
 
 
 cold = src.index("void doDataLog()")
-cold_header = src[src.index("if (!headerWritten) {", cold):src.index("headerWritten = true;", cold)]
-cold_data = src[src.index("else {", src.index("headerWritten = true;", cold)):src.index("void doReliefDataLog(")]
+cold_header = src[src.index("if (!headerWritten) {", cold):src.index("headerWritten = sendLogHeader(", cold)]
+cold_data = src[src.index("// The row follows its header", cold):src.index("void doReliefDataLog(")]
 
 relief = src.index("void doReliefDataLog(")
-relief_header = src[src.index("if (!headerWritten) {", relief):src.index("headerWritten = true;", relief)]
+relief_header = src[src.index("if (!headerWritten) {", relief):src.index("headerWritten = sendLogHeader(", relief)]
 relief_data = src[src.index("// Send the data row separately", relief):src.index("void doRecoveryDataLog(")]
 
 ok = check("Cold", cold_header, cold_data)

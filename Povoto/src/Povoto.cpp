@@ -29,6 +29,7 @@
 #include "AutoSetpoints.h"
 #include "GraphHistory.h"
 #include "PovotoFilesystem.h"
+#include "PovotoGraphScreen.h"
 #include "PovotoLogos.h"
 #include <esp_system.h>
 #include <esp_heap_caps.h>
@@ -418,6 +419,7 @@ void loop() {
   }
   pressureControl();
   graphHistorySampleIfDue();
+  updateGraphScreenIfNeeded();
   evaluateAutoSetpoints();
   maybeSendBrewfatherLog();
   maybePersistCountersData();

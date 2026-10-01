@@ -831,8 +831,7 @@ void formatMacAddress(const uint8_t mac[6], char *out, size_t outSize) {
 }
 
 // =========== ESP-NOW CHUNKED PROTOCOL ===========
-
-#define ESPNOW_MAX_CHUNK 200
+// ESPNOW_MAX_CHUNK: GambainoCommon.h
 
 static uint32_t espnowChunksRcv_  = 0;
 static uint32_t espnowDrops_      = 0;

@@ -10,6 +10,7 @@
 #include "PovotoCommon.h"
 #include "GambainoCommon.h"
 #include "Povoto_UI.h"
+#include "PovotoGraphScreen.h"
 #include "PressureControl.h"
 #include "PovotoWifi.h"
 #include "Swiss_911_Extra_Compressed_Regular7pt7b.h"
@@ -166,6 +167,7 @@ void screenBackground() {
 
 
 void screenData() {
+  if (isGraphScreenActive()) return;
   if (DisplayMode != 0)
     return;
   if (povotoWiFiConfigurationActive())
@@ -311,6 +313,10 @@ void screenData() {
 }
 
 void mainScreen() {
+  if (isGraphScreenActive()) {
+    redrawGraphScreen();
+    return;
+  }
   if (isTempKeyboardActive()) return; // não sobrescreve o teclado
   if (isTaskUIActive()) return;       // não sobrescreve a UI de tarefas
   if (isBatchInfoActive()) return;    // não sobrescreve o batch info

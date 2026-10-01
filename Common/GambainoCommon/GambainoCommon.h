@@ -11,6 +11,7 @@
 
 
 #define MAXPACKETSIZE 2048
+#define ESPNOW_MAX_CHUNK 200 // payload bytes per ESP-NOW chunk of sendEspNow()
 #define NOPACKET             '\0'
 #define SENTINELPACKET       'S'
 #define LOGPACKET            'L'
