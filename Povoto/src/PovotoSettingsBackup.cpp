@@ -36,6 +36,8 @@ String savePovotoSettingsBackup() {
   appendNumber(json, "ventingResidualCoefficientB", FMTData.ventingResidualCoefficientB, 6);
   appendNumber(json, "ventingResidualCoefficientC", FMTData.ventingResidualCoefficientC, 6);
   appendNumber(json, "FMTReliefVolume", FMTData.FMTReliefVolume, 6);
+  appendNumber(json, "expansionTankKCO2", FMTData.expansionTankKCO2, 6);
+  appendNumber(json, "expansionTankKAir", FMTData.expansionTankKAir, 6);
   appendNumber(json, "FMTAltitude", FMTData.FMTAltitude, 6);
   appendNumber(json, "dataLogIntervalSeconds", FMTData.dataLogIntervalSeconds, 0);
   appendNumber(json, "FMTEffectiveVentingExponent", FMTData.FMTEffectiveVentingExponent, 6);
@@ -180,6 +182,11 @@ bool loadPovotoSettingsBackup(const String &settings) {
                                                   loadedFmt.ventingResidualCoefficientB,
                                                   loadedFmt.ventingResidualCoefficientC)) return false;
   READ_BACKUP_FLOAT("FMTReliefVolume", loadedFmt.FMTReliefVolume);
+  // Optional: older backups keep the current values.
+  READ_BACKUP_FLOAT("expansionTankKCO2", loadedFmt.expansionTankKCO2);
+  READ_BACKUP_FLOAT("expansionTankKAir", loadedFmt.expansionTankKAir);
+  if (!isValidExpansionTankK(loadedFmt.expansionTankKCO2) ||
+      !isValidExpansionTankK(loadedFmt.expansionTankKAir)) return false;
   READ_BACKUP_FLOAT("FMTAltitude", loadedFmt.FMTAltitude);
   READ_BACKUP_INT("dataLogIntervalSeconds", loadedFmt.dataLogIntervalSeconds);
   if (!isValidDataLogIntervalSeconds(loadedFmt.dataLogIntervalSeconds)) return false;

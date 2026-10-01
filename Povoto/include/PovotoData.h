@@ -48,6 +48,14 @@ struct FMTData_t {
   float expansionTimeCoefficientB;
   float targetResidualAfterReliefPercent;
   float liquidMassInGasVentingPercent;
+  // Filling factor k of the expansion tank: in a short expansion the gas
+  // compressed into the tank is warmer than the fermenter, so it holds fewer
+  // moles at the same pressure. The mole accounting uses FMTReliefVolume / k;
+  // valve timing and the gas-flow model keep the physical volume
+  // (docs/expansion-tank-k.md). kCO2: fermentation; kAir: fast volume
+  // determination (empty fermenter).
+  float expansionTankKCO2;
+  float expansionTankKAir;
   // F(P) = c*P^2 + d*P + e: residual fraction after 20 s of venting at
   // gauge pressure P (bar).
   float ventingResidualCoefficientA;
@@ -66,6 +74,11 @@ struct FMTData_t {
 
 
 extern FMTData_t FMTData;
+
+constexpr float EXPANSION_TANK_K_DEFAULT = 1.08f; // fast volume test 20/09 and batch 160 SG
+inline bool isValidExpansionTankK(float k) {
+  return isfinite(k) && k >= 1.0f && k <= 1.5f;
+}
 
 struct UserConfigurationData_t {
   int screensaverTime;

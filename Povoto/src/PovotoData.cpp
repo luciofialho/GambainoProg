@@ -25,6 +25,8 @@ FMTData_t FMTData = {
   .expansionTimeCoefficientB = 0.0010f,
   .targetResidualAfterReliefPercent = 1.0f,
   .liquidMassInGasVentingPercent = 0.6f,
+  .expansionTankKCO2 = EXPANSION_TANK_K_DEFAULT,
+  .expansionTankKAir = EXPANSION_TANK_K_DEFAULT,
   .ventingResidualCoefficientA = 0.0f,
   .ventingResidualCoefficientB = 0.0f,
   .ventingResidualCoefficientC = 0.8729f,
@@ -165,6 +167,10 @@ bool readFMTDataFromEEPROM() {
   FMTData.expansionTimeCoefficientB = store.getFloat("expTimeB", defaultFMTData.expansionTimeCoefficientB);
   FMTData.targetResidualAfterReliefPercent = store.getFloat("targetResidual", defaultFMTData.targetResidualAfterReliefPercent);
   FMTData.liquidMassInGasVentingPercent = store.getFloat("liquidGasMass", defaultFMTData.liquidMassInGasVentingPercent);
+  FMTData.expansionTankKCO2 = store.getFloat("kCO2", defaultFMTData.expansionTankKCO2);
+  if (!isValidExpansionTankK(FMTData.expansionTankKCO2)) FMTData.expansionTankKCO2 = defaultFMTData.expansionTankKCO2;
+  FMTData.expansionTankKAir = store.getFloat("kAir", defaultFMTData.expansionTankKAir);
+  if (!isValidExpansionTankK(FMTData.expansionTankKAir)) FMTData.expansionTankKAir = defaultFMTData.expansionTankKAir;
   const float legacyVentingFactor = store.getFloat("ventResidual", 0.8729f);
   const float factorAt18Bar = store.isKey("ventResidual18")
       ? store.getFloat("ventResidual18", legacyVentingFactor) : legacyVentingFactor;
@@ -226,6 +232,8 @@ bool writeFMTDataToNIV() {
   saved = (store.putFloat("expTimeB", FMTData.expansionTimeCoefficientB) == sizeof(float)) && saved;
   saved = (store.putFloat("targetResidual", FMTData.targetResidualAfterReliefPercent) == sizeof(float)) && saved;
   saved = (store.putFloat("liquidGasMass", FMTData.liquidMassInGasVentingPercent) == sizeof(float)) && saved;
+  saved = (store.putFloat("kCO2", FMTData.expansionTankKCO2) == sizeof(float)) && saved;
+  saved = (store.putFloat("kAir", FMTData.expansionTankKAir) == sizeof(float)) && saved;
   saved = (store.putFloat("ventResidualA", FMTData.ventingResidualCoefficientA) == sizeof(float)) && saved;
   saved = (store.putFloat("ventResidualB", FMTData.ventingResidualCoefficientB) == sizeof(float)) && saved;
   saved = (store.putFloat("ventResidualC", FMTData.ventingResidualCoefficientC) == sizeof(float)) && saved;

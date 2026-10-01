@@ -300,6 +300,7 @@ struct PressureReliefRecord {
   bool converged;
   bool volumeMetricsValid;
   bool pressureSettled;
+  float environmentTemperature; // NAN when the sensor is not valid
 };
 
 static PressureReliefRecord *pressureReliefHistory = nullptr;
@@ -451,11 +452,59 @@ float kelvin(float x) {
   return x + 273.15f;
 }
 
-float volumeEstimationFromPressureDrop(float dropFactor) {
+// Expansion-tank volume of the mole accounting: the physical volume divided by
+// the filling factor k of the gas (the gas compressed into the tank in a short
+// expansion is warmer than the fermenter, docs/expansion-tank-k.md). Valve
+// timing and the gas-flow model keep FMTReliefVolume.
+static float accountingReliefVolume(float k) {
+  return isValidExpansionTankK(k) ? FMTData.FMTReliefVolume / k : FMTData.FMTReliefVolume;
+}
+
+static float fermentationReliefVolume() {
+  return accountingReliefVolume(FMTData.expansionTankKCO2);
+}
+
+// Volume determination. Fast mode opens the valve for the fermentation's
+// expansion time (1% residual) with air: k = kAir and the residual is
+// compensated as in a relief. Slow mode keeps it open 3 min, so the tank
+// cools back and equalizes: physical volume, no residual.
+static float volumeRoutineReliefVolume() {
+  return volumeDeterminationFast ? accountingReliefVolume(FMTData.expansionTankKAir)
+                                 : FMTData.FMTReliefVolume;
+}
+
+// Pressure ratio after/before a relief extended to full equalization.
+static float volumeRoutineEquilibriumFactor(float factor) {
+  if (!volumeDeterminationFast || !isfinite(factor)) return factor;
+  const float residual = FMTData.targetResidualAfterReliefPercent / 100.0f;
+  return 1.0f - (1.0f - factor) / (1.0f - residual);
+}
+
+// Gas volume of a vessel whose pressure falls by dropFactor (after/before, at
+// full equalization) when expanded into reliefVolume.
+float volumeEstimationFromPressureDrop(float dropFactor, float reliefVolume) {
   if (dropFactor <= 0.0f || dropFactor >= 1.0f) {
     return NAN;
   }
-  return (FMTData.FMTReliefVolume * dropFactor) / (1.0f -dropFactor);
+  return (reliefVolume * dropFactor) / (1.0f -dropFactor);
+}
+
+float volumeEstimationFromPressureDrop(float dropFactor) {
+  return volumeEstimationFromPressureDrop(dropFactor, fermentationReliefVolume());
+}
+
+static float volumeRoutineVolume(float factor) {
+  return volumeEstimationFromPressureDrop(volumeRoutineEquilibriumFactor(factor),
+                                          volumeRoutineReliefVolume());
+}
+
+// kAir that would make the fast test return the configured FMTVolume (the
+// empty fermenter); NAN in slow mode.
+static float volumeRoutineCalibratedKAir(float factor) {
+  if (!volumeDeterminationFast || !(FMTData.FMTVolume > 0.0f)) return NAN;
+  const float physical = volumeEstimationFromPressureDrop(volumeRoutineEquilibriumFactor(factor),
+                                                          FMTData.FMTReliefVolume);
+  return isfinite(physical) ? physical / FMTData.FMTVolume : NAN;
 }
 
 static void updateBeerVolumeFromHeadspace() {
@@ -469,7 +518,7 @@ static void updateBeerVolumeFromHeadspace() {
     CountersData.headSpaceVolume = FMTData.FMTVolume - beerVolume;
     if (isfinite(FMTData.FMTReliefVolume) && FMTData.FMTReliefVolume > 0.0f) {
       pressureDropFactor = CountersData.headSpaceVolume /
-        (CountersData.headSpaceVolume + FMTData.FMTReliefVolume);
+        (CountersData.headSpaceVolume + fermentationReliefVolume());
     }
     return;
   }
@@ -1142,7 +1191,7 @@ static bool applyHeadspaceValue(float headspace) {
   beerVolume = FMTData.FMTVolume - headspace;
   if (isfinite(FMTData.FMTReliefVolume) && FMTData.FMTReliefVolume > 0.0f) {
     pressureDropFactor = headspace /
-      (headspace + FMTData.FMTReliefVolume);
+      (headspace + fermentationReliefVolume());
   }
   return true;
 }
@@ -2383,9 +2432,8 @@ static float fitVolumeFromHistory(unsigned recentWindow = 0) {
   const double slope = sxy / sxx;
   if (!isfinite(slope) || slope >= 0.0 ||
       !isfinite(FMTData.FMTReliefVolume) || FMTData.FMTReliefVolume <= 0.0f) return NAN;
-  const double factor = exp(slope);
-  const double volume = FMTData.FMTReliefVolume * factor / (1.0 - factor);
-  return isfinite(volume) && volume > 0.0 ? (float)volume : NAN;
+  const float volume = volumeRoutineVolume((float)exp(slope));
+  return isfinite(volume) && volume > 0.0f ? volume : NAN;
 }
 
 static void formatVolumeComparison(char *extremes, size_t extremesSize,
@@ -2442,7 +2490,10 @@ static void finalizeVolumeDeterminationSummary() {
   }
 
   // Formula solicitada pelo usuario.
-  volumeSummaryFermenterVolume = volumeEstimationFromPressureDrop(volumeSummaryFactor);
+  volumeSummaryFermenterVolume = volumeRoutineVolume(volumeSummaryFactor);
+  Serial.printf("[VOLUME] %s: factor %.5f, volume %.2f L (relief volume %.3f L); kAir for FMTVolume %.1f L: %.4f\n",
+                volumeDeterminationFast ? "fast" : "slow", volumeSummaryFactor, volumeSummaryFermenterVolume,
+                volumeRoutineReliefVolume(), FMTData.FMTVolume, volumeRoutineCalibratedKAir(volumeSummaryFactor));
   volumeSummaryAvailable = true;
   volumeCalculatedSoFar = volumeSummaryFermenterVolume;
   volumeCalculatedSoFarValid = true;
@@ -2765,9 +2816,13 @@ void processPressure(bool afterRelief) {
       pressureAfterRelief, pressureAfterReliefMillis, !volumeDeterminationActive);
     if (volumeDeterminationActive && isfinite(volumeAdjustedEquilibriumSnapshot))
       adjustedEquilibriumPressure = volumeAdjustedEquilibriumSnapshot;
-    ejectedPressure = pressureOnReliefMeas -
-      (pressureOnReliefMeas - pressureAfterRelief) /
-      ((1.0f - targetResidual) * (1.0f - targetResidual));
+    // Expansion-tank pressure at close. Fermenter and tank both stop at
+    // (1 - r) of their way to the common pressure, so the gap left between them
+    // is r * pressureOnReliefMeas (the tank starts at 0 gauge) and the tank is at
+    // (1 - r) * Peq = (1 - r) * Pon - drop. The former Pon - drop / (1 - r)^2
+    // left a gap of only ~2r * drop (+0.9 to 1.7% ejected, batch 160).
+    ejectedPressure = (1.0f - targetResidual) * pressureOnReliefMeas -
+      (pressureOnReliefMeas - pressureAfterRelief);
 
     if (isfinite(pressureOnReliefExtrap) && pressureOnReliefExtrap > 0.01f &&
         isfinite(adjustedEquilibriumPressure)) {
@@ -2844,7 +2899,7 @@ void processPressure(bool afterRelief) {
 
     // EjectedPressure is the measured transfer inventory.  Install it as the
     // curve baseline only now, after the post-relief pressure is available.
-    const float expansionTankMoles = fmaxf(0.0f, ejectedPressure) * FMTData.FMTReliefVolume /
+    const float expansionTankMoles = fmaxf(0.0f, ejectedPressure) * fermentationReliefVolume() /
       (CONST_R * kelvin(ControlData.temperature));
     gasTankMolesAtClose = expansionTankMoles;
     gasTankPressureAtClose = fmaxf(0.0f, ejectedPressure);
@@ -2951,7 +3006,7 @@ void processPressure(bool afterRelief) {
         if (record.pfAdjusted > 0.0f) {
           record.factorMedio = powf(record.pfAdjusted / record.pi, 1.0f / (float)record.nReliefs);
 
-            record.fermenterVolume = volumeEstimationFromPressureDrop(record.factorMedio);
+            record.fermenterVolume = volumeRoutineVolume(record.factorMedio);
             record.volumeMetricsValid = isfinite(record.fermenterVolume) && record.fermenterVolume > 0.0f;
             volumeCalculatedSoFar = record.fermenterVolume;
             volumeCalculatedSoFarValid = record.volumeMetricsValid;
@@ -3268,6 +3323,7 @@ void pressureRelief(bool fromVolumeDetermination) {
       record.timestamp[0] = '\0';
       NTPFormatedDateTime(record.timestamp);
       record.temperature = ControlData.temperature;
+      record.environmentTemperature = ENV_TEMP_VALID(environmentTemp) ? environmentTemp : NAN;
       record.pressureBefore = ControlData.pressure;
       record.pressureAfter = 0.0f;
       record.currentBefore = currentReading;
@@ -3383,7 +3439,7 @@ void handlePressureHistoryCSV(AsyncWebServerRequest *request) {
         size_t len = 0;
 
         if (!pressureHistoryHeaderSent) {
-          const char *header = "data_hora;temperatura;pressao_antes;pressao_depois;adjustedEquilibriumPressure;corrente_antes_mA;corrente_depois_mA;patm;relief_volume;volume_estimado;Ti_K;Tf_K;Pi;Pf_ajustada;nReliefs;fatorMedio;volume_fermentador;volume_ajuste;diferenca_ajuste_percentual;volume_ajuste_ultimas10;diferenca_recente_percentual;tendencia_percentual_por_ciclo;pressao_estabilizada;convergiu\n";
+          const char *header = "data_hora;temperatura;temperatura_ambiente;pressao_antes;pressao_depois;adjustedEquilibriumPressure;corrente_antes_mA;corrente_depois_mA;patm;relief_volume;modo;k;relief_volume_efetivo;volume_estimado;Ti_K;Tf_K;Pi;Pf_ajustada;nReliefs;fatorMedio;fator_equalizado;volume_fermentador;kAr_para_FMTVolume;volume_ajuste;diferenca_ajuste_percentual;volume_ajuste_ultimas10;diferenca_recente_percentual;tendencia_percentual_por_ciclo;pressao_estabilizada;convergiu\n";
           size_t headerLen = strlen(header);
           if (headerLen > maxLen) {
             headerLen = maxLen;
@@ -3400,13 +3456,20 @@ void handlePressureHistoryCSV(AsyncWebServerRequest *request) {
           const uint16_t idx = (pressureHistoryExportStartIndex + pressureHistoryExportIndex) % PRESSURE_RELIEF_HISTORY_MAX;
           const PressureReliefRecord &record = pressureReliefHistory[idx];
 
-          const float denom = record.pressureBefore - record.pressureAfter;
+          // Same equalization, residual and k as the routine's result.
           float volumeEstimated = 0.0f;
-          if (fabsf(denom) > 0.0001f) {
-            volumeEstimated = (record.pressureAfter * FMTData.FMTReliefVolume) / denom;
+          if (record.pressureBefore > 0.0001f) {
+            const float single = volumeRoutineVolume(record.pressureAfter / record.pressureBefore);
+            if (isfinite(single)) volumeEstimated = single;
           }
 
           char tempBuf[16];
+          char envTempBuf[16] = "";
+          char modeBuf[8];
+          char kBuf[16];
+          char effectiveReliefBuf[16];
+          char equalizedFactorBuf[16] = "";
+          char kAirBuf[16] = "";
           char pBeforeBuf[16];
           char pAfterBuf[16];
           char equilibriumBuf[16];
@@ -3443,6 +3506,11 @@ void handlePressureHistoryCSV(AsyncWebServerRequest *request) {
           }
 
           formatFloatCsv(tempBuf, sizeof(tempBuf), record.temperature, 2);
+          if (isfinite(record.environmentTemperature))
+            formatFloatCsv(envTempBuf, sizeof(envTempBuf), record.environmentTemperature, 2);
+          snprintf(modeBuf, sizeof(modeBuf), "%s", volumeDeterminationFast ? "rapido" : "lento");
+          formatFloatCsv(kBuf, sizeof(kBuf), volumeDeterminationFast ? FMTData.expansionTankKAir : 1.0f, 3);
+          formatFloatCsv(effectiveReliefBuf, sizeof(effectiveReliefBuf), volumeRoutineReliefVolume(), 3);
           formatFloatCsv(pBeforeBuf, sizeof(pBeforeBuf), record.pressureBefore, 3);
           formatFloatCsv(pAfterBuf, sizeof(pAfterBuf), record.pressureAfter, 3);
           formatFloatCsv(equilibriumBuf, sizeof(equilibriumBuf), record.adjustedEquilibriumPressure, 3);
@@ -3459,7 +3527,12 @@ void handlePressureHistoryCSV(AsyncWebServerRequest *request) {
             formatFloatCsv(pfAdjBuf, sizeof(pfAdjBuf), record.pfAdjusted, 3);
             snprintf(nReliefsBuf, sizeof(nReliefsBuf), "%u", (unsigned)record.nReliefs);
             formatFloatCsv(factorBuf, sizeof(factorBuf), record.factorMedio, 5);
+            formatFloatCsv(equalizedFactorBuf, sizeof(equalizedFactorBuf),
+                           volumeRoutineEquilibriumFactor(record.factorMedio), 5);
             formatFloatCsv(fermenterVolBuf, sizeof(fermenterVolBuf), record.fermenterVolume, 3);
+            const float kAirCalibrated = volumeRoutineCalibratedKAir(record.factorMedio);
+            if (isfinite(kAirCalibrated))
+              formatFloatCsv(kAirBuf, sizeof(kAirBuf), kAirCalibrated, 4);
           }
 
           if (isfinite(record.fittedVolume))
@@ -3478,9 +3551,10 @@ void handlePressureHistoryCSV(AsyncWebServerRequest *request) {
           int lineLen = snprintf(
               line,
               sizeof(line),
-              "%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%u;%u\n",
+              "%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%u;%u\n",
               dateBufSafe,
               tempBuf,
+              envTempBuf,
               pBeforeBuf,
               pAfterBuf,
               equilibriumBuf,
@@ -3488,6 +3562,9 @@ void handlePressureHistoryCSV(AsyncWebServerRequest *request) {
               currentAfterBuf,
               patmBuf,
               reliefVolBuf,
+              modeBuf,
+              kBuf,
+              effectiveReliefBuf,
               volumeBuf,
               tiBuf,
               tfBuf,
@@ -3495,7 +3572,9 @@ void handlePressureHistoryCSV(AsyncWebServerRequest *request) {
               pfAdjBuf,
               nReliefsBuf,
               factorBuf,
+              equalizedFactorBuf,
               fermenterVolBuf,
+              kAirBuf,
               fittedVolBuf,
               differenceBuf,
               recentBuf, recentDifferenceBuf, trendBuf,

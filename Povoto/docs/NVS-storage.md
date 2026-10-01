@@ -20,6 +20,9 @@ docs/dissolved-co2.md.
 FMTData.co2TransferTime and the supersaturation fields were removed without a
 schema change: their keys (`co2TransferTime`, `supersatTauD`, `supersatTauA`,
 `co2Supersat`) may stay unused in NVS.
+FMTData.expansionTankKCO2 / expansionTankKAir (keys `kCO2`, `kAir`, 1.0-1.5,
+default 1.08) are the expansion-tank filling factors; see
+docs/expansion-tank-k.md.
 CountersData.co2CorrectionDebt (key `co2Debt`, double) keeps the debt of the
 produced-CO2 integral across reboots; see docs/gco2-rate.md.
 CountersData.co2TransStart / co2TransDir / co2TransHenryRef / co2TransRate /

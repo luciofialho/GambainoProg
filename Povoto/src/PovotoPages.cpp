@@ -425,7 +425,7 @@ void handleDebugParamsUpdate(AsyncWebServerRequest *request) {
 // ========== FMT DATA HANDLERS ==========
 
 void handleFMTDataPage(AsyncWebServerRequest *request) {
-  const size_t BUFFER_SIZE = 7500;
+  const size_t BUFFER_SIZE = 8500;
   char* html = (char*)malloc(BUFFER_SIZE);
   if (!html) {
     request->send(500, "text/plain", "Out of memory");
@@ -496,6 +496,18 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "</div>", remaining);
+
+  // Filling factors k of the expansion tank (docs/expansion-tank-k.md).
+  snprintf(buffer, sizeof(buffer),
+           "<div class='form-group'><label for='expansionTankKCO2'>Expansion tank k, CO2:</label>"
+           "<input type='number' id='expansionTankKCO2' name='expansionTankKCO2' value='%.3f' min='1' max='1.5' step='0.001'></div>",
+           FMTData.expansionTankKCO2);
+  strncat(html, buffer, BUFFER_SIZE - strlen(html) - 1);
+  snprintf(buffer, sizeof(buffer),
+           "<div class='form-group'><label for='expansionTankKAir'>Expansion tank k, air (fast volume test):</label>"
+           "<input type='number' id='expansionTankKAir' name='expansionTankKAir' value='%.3f' min='1' max='1.5' step='0.001'></div>",
+           FMTData.expansionTankKAir);
+  strncat(html, buffer, BUFFER_SIZE - strlen(html) - 1);
   
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<h2>Cooling cycle</h2><table style='width:100%;table-layout:fixed'>"
@@ -625,6 +637,16 @@ void handleFMTDataUpdate(AsyncWebServerRequest *request) {
       return;
     }
     FMTData.FMTReliefVolume = relief;
+  }
+  for (const char *name : {"expansionTankKCO2", "expansionTankKAir"}) {
+    if (!request->hasParam(name, true)) continue;
+    const float k = request->getParam(name, true)->value().toFloat();
+    if (!isValidExpansionTankK(k)) {
+      request->send(400, "text/plain", "Expansion tank k must be from 1.0 to 1.5.");
+      return;
+    }
+    if (strcmp(name, "expansionTankKCO2") == 0) FMTData.expansionTankKCO2 = k;
+    else FMTData.expansionTankKAir = k;
   }
   if (request->hasParam("FMTAltitude", true)) {
     FMTData.FMTAltitude = request->getParam("FMTAltitude", true)->value().toFloat();
