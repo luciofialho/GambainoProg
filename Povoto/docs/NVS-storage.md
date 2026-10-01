@@ -22,6 +22,11 @@ schema change: their keys (`co2TransferTime`, `supersatTauD`, `supersatTauA`,
 `co2Supersat`) may stay unused in NVS.
 CountersData.co2CorrectionDebt (key `co2Debt`, double) keeps the debt of the
 produced-CO2 integral across reboots; see docs/gco2-rate.md.
+CountersData.co2TransStart / co2TransDir / co2TransHenryRef / co2TransRate /
+co2TransRateAt / co2TransReliefAt (keys `co2TrStart`, `co2TrDir`, `co2TrHenry`,
+`co2TrRate`, `co2TrRateAt`, `co2TrRelief`) keep the gCO2/L/d transition. A
+missing `co2TrStart` reads as 1: a transition starts at the next sample.
+See docs/gco2-rate.md.
 
 To add a field, declare it and its default, then add its get/put calls to the
 corresponding read/write functions. Keep keys within the NVS 15-character limit.

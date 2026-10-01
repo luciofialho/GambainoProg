@@ -104,7 +104,13 @@ CountersData_t CountersData = {
   .co2RateHeld = NAN,
   .co2RateHeldAt = 0,
   .co2ArmedAt = 0,
-  .co2CorrectionDebt = 0.0
+  .co2CorrectionDebt = 0.0,
+  .co2TransStart = 0,
+  .co2TransDir = CO2_TRANS_UNKNOWN,
+  .co2TransHenryRef = NAN,
+  .co2TransRate = NAN,
+  .co2TransRateAt = 0,
+  .co2TransReliefAt = 0
 };
 
 // =============
@@ -422,6 +428,19 @@ bool readCountersDataFromEEPROM() {
   CountersData.co2CorrectionDebt = store.getDouble("co2Debt", defaultCountersData.co2CorrectionDebt);
   if (!isfinite(CountersData.co2CorrectionDebt) || CountersData.co2CorrectionDebt < 0.0)
     CountersData.co2CorrectionDebt = defaultCountersData.co2CorrectionDebt;
+  // Without the key (first boot of this firmware) a transition starts at the
+  // next sample: the state before the boot is unknown.
+  CountersData.co2TransStart = store.getUInt("co2TrStart", 1);
+  CountersData.co2TransDir = store.getUChar("co2TrDir", defaultCountersData.co2TransDir);
+  if (CountersData.co2TransDir > CO2_TRANS_MIXED) CountersData.co2TransDir = CO2_TRANS_UNKNOWN;
+  CountersData.co2TransHenryRef = store.getFloat("co2TrHenry", defaultCountersData.co2TransHenryRef);
+  CountersData.co2TransRate = store.getFloat("co2TrRate", defaultCountersData.co2TransRate);
+  CountersData.co2TransRateAt = store.getUInt("co2TrRateAt", defaultCountersData.co2TransRateAt);
+  if (!isfinite(CountersData.co2TransRate) || CountersData.co2TransRateAt == 0) {
+    CountersData.co2TransRate = defaultCountersData.co2TransRate;
+    CountersData.co2TransRateAt = defaultCountersData.co2TransRateAt;
+  }
+  CountersData.co2TransReliefAt = store.getUInt("co2TrRelief", defaultCountersData.co2TransReliefAt);
   store.end();
   return true;
 }
@@ -453,6 +472,12 @@ bool writeCountersDataToNIV() {
   saved = (store.putUInt("co2RateAt", CountersData.co2RateHeldAt) == sizeof(CountersData.co2RateHeldAt)) && saved;
   saved = (store.putUInt("co2ArmedAt", CountersData.co2ArmedAt) == sizeof(CountersData.co2ArmedAt)) && saved;
   saved = (store.putDouble("co2Debt", CountersData.co2CorrectionDebt) == sizeof(CountersData.co2CorrectionDebt)) && saved;
+  saved = (store.putUInt("co2TrStart", CountersData.co2TransStart) == sizeof(CountersData.co2TransStart)) && saved;
+  saved = (store.putUChar("co2TrDir", CountersData.co2TransDir) == sizeof(CountersData.co2TransDir)) && saved;
+  saved = (store.putFloat("co2TrHenry", CountersData.co2TransHenryRef) == sizeof(CountersData.co2TransHenryRef)) && saved;
+  saved = (store.putFloat("co2TrRate", CountersData.co2TransRate) == sizeof(CountersData.co2TransRate)) && saved;
+  saved = (store.putUInt("co2TrRateAt", CountersData.co2TransRateAt) == sizeof(CountersData.co2TransRateAt)) && saved;
+  saved = (store.putUInt("co2TrRelief", CountersData.co2TransReliefAt) == sizeof(CountersData.co2TransReliefAt)) && saved;
   store.end();
   if (!saved) Serial.println("NVS: CountersData save incomplete");
   return saved;

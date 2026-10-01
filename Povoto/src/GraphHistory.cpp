@@ -1,4 +1,5 @@
 #include "GraphHistory.h"
+#include "PovotoFilesystem.h"
 
 #include <LittleFS.h>
 #include <IOTK_NTP.h>
@@ -134,12 +135,12 @@ bool graphHistoryBegin() {
   batchKey = currentBatchKey();
   // If power failed between moving the old file aside and publishing the
   // generated history, restore the old file. A completed replacement wins.
-  if (!LittleFS.exists(HISTORY_FILE) && LittleFS.exists(HISTORY_BACKUP))
-    LittleFS.rename(HISTORY_BACKUP, HISTORY_FILE);
-  if (LittleFS.exists(HISTORY_FILE) && LittleFS.exists(HISTORY_BACKUP))
-    LittleFS.remove(HISTORY_BACKUP);
-  if (LittleFS.exists(HISTORY_TEMP)) LittleFS.remove(HISTORY_TEMP);
-  File file = LittleFS.open(HISTORY_FILE, "r");
+  if (!povotoDataFS().exists(HISTORY_FILE) && povotoDataFS().exists(HISTORY_BACKUP))
+    povotoDataFS().rename(HISTORY_BACKUP, HISTORY_FILE);
+  if (povotoDataFS().exists(HISTORY_FILE) && povotoDataFS().exists(HISTORY_BACKUP))
+    povotoDataFS().remove(HISTORY_BACKUP);
+  if (povotoDataFS().exists(HISTORY_TEMP)) povotoDataFS().remove(HISTORY_TEMP);
+  File file = povotoDataFS().open(HISTORY_FILE, "r");
   uint32_t newestEpoch = 0;
   if (file) {
     const size_t storedSlots = file.size() / sizeof(HistoryRecord);
@@ -170,7 +171,7 @@ bool graphHistoryBegin() {
   ready = true;
   Serial.printf("[GRAPH] restored %u points, PSRAM %u bytes, LittleFS %u/%u bytes\n",
                 count, unsigned(sizeof(GraphHistoryPoint) * GRAPH_HISTORY_CAPACITY),
-                unsigned(LittleFS.usedBytes()), unsigned(LittleFS.totalBytes()));
+                unsigned(povotoDataFS().usedBytes()), unsigned(povotoDataFS().totalBytes()));
   return true;
 }
 
@@ -189,8 +190,8 @@ void graphHistorySampleIfDue() {
     return;
   }
   // Do not create a new, incomplete file over a recoverable pre-demo backup.
-  if (!LittleFS.exists(HISTORY_FILE) && LittleFS.exists(HISTORY_BACKUP) &&
-      !LittleFS.rename(HISTORY_BACKUP, HISTORY_FILE)) {
+  if (!povotoDataFS().exists(HISTORY_FILE) && povotoDataFS().exists(HISTORY_BACKUP) &&
+      !povotoDataFS().rename(HISTORY_BACKUP, HISTORY_FILE)) {
     xSemaphoreGive(historyMutex);
     return;
   }
@@ -200,7 +201,7 @@ void graphHistorySampleIfDue() {
   record.batchKey = batchKey;
   record.point = capturePoint(epoch);
   record.checksum = recordChecksum(record);
-  File file = LittleFS.open(HISTORY_FILE, LittleFS.exists(HISTORY_FILE) ? "r+" : "w+");
+  File file = povotoDataFS().open(HISTORY_FILE, povotoDataFS().exists(HISTORY_FILE) ? "r+" : "w+");
   bool saved = file && file.seek(size_t(nextFileSlot) * sizeof(record)) &&
                file.write(reinterpret_cast<const uint8_t *>(&record), sizeof(record)) == sizeof(record);
   if (file) {
@@ -227,10 +228,10 @@ void graphHistoryResetForNewBatch() {
   first = count = nextFileSlot = 0;
   lastEpoch = 0;
   batchKey = currentBatchKey();
-  if (!LittleFS.remove(HISTORY_FILE) && LittleFS.exists(HISTORY_FILE))
+  if (!povotoDataFS().remove(HISTORY_FILE) && povotoDataFS().exists(HISTORY_FILE))
     Serial.println("[GRAPH] Could not remove previous batch history");
-  LittleFS.remove(HISTORY_TEMP);
-  LittleFS.remove(HISTORY_BACKUP);
+  povotoDataFS().remove(HISTORY_TEMP);
+  povotoDataFS().remove(HISTORY_BACKUP);
   xSemaphoreGive(historyMutex);
 }
 
@@ -326,7 +327,7 @@ bool graphHistoryGenerateDemo14Days() {
   }
 
   // Write a complete replacement before touching the current history.
-  File file = LittleFS.open(HISTORY_TEMP, "w");
+  File file = povotoDataFS().open(HISTORY_TEMP, "w");
   bool saved = file;
   for (uint16_t i = 0; saved && i < GRAPH_HISTORY_DEMO_POINTS; ++i) {
     HistoryRecord record = {};
@@ -341,28 +342,28 @@ bool graphHistoryGenerateDemo14Days() {
     file.flush();
     file.close();
   }
-  saved = saved && LittleFS.exists(HISTORY_TEMP);
+  saved = saved && povotoDataFS().exists(HISTORY_TEMP);
   if (saved) {
-    File check = LittleFS.open(HISTORY_TEMP, "r");
+    File check = povotoDataFS().open(HISTORY_TEMP, "r");
     saved = check && check.size() == size_t(GRAPH_HISTORY_DEMO_POINTS) * sizeof(HistoryRecord);
     if (check) check.close();
   }
-  const bool hadHistory = LittleFS.exists(HISTORY_FILE);
-  if (saved && LittleFS.exists(HISTORY_BACKUP)) saved = LittleFS.remove(HISTORY_BACKUP);
-  if (saved && hadHistory) saved = LittleFS.rename(HISTORY_FILE, HISTORY_BACKUP);
-  if (saved) saved = LittleFS.rename(HISTORY_TEMP, HISTORY_FILE);
-  if (!saved && hadHistory && LittleFS.exists(HISTORY_BACKUP) &&
-      !LittleFS.exists(HISTORY_FILE))
-    LittleFS.rename(HISTORY_BACKUP, HISTORY_FILE);
+  const bool hadHistory = povotoDataFS().exists(HISTORY_FILE);
+  if (saved && povotoDataFS().exists(HISTORY_BACKUP)) saved = povotoDataFS().remove(HISTORY_BACKUP);
+  if (saved && hadHistory) saved = povotoDataFS().rename(HISTORY_FILE, HISTORY_BACKUP);
+  if (saved) saved = povotoDataFS().rename(HISTORY_TEMP, HISTORY_FILE);
+  if (!saved && hadHistory && povotoDataFS().exists(HISTORY_BACKUP) &&
+      !povotoDataFS().exists(HISTORY_FILE))
+    povotoDataFS().rename(HISTORY_BACKUP, HISTORY_FILE);
   if (saved) {
     memcpy(points, generated, sizeof(GraphHistoryPoint) * GRAPH_HISTORY_DEMO_POINTS);
     first = 0;
     count = GRAPH_HISTORY_DEMO_POINTS;
     lastEpoch = generated[GRAPH_HISTORY_DEMO_POINTS - 1].epoch;
     nextFileSlot = GRAPH_HISTORY_DEMO_POINTS;
-    if (hadHistory) LittleFS.remove(HISTORY_BACKUP);
+    if (hadHistory) povotoDataFS().remove(HISTORY_BACKUP);
   } else {
-    LittleFS.remove(HISTORY_TEMP);
+    povotoDataFS().remove(HISTORY_TEMP);
     Serial.println("[GRAPH] Demo generation failed; original history kept");
   }
   heap_caps_free(generated);

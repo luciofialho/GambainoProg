@@ -20,10 +20,23 @@ O CO2 dissolvido **não** entra na taxa: ele é modelado, não medido, e numa tr
 
 **Fora das transições** (pressão e temperatura estáveis), o saldo liberado é a produção: a cerveja está em regime (lote 160, 30/09: 8,5–9,1 g/L/d nos ciclos da manhã). **Numa transição** ele difere da produção em sentido conhecido: numa subida de pressão ou num resfriamento a cerveja absorve e o valor fica abaixo (piso); numa descida de pressão ou num aquecimento ela libera e o valor fica acima (teto). Os valores medidos variam suavemente: 5,2 → 2,7 g/L/d numa subida de 0,8 para 1,5 bar; −0,25 a +0,18 no cold crash do 159.
 
-**Transição** (`co2RateInTransition()`): em Fermenting, pressão ou temperatura fora de `STABLE` ou estáveis há menos de **2 h** (a cerveja ainda absorve ou libera com constante de ~2 h); sem NTP, é transição. Com setpoint de pressão 0, só a temperatura conta. Durante a transição:
-- regras "gCO2 < x": não avaliam (docs/automatic-actions.md);
+**Transição** (`co2RateInTransition()`, `updateCO2Transition()` a cada amostra): em Fermenting, sem NTP é sempre transição. Com setpoint de pressão 0, só a temperatura conta.
+- **Início:** pressão ou temperatura fora de `STABLE`, ou estáveis há menos de **1 h**. Também na primeira amostra depois do primeiro boot desta versão (estado anterior desconhecido) e na volta do Conditioning. No início ficam gravados o equilíbrio de Henry (média de 30 min) e o último valor estável, com a hora.
+- **Direção:** o Henry nos setpoints contra o de antes do início (zona morta de 1%). Acima: **absorvendo**. Abaixo: **liberando**. Se a direção mudar durante a mesma transição: **mista**.
+- **Fim**, quando valem as três:
+  1. temperatura `STABLE` há ≥ 1 h;
+  2. com setpoint de pressão, pressão `STABLE` e o primeiro relief depois disso há ≥ 1 h. No lote 160, o `STABLE` veio às 17:45 e o primeiro relief em 1,9 bar só às 18:41;
+  3. a tendência da última hora (inclinação por mínimos quadrados de 61 valores por minuto ÷ valor ajustado atual, piso de 0,5 g/L/d) dentro do limite da direção **por 60 min seguidos**: absorvendo, ≤ +5%/h; liberando, ≥ −10%/h; desconhecida ou mista, as duas. No 160 a tendência ficou abaixo de +5%/h por 32 min (20:59–21:31) e o saldo voltou a subir até 4,65 às 22:00. Por isso os 60 min seguidos.
+- **Limite:** 8 h depois da última mudança (início ou `StableSince` mais recente), com as duas `STABLE`.
+- **Persistência:** o estado fica no NVS (`co2TrStart`, `co2TrDir`, `co2TrHenry`, `co2TrRate`, `co2TrRateAt`, `co2TrRelief`). Os valores por minuto da tendência e a contagem dos 60 min ficam só na RAM: depois de um reboot, a transição dura pelo menos mais 1 h.
+
+Durante a transição:
+- regras "gCO2 < x": avaliam só quando a cerveja está **liberando**. O saldo é então um teto da produção, e "saldo < x" implica "produção < x". Absorvendo, desconhecida ou mista: não avaliam (docs/automatic-actions.md);
 - Brewfather: sem o campo `bpm` (o saldo liberado desenharia uma falsa desaceleração);
-- log Cold e `/getstatus`: `gCO2Source` = `transition`; página inicial: um ícone ⓘ ao lado do valor, com a explicação ao passar o mouse ("Transition: net CO2 release (production − absorption)").
+- log Cold e `/getstatus`: `gCO2Source` = `transition`; o valor no log continua sendo o saldo medido;
+- página inicial: mostra o **último valor estável**, com um ícone ⓘ cujo tooltip diz "Value is last stable reading at hh:mm. Preliminary unstable reading now is x.xx". Sem valor estável (boot, volta do Conditioning), mostra o saldo, e o tooltip diz "Transition: net CO2 release (production − absorption)".
+
+Uma projeção do saldo foi testada no 160 e descartada. O ajuste exponencial (assíntota) deu 42–68 g/L/d nas primeiras 2 h; a reta (+1 h) só somava 0,5–1,5 com ruído.
 
 ## 2. Amostragem
 
@@ -57,13 +70,13 @@ Janela em função do tempo desde o boot:
 
 ## 4. Depois de um reboot
 
-**Buffers restaurados** (`saveCO2Buffers()` / `restoreCO2Buffers()` em `PressureControl.cpp`): o buffer do gCO2 (71 amostras da fase gasosa) e as 30 amostras de Henry do dissolvido (docs/dissolved-co2.md) são gravados no LittleFS (`/co2buffers.bin`, ~1,6 KB, gravação atômica por arquivo temporário) a cada 10 min e no início de um OTA, com a hora NTP e a idade de cada amostra. No boot a amostragem espera o NTP (até 5 min) e o arquivo é restaurado se:
+**Buffers restaurados** (`saveCO2Buffers()` / `restoreCO2Buffers()` em `PressureControl.cpp`): o buffer do gCO2 (71 amostras da fase gasosa) e as 30 amostras de Henry do dissolvido (docs/dissolved-co2.md) são gravados na partição de dados `persist` (`povotoDataFS()`; em placas não migradas, no LittleFS único) (`/co2buffers.bin`, ~1,6 KB, gravação atômica por arquivo temporário) a cada 10 min e no início de um OTA, com a hora NTP e a idade de cada amostra. No boot a amostragem espera o NTP (até 5 min) e o arquivo é restaurado se:
 - tiver no máximo **10 min** (`CO2_BUFFER_MAX_GAP_S`): OTA (~1 min), quedas rápidas de energia e travamentos ficam bem abaixo; um intervalo maior é uma queda de energia sem controle de temperatura e pressão, e a janela recomeça;
 - for do mesmo lote, com o contador de reliefs não menor que o gravado (contadores não zerados), e o modo for Fermenting (gravado e atual).
 
 **Costura:** a série do gás restaurada é deslocada para continuar, no ritmo das suas últimas 10 amostras, até a fase gasosa atual. O CO2 ejetado perdido no reboot (não gravado nos contadores, até ~0,26 mol) não entra na taxa. No bench, um boot de 60 s com 0,26 mol perdidos deixa a tela em 8,59–8,60 g/L/d (produção 8,6). As amostras de Henry também são restauradas, então o dissolvido continua igual depois do boot.
 
-**Reserva no filesystem:** `data/co2buffers.bin` (zeros, do tamanho máximo do arquivo) entra na imagem do filesystem e reserva o espaço: se `data/` crescer demais, o build da imagem falha no PC. Depois de um upload do filesystem a placa o encontra, rejeita como `placeholder` e o substitui na primeira gravação. `python tests/check_co2_buffer_file.py` confere o tamanho contra as estruturas do firmware (`--write` recria o arquivo).
+**Espaço:** a partição `persist` não recebe imagem de filesystem, então um upload dos arquivos web não apaga o arquivo e não é preciso reservar espaço em `data/` (docs/graph-history.md). Um arquivo com magic 0 (zerado) é rejeitado como `zeroed file`.
 
 O arquivo é apagado quando o balanço é reiniciado de propósito: contadores editados, lote novo, volta do Conditioning. O `/getstatus` mostra `CO2 buffers at boot: restored (gap N s, 71+211 samples)` ou o motivo de não ter restaurado.
 

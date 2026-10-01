@@ -172,6 +172,18 @@ struct CountersData_t {
   // CO2 debt of the produced-CO2 integral (mol): falls of the CO2 total, paid
   // by later rises before they count as production. Survives a reboot.
   double co2CorrectionDebt;
+  // gCO2/L/d transition (docs/gco2-rate.md): local NTP epoch of its start
+  // (0 = none; 1 = start at the next sample, after the first boot of this
+  // firmware or back from Conditioning), direction of the dissolved CO2
+  // (CO2_TRANS_*), Henry equilibrium before it (mol), the last stable rate
+  // and its epoch (NAN/0 = none), and the epoch of the first relief with the
+  // pressure stable (0 = none yet).
+  uint32_t co2TransStart;
+  uint8_t co2TransDir;
+  float co2TransHenryRef;
+  float co2TransRate;
+  uint32_t co2TransRateAt;
+  uint32_t co2TransReliefAt;
 } __attribute__((packed));
 
 #define TEMP_STATE_STABLE          0
@@ -179,6 +191,12 @@ struct CountersData_t {
 #define TEMP_STATE_CHANGING_SLOW   2
 // Was stable, then left the tolerance band; becomes STABLE again with a new time.
 #define TEMP_STATE_UNSTABLE        3
+
+// CountersData.co2TransDir: how the dissolved CO2 moves in a transition.
+#define CO2_TRANS_UNKNOWN   0
+#define CO2_TRANS_ABSORBING 1 // pressure up or cooling: net release <= production
+#define CO2_TRANS_RELEASING 2 // pressure down or warming: net release >= production
+#define CO2_TRANS_MIXED     3 // both in the same transition
 
 extern CountersData_t CountersData;
 

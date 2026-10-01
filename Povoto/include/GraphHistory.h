@@ -28,7 +28,7 @@ struct GraphHistoryPoint {
   uint32_t flags;
 };
 
-// Call only after LittleFS.begin(). A missing or damaged individual record is
+// Call only after povotoFilesystemBegin(). A missing or damaged individual record is
 // ignored on restore; good records remain available.
 bool graphHistoryBegin();
 void graphHistorySampleIfDue();

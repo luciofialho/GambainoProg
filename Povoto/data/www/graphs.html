@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Povoto Charts</title>
+  <link rel="stylesheet" href="uPlot.min.css">
+  <link rel="stylesheet" href="graphs.css">
+</head>
+<body>
+  <main class="page">
+    <header class="heading">
+      <a class="back" href="/">&larr; Menu</a>
+    </header>
+    <div class="layout">
+      <section class="panel" aria-label="Historical chart">
+        <div class="panel-head">
+          <h2 id="chart-title">Evolution</h2>
+          <div class="zoom-label">
+            <select id="zoom-range" aria-label="Visible time range">
+              <option value="all">All data</option>
+              <option value="14">14 days</option>
+              <option value="7">7 days</option>
+              <option value="3">3 days</option>
+              <option value="1">1 day</option>
+            </select>
+          </div>
+        </div>
+        <div id="status" role="status">Loading observations...</div>
+        <div id="chart-scroll"><div id="chart"></div></div>
+        <div class="navigation">
+          <label for="pan">Scroll through time</label>
+          <input id="pan" type="range" min="0" max="1000" value="1000" aria-label="Scroll through time">
+          <button id="reset-zoom" type="button">Reset Zoom</button>
+        </div>
+      </section>
+      <nav class="graph-nav" aria-label="Choose graph">
+        <button class="selected" data-graph="evolution" type="button" aria-current="page">Evolution</button>
+        <button data-graph="temperature" type="button">Temperature</button>
+        <button data-graph="pressure" type="button">Pressure</button>
+        <button data-graph="attenuation" type="button">Attenuation</button>
+        <a id="download-csv" class="download" href="data.csv">Export CSV</a>
+      </nav>
+    </div>
+  </main>
+  <script src="uPlot.iife.min.js"></script>
+  <script src="graphs.js"></script>
+</body>
+</html>

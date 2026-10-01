@@ -13,6 +13,7 @@
 #include <IOTK_NTP.h>
 #include "__NumFilters.h"
 #include <LittleFS.h>
+#include "PovotoFilesystem.h"
 #include <math.h>
 
 
@@ -132,6 +133,20 @@ struct CO2EvolutionSample {
 static CO2EvolutionSample co2EvolutionHistory[CO2_EVOLUTION_HISTORY_SIZE];
 static uint16_t co2EvolutionStart = 0;
 static uint16_t co2EvolutionCount = 0;
+
+// One gCO2/L/d value per minute, from windows of at least CO2_RULE_MIN_SAMPLES,
+// for the trend that ends a transition (docs/gco2-rate.md). RAM only: after a
+// reboot the trend needs a new hour.
+static constexpr uint16_t CO2_TREND_SAMPLES = 61;
+struct CO2TrendSample {
+  unsigned long millisStamp;
+  float rate;
+};
+static CO2TrendSample co2Trend[CO2_TREND_SAMPLES];
+static uint16_t co2TrendStart = 0;
+static uint16_t co2TrendCount = 0;
+static void updateCO2Transition();
+static void resetCO2Transition(bool startAtNextSample);
 
 static unsigned long int timeToStartExpansion     = 0;
 static unsigned long int timeToFinishExpansion    = 0;
@@ -837,6 +852,7 @@ void resetCO2DissolvedStateForNewBatch() {
   // Samples of the previous batch must not enter the windows of the new one.
   resetBeerCO2Evolution();
   invalidateCO2BufferFile();
+  resetCO2Transition(false);
 }
 
 // Back from Conditioning: nothing is generating (the batch was conditioning),
@@ -846,6 +862,7 @@ void resetCO2DissolvedStateForNewBatch() {
 void resumeCO2AccountingAfterConditioning() {
   if (co2DissolvedState == CO2_STATE_EQUILIBRIUM)
     setCO2DissolvedState(CO2_STATE_HALF_LIFE, "resumed from conditioning");
+  resetCO2Transition(true); // the rate before Conditioning is not a stable reading
   requestDerivedStateRestoreFromCounters();
 }
 
@@ -1272,6 +1289,8 @@ void resetHeadspaceFilterTracking() {
 static void resetBeerCO2Evolution() {
   co2EvolutionStart = 0;
   co2EvolutionCount = 0;
+  co2TrendStart = 0;
+  co2TrendCount = 0;
   beerCO2EvolutionGramsPerLiterPerDay = 0.0f;
   resetHenryBuffer();
 }
@@ -1307,8 +1326,8 @@ static float gasPhaseCO2Rate(unsigned long now) {
 }
 
 // ===== CO2 buffers across a reboot (docs/gco2-rate.md) =====
-// The gCO2 window (gas phase) and the 30-min Henry samples are saved to
-// LittleFS every CO2_BUFFER_SAVE_MS and at an OTA start. At boot, once NTP is
+// The gCO2 window (gas phase) and the 30-min Henry samples are saved to the
+// data filesystem (povotoDataFS()) every CO2_BUFFER_SAVE_MS and at an OTA start. At boot, once NTP is
 // valid, they are restored if the file is at most CO2_BUFFER_MAX_GAP_S old and
 // of the same batch, in Fermenting. The gas series is stitched to the current
 // gas phase at its last rate, so CO2 lost by the reboot (ejected not yet saved
@@ -1352,7 +1371,7 @@ void saveCO2Buffers() {
   if (co2BufferRestorePending || epoch == 0 || BatchData.batchNumber == 0 ||
       SetPointData.mode != MODE_FERMENTING || (co2EvolutionCount == 0 && henryCount == 0))
     return;
-  File f = LittleFS.open(CO2_BUFFER_TMP, "w");
+  File f = povotoDataFS().open(CO2_BUFFER_TMP, "w");
   if (!f) return;
   const unsigned long now = millis();
   const CO2BufferHeader h = {CO2_BUFFER_MAGIC, BatchData.batchNumber, SetPointData.mode, (uint32_t)epoch,
@@ -1371,11 +1390,11 @@ void saveCO2Buffers() {
   }
   f.close();
   if (!ok) {
-    LittleFS.remove(CO2_BUFFER_TMP);
+    povotoDataFS().remove(CO2_BUFFER_TMP);
     return;
   }
-  LittleFS.remove(CO2_BUFFER_FILE);
-  LittleFS.rename(CO2_BUFFER_TMP, CO2_BUFFER_FILE);
+  povotoDataFS().remove(CO2_BUFFER_FILE);
+  povotoDataFS().rename(CO2_BUFFER_TMP, CO2_BUFFER_FILE);
   co2BufferLastSaveMillis = now;
 }
 
@@ -1383,7 +1402,7 @@ void saveCO2Buffers() {
 // new batch, back from Conditioning).
 static void invalidateCO2BufferFile() {
   if (co2BufferRestorePending) return; // boot: the file is still to be read
-  LittleFS.remove(CO2_BUFFER_FILE);
+  povotoDataFS().remove(CO2_BUFFER_FILE);
 }
 
 // Least-squares slope (mol/ms) of the gas over the last samples.
@@ -1404,7 +1423,7 @@ static double co2BufferTailSlope() {
 
 static void restoreCO2Buffers() {
   co2BufferRestorePending = false;
-  File f = LittleFS.open(CO2_BUFFER_FILE, "r");
+  File f = povotoDataFS().open(CO2_BUFFER_FILE, "r");
   if (!f) {
     strcpy(co2BufferStatus, "not restored (no file)");
     return;
@@ -1413,7 +1432,7 @@ static void restoreCO2Buffers() {
   const unsigned long epoch = NTPEpoch();
   const char *reject = nullptr;
   if (f.read((uint8_t *)&h, sizeof(h)) != sizeof(h)) reject = "invalid file";
-  else if (h.magic == 0) reject = "placeholder"; // data/co2buffers.bin after a filesystem upload
+  else if (h.magic == 0) reject = "zeroed file";
   else if (h.magic != CO2_BUFFER_MAGIC) reject = "invalid file";
   else if (h.co2Count > CO2_EVOLUTION_HISTORY_SIZE || h.henryCount > HENRY_MEAN_SAMPLES ||
            f.size() != sizeof(h) + h.co2Count * sizeof(CO2SampleFile) + h.henryCount * sizeof(HenrySampleFile))
@@ -1524,6 +1543,7 @@ static void recomputeBeerCO2EvolutionFromCurrentState() {
 
   if (co2EvolutionCount < 5) {
     beerCO2EvolutionGramsPerLiterPerDay = 0.0f;
+    updateCO2Transition();
     return;
   }
 
@@ -1545,6 +1565,7 @@ static void recomputeBeerCO2EvolutionFromCurrentState() {
   const double elapsedMs = (lastTime - firstTime) / avgWindow;
   if (elapsedMs <= 0.0) {
     beerCO2EvolutionGramsPerLiterPerDay = 0.0f;
+    updateCO2Transition();
     return;
   }
   // Preserve the signed net change; clamp only when presenting the result.
@@ -1562,6 +1583,16 @@ static void recomputeBeerCO2EvolutionFromCurrentState() {
       CountersData.co2RateHeldAt = epoch;
     }
   }
+
+  if (co2EvolutionCount >= CO2_RULE_MIN_SAMPLES) {
+    if (co2TrendCount == CO2_TREND_SAMPLES) {
+      co2TrendStart = (co2TrendStart + 1) % CO2_TREND_SAMPLES;
+      --co2TrendCount;
+    }
+    co2Trend[(co2TrendStart + co2TrendCount) % CO2_TREND_SAMPLES] = {now, beerCO2EvolutionGramsPerLiterPerDay};
+    ++co2TrendCount;
+  }
+  updateCO2Transition();
 }
 
 // The rate saved before a reboot replaces the calculated one only while the
@@ -1587,29 +1618,223 @@ const char *getCO2EvolutionSource() {
   return co2RateHeldApplies() ? "held" : "calculated";
 }
 
-// For the automatic rules: only a calculated positive rate over a window of
-// at least CO2_RULE_MIN_SAMPLES (30 min); shorter windows cover few relief
-// cycles (batch 160: 7.19 after 4 min with 8.8 real fired a "< 8" rule).
-// Pressure or temperature changing, or settled for less than
-// CO2_TRANSITION_SETTLE_S: the net CO2 released by the beer differs from the
-// production (the beer absorbs after a rise or cooling, releases after a fall
-// or warming). Rules do not use gCO2/L/d then and Brewfather gets no rate.
-// Without NTP the settling cannot be timed: transition. docs/gco2-rate.md.
-static constexpr uint32_t CO2_TRANSITION_SETTLE_S = 2UL * 3600UL;
+// Transition (docs/gco2-rate.md): after a pressure or temperature change the
+// net CO2 released by the beer differs from the production (the beer absorbs
+// after a rise or cooling, releases after a fall or warming). It starts when
+// temperature or pressure are not STABLE, or STABLE for less than
+// CO2_TRANSITION_MIN_SETTLED_S. It ends when all of these hold:
+//  - temperature STABLE for CO2_TRANSITION_MIN_SETTLED_S;
+//  - with a pressure target, pressure STABLE and its first relief since then
+//    CO2_TRANSITION_MIN_SETTLED_S ago (batch 160: STABLE at 17:45, first
+//    relief at 1.9 bar at 18:41);
+//  - the trend of the last hour within the limit of the direction for
+//    CO2_TRANSITION_TREND_PERSIST_S (batch 160: below +5%/h for 32 min from
+//    20:59 while the rate rose again afterwards).
+// Or CO2_TRANSITION_MAX_S after the last change, with both STABLE. Without NTP
+// the settling cannot be timed: transition.
+static constexpr uint32_t CO2_TRANSITION_MIN_SETTLED_S = 3600UL;
+static constexpr uint32_t CO2_TRANSITION_TREND_PERSIST_S = 3600UL;
+static constexpr uint32_t CO2_TRANSITION_MAX_S = 8UL * 3600UL;
+static constexpr float CO2_TRANSITION_RISE_MAX = 0.05f;      // 1/h: absorbing, the rise stopped
+static constexpr float CO2_TRANSITION_FALL_MAX = 0.10f;      // 1/h: releasing, the fall slowed
+static constexpr float CO2_TRANSITION_TREND_FLOOR = 0.5f;    // g/L/d, denominator floor of the trend
+static constexpr float CO2_TRANSITION_HENRY_DEADBAND = 0.01f; // relative change of the Henry target
+static unsigned long co2TrendOkSince = 0; // NTP epoch since the trend is within the limit (0 = not)
+static uint32_t co2TransReliefSeen = 0;   // relief count at the previous update
+static bool co2TransReliefSeenValid = false;
+
+static bool co2StableFor(uint8_t state, uint32_t since, unsigned long now, uint32_t seconds) {
+  return state == TEMP_STATE_STABLE && since != 0 && now >= since && now - since >= seconds;
+}
+
+// Temperature or pressure changing, or stable for less than the minimum.
+static bool co2TransitionCondition(unsigned long now) {
+  const bool temp = co2StableFor(CountersData.tempState, CountersData.tempStableSince, now,
+                                 CO2_TRANSITION_MIN_SETTLED_S);
+  const bool press = SetPointData.setPointPressure <= 0.0f ||
+      co2StableFor(CountersData.pressState, CountersData.pressStableSince, now, CO2_TRANSITION_MIN_SETTLED_S);
+  return !(temp && press);
+}
+
+// Henry equilibrium (mol) at the targets: where the dissolved CO2 is heading.
+static float co2TransitionTargetHenry() {
+  const float pressure = SetPointData.setPointPressure > 0.0f ? SetPointData.setPointPressure : ControlData.pressure;
+  const float temperature = (SetPointData.setPointTemp > -50.0f && SetPointData.setPointTemp < 100.0f)
+      ? SetPointData.setPointTemp : ControlData.temperature;
+  return CO2DissolvedMols(pressure, beerSG, temperature, beerVolume);
+}
+
+// Relative trend (1/h) of gCO2/L/d: least-squares slope over the last hour
+// divided by the fitted current value (at least the floor). NAN before an hour.
+static float co2RateTrend() {
+  if (co2TrendCount < CO2_TREND_SAMPLES) return NAN;
+  const CO2TrendSample &oldest = co2Trend[co2TrendStart];
+  const CO2TrendSample &newest = co2Trend[(co2TrendStart + co2TrendCount - 1) % CO2_TREND_SAMPLES];
+  if (newest.millisStamp - oldest.millisStamp < 59UL * 60000UL) return NAN;
+  double sx = 0.0, sy = 0.0, sxx = 0.0, sxy = 0.0;
+  for (uint16_t i = 0; i < co2TrendCount; ++i) {
+    const CO2TrendSample &s = co2Trend[(co2TrendStart + i) % CO2_TREND_SAMPLES];
+    const double x = -double(newest.millisStamp - s.millisStamp) / 3600000.0; // h, newest at 0
+    sx += x;
+    sy += s.rate;
+    sxx += x * x;
+    sxy += x * s.rate;
+  }
+  const double n = co2TrendCount;
+  const double den = n * sxx - sx * sx;
+  if (den <= 0.0) return NAN;
+  const double slope = (n * sxy - sx * sy) / den;
+  const double current = (sy - slope * sx) / n;
+  return float(slope / fmax(current, double(CO2_TRANSITION_TREND_FLOOR)));
+}
+
+static void startCO2Transition(unsigned long now, bool rateIsStable) {
+  CountersData.co2TransStart = now;
+  CountersData.co2TransDir = CO2_TRANS_UNKNOWN;
+  CountersData.co2TransHenryRef = isfinite(henryMeanMols)
+      ? henryMeanMols : CO2DissolvedMols(ControlData.pressure, beerSG, ControlData.temperature, beerVolume);
+  const float rate = getReportedCO2EvolutionGramsPerLiterPerDay();
+  if (rateIsStable && co2EvolutionCount >= CO2_RULE_MIN_SAMPLES && isfinite(rate)) {
+    CountersData.co2TransRate = fmaxf(0.0f, rate);
+    CountersData.co2TransRateAt = now;
+  } else {
+    CountersData.co2TransRate = NAN;
+    CountersData.co2TransRateAt = 0;
+  }
+  CountersData.co2TransReliefAt = 0;
+  co2TrendOkSince = 0;
+  Serial.printf("[CO2 TRANSITION] start, stable rate %.2f g/L/d, Henry %.3f mol\n",
+                CountersData.co2TransRate, CountersData.co2TransHenryRef);
+  writeCountersDataToNIV();
+}
+
+static void endCO2Transition(unsigned long now, const char *reason) {
+  Serial.printf("[CO2 TRANSITION] end (%s) after %lu min\n", reason,
+                now >= CountersData.co2TransStart ? (now - CountersData.co2TransStart) / 60UL : 0UL);
+  CountersData.co2TransStart = 0;
+  CountersData.co2TransDir = CO2_TRANS_UNKNOWN;
+  CountersData.co2TransHenryRef = NAN;
+  CountersData.co2TransRate = NAN;
+  CountersData.co2TransRateAt = 0;
+  CountersData.co2TransReliefAt = 0;
+  co2TrendOkSince = 0;
+  writeCountersDataToNIV();
+}
+
+// The next sample starts a transition with no stable rate (back from
+// Conditioning). A new batch clears it.
+static void resetCO2Transition(bool startAtNextSample) {
+  CountersData.co2TransStart = startAtNextSample ? 1 : 0;
+  CountersData.co2TransDir = CO2_TRANS_UNKNOWN;
+  CountersData.co2TransHenryRef = NAN;
+  CountersData.co2TransRate = NAN;
+  CountersData.co2TransRateAt = 0;
+  CountersData.co2TransReliefAt = 0;
+  co2TrendOkSince = 0;
+}
+
+// Once per gCO2 sample (1 min), in Fermenting with NTP.
+static void updateCO2Transition() {
+  if (SetPointData.mode != MODE_FERMENTING) return;
+  const unsigned long now = NTPEpoch();
+  if (now == 0) return;
+  const bool newRelief = co2TransReliefSeenValid && CountersData.totalReliefCount != co2TransReliefSeen;
+  co2TransReliefSeen = CountersData.totalReliefCount;
+  co2TransReliefSeenValid = true;
+
+  if (CountersData.co2TransStart == 0) {
+    if (!co2TransitionCondition(now)) return;
+    startCO2Transition(now, true);
+  } else if (CountersData.co2TransStart == 1 || CountersData.co2TransStart > now) {
+    startCO2Transition(now, false);
+  }
+  bool changed = false;
+
+  // Direction: the Henry target against the equilibrium before the start.
+  uint8_t direction = CO2_TRANS_UNKNOWN;
+  const float ref = CountersData.co2TransHenryRef;
+  const float target = co2TransitionTargetHenry();
+  if (isfinite(ref) && ref > 0.0f && isfinite(target)) {
+    const float relative = (target - ref) / ref;
+    if (relative > CO2_TRANSITION_HENRY_DEADBAND) direction = CO2_TRANS_ABSORBING;
+    else if (relative < -CO2_TRANSITION_HENRY_DEADBAND) direction = CO2_TRANS_RELEASING;
+  }
+  uint8_t merged = CountersData.co2TransDir;
+  if (merged == CO2_TRANS_UNKNOWN) merged = direction;
+  else if (merged != CO2_TRANS_MIXED && direction != merged) merged = CO2_TRANS_MIXED;
+  if (merged != CountersData.co2TransDir) {
+    CountersData.co2TransDir = merged;
+    changed = true;
+  }
+
+  // First relief with the pressure stable; leaving STABLE waits for another.
+  const bool pressureTarget = SetPointData.setPointPressure > 0.0f;
+  if (pressureTarget && CountersData.pressState != TEMP_STATE_STABLE) {
+    if (CountersData.co2TransReliefAt != 0) {
+      CountersData.co2TransReliefAt = 0;
+      changed = true;
+    }
+  } else if (pressureTarget && CountersData.co2TransReliefAt == 0 && newRelief) {
+    CountersData.co2TransReliefAt = now;
+    changed = true;
+  }
+
+  const float trend = co2RateTrend();
+  const uint8_t dir = CountersData.co2TransDir;
+  const bool trendOk = isfinite(trend) &&
+      (dir == CO2_TRANS_RELEASING || trend <= CO2_TRANSITION_RISE_MAX) &&
+      (dir == CO2_TRANS_ABSORBING || trend >= -CO2_TRANSITION_FALL_MAX);
+  if (!trendOk) co2TrendOkSince = 0;
+  else if (co2TrendOkSince == 0) co2TrendOkSince = now;
+
+  const bool tempOk = co2StableFor(CountersData.tempState, CountersData.tempStableSince, now,
+                                   CO2_TRANSITION_MIN_SETTLED_S);
+  const bool pressOk = !pressureTarget ||
+      (CountersData.pressState == TEMP_STATE_STABLE && CountersData.co2TransReliefAt != 0 &&
+       now >= CountersData.co2TransReliefAt && now - CountersData.co2TransReliefAt >= CO2_TRANSITION_MIN_SETTLED_S);
+  const bool trendSettled = co2TrendOkSince != 0 && now - co2TrendOkSince >= CO2_TRANSITION_TREND_PERSIST_S;
+  if (tempOk && pressOk && trendSettled) {
+    endCO2Transition(now, "settled");
+    return;
+  }
+  const bool bothStable = CountersData.tempState == TEMP_STATE_STABLE &&
+      (!pressureTarget || CountersData.pressState == TEMP_STATE_STABLE);
+  uint32_t lastChange = CountersData.co2TransStart;
+  if (CountersData.tempStableSince > lastChange) lastChange = CountersData.tempStableSince;
+  if (pressureTarget && CountersData.pressStableSince > lastChange) lastChange = CountersData.pressStableSince;
+  if (bothStable && now >= lastChange && now - lastChange >= CO2_TRANSITION_MAX_S) {
+    endCO2Transition(now, "8 h limit");
+    return;
+  }
+  if (changed) writeCountersDataToNIV();
+}
+
 bool co2RateInTransition() {
   if (SetPointData.mode != MODE_FERMENTING) return false;
   const unsigned long now = NTPEpoch();
   if (now == 0) return true;
-  const bool tempSettled = CountersData.tempState == TEMP_STATE_STABLE && CountersData.tempStableSince != 0 &&
-      now >= CountersData.tempStableSince && now - CountersData.tempStableSince >= CO2_TRANSITION_SETTLE_S;
-  const bool pressSettled = SetPointData.setPointPressure <= 0.0f ||
-      (CountersData.pressState == TEMP_STATE_STABLE && CountersData.pressStableSince != 0 &&
-       now >= CountersData.pressStableSince && now - CountersData.pressStableSince >= CO2_TRANSITION_SETTLE_S);
-  return !(tempSettled && pressSettled);
+  return CountersData.co2TransStart != 0 || co2TransitionCondition(now);
 }
 
+float getCO2TransitionStableRate(uint32_t *epoch) {
+  const bool available = co2RateInTransition() && isfinite(CountersData.co2TransRate) &&
+      CountersData.co2TransRateAt != 0;
+  if (epoch) *epoch = available ? CountersData.co2TransRateAt : 0;
+  return available ? CountersData.co2TransRate : NAN;
+}
+
+// For the automatic rules: only a calculated positive rate over a window of
+// at least CO2_RULE_MIN_SAMPLES (30 min); shorter windows cover few relief
+// cycles (batch 160: 7.19 after 4 min with 8.8 real fired a "< 8" rule).
+// In a transition the net release only bounds the production: while the beer
+// releases CO2 it is an upper bound, so "gCO2 < x" also holds for the
+// production; while it absorbs (or the direction is unknown or mixed) there is
+// no usable rate.
 float getRuleCO2EvolutionGramsPerLiterPerDay() {
-  if (co2EvolutionCount < CO2_RULE_MIN_SAMPLES || co2RateInTransition()) return NAN;
+  if (co2EvolutionCount < CO2_RULE_MIN_SAMPLES) return NAN;
+  if (co2RateInTransition() &&
+      !(CountersData.co2TransStart > 1 && CountersData.co2TransDir == CO2_TRANS_RELEASING))
+    return NAN;
   return (isfinite(beerCO2EvolutionGramsPerLiterPerDay) && beerCO2EvolutionGramsPerLiterPerDay > 0.0f)
       ? beerCO2EvolutionGramsPerLiterPerDay : NAN;
 }

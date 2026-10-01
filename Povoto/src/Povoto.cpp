@@ -28,6 +28,7 @@
 #include "PovotoTasks.h"
 #include "AutoSetpoints.h"
 #include "GraphHistory.h"
+#include "PovotoFilesystem.h"
 #include "PovotoLogos.h"
 #include <esp_system.h>
 #include <esp_heap_caps.h>
@@ -88,13 +89,18 @@ char * getPovotoStatus(char *st) {
   snprintf(buf,199,"<BR>Debugging mode: %s<br>",debugging ? "ON" : "OFF");
   strnncat(st,buf,MAXSTATUSLEN);
 
-  const size_t fsTotal = LittleFS.totalBytes();
-  const size_t fsUsed = LittleFS.usedBytes();
+  const size_t webTotal = povotoWebFS().totalBytes();
+  const size_t webUsed = povotoWebFS().usedBytes();
+  const size_t dataTotal = povotoDataFS().totalBytes();
+  const size_t dataUsed = povotoDataFS().usedBytes();
   snprintf(buf, sizeof(buf),
-           "<b>LittleFS:</b> %u / %u bytes used (%u free)<br>"
+           "<b>LittleFS web:</b> %u / %u bytes used (%u free)<br>"
+           "<b>LittleFS data:</b> %u / %u bytes used (%u free)%s<br>"
            "<b>PSRAM:</b> %u / %u bytes used (%u free; largest free block %u)<br>"
            "<b>Graph history:</b> %u points<br>",
-           unsigned(fsUsed), unsigned(fsTotal), unsigned(fsTotal >= fsUsed ? fsTotal - fsUsed : 0),
+           unsigned(webUsed), unsigned(webTotal), unsigned(webTotal >= webUsed ? webTotal - webUsed : 0),
+           unsigned(dataUsed), unsigned(dataTotal), unsigned(dataTotal >= dataUsed ? dataTotal - dataUsed : 0),
+           povotoHasSeparateDataFS() ? "" : " (shared with web)",
            unsigned(heap_caps_get_total_size(MALLOC_CAP_SPIRAM) -
                     heap_caps_get_free_size(MALLOC_CAP_SPIRAM)),
            unsigned(heap_caps_get_total_size(MALLOC_CAP_SPIRAM)),
@@ -264,8 +270,24 @@ void setup() {
   server.on("/debugparams/update", HTTP_POST, handleDebugParamsUpdate);
   server.on("/debugparams", HTTP_GET, handleDebugParamsPage);
   // Register child paths before /graphs (prefix-matching async server).
+  server.on("/graphs/meta.json", HTTP_GET, handleGraphsMeta);
   server.on("/graphs/data.csv", HTTP_GET, handleGraphsCSV);
-  server.on("/graphs", HTTP_GET, handleGraphsPage);
+  server.on("/graphs/uPlot.iife.min.js", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send(LittleFS, "/www/uPlot.iife.min.js", "application/javascript");
+  });
+  server.on("/graphs/uPlot.min.css", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send(LittleFS, "/www/uPlot.min.css", "text/css");
+  });
+  server.on("/graphs/graphs.js", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send(LittleFS, "/www/graphs.js", "application/javascript");
+  });
+  server.on("/graphs/graphs.css", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send(LittleFS, "/www/graphs.css", "text/css");
+  });
+  server.on("/graphs/", HTTP_GET, handleGraphsPage);
+  server.on("/graphs", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->redirect("/graphs/");
+  });
 
   // Sub-routes must be registered BEFORE the parent /tasks route (ESPAsyncWebServer prefix matching)
   server.on("/tasks/start", HTTP_GET, handleTaskStart);
@@ -288,13 +310,14 @@ void setup() {
   registerPeerSetupRoute();
   ElegantOTA.begin(&server);
 
-  // Never format automatically: that would erase the batch history on a
-  // transient mount failure (as well as the UI assets).
-  if (!LittleFS.begin(false)) {
-    Serial.println("Erro ao montar o LittleFS");
+  // Legacy devices mount the original shared partition; migrated devices
+  // mount independent web and persistent-data partitions. Never autoformat.
+  if (!povotoFilesystemBegin()) {
+    Serial.println("Erro ao montar o LittleFS (web ou dados)");
     return;
   }
-  Serial.println("LittleFS montado com sucesso");
+  Serial.printf("LittleFS montado: %s\n",
+                povotoHasSeparateDataFS() ? "web + persist" : "legado compartilhado");
   graphHistoryBegin();
   server.begin();
 

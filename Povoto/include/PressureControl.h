@@ -85,15 +85,17 @@ float CO2Mass(float mols=-1);
 float getTotalCO2Mols();
 // g CO2/L/day; presentation clamps negative evolution to zero.
 float getBeerCO2EvolutionGramsPerLiterPerDay();
-// Rate for the automatic rules: NAN unless the window has 30 min and there is
-// no pressure/temperature transition (docs/automatic-actions.md).
+// Rate for the automatic rules: NAN unless the window has 30 min, and in a
+// transition unless the beer releases CO2 (docs/automatic-actions.md).
 float getRuleCO2EvolutionGramsPerLiterPerDay();
-// Pressure or temperature changing or settled for less than 2 h (docs/gco2-rate.md).
+// After a pressure/temperature change, until the rate settles (docs/gco2-rate.md).
 bool co2RateInTransition();
+// In a transition: the last stable gCO2/L/d and its local NTP epoch (NAN/0 = none).
+float getCO2TransitionStableRate(uint32_t *epoch);
 // Signed; after a reboot, the saved rate while the new window is short
 // (docs/gco2-rate.md). Automatic rules use beerCO2EvolutionGramsPerLiterPerDay.
 float getReportedCO2EvolutionGramsPerLiterPerDay();
-const char *getCO2EvolutionSource(); // "calculated" or "held"
+const char *getCO2EvolutionSource(); // "calculated", "held" or "transition"
 float CO2DissolvedMols(float pressureBar, float sg, float temperatureC, float volumeL);
 boolean inPressureNoiseWindow();
 void getReliefsPerHourText(char *out, size_t outSize);

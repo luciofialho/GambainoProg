@@ -1,4 +1,5 @@
 #include <ESPAsyncWebServer.h>
+#include <LittleFS.h>
 #include <IOTK_NTP.h>
 #include <IOTK.h>
 #include <math.h>
@@ -78,11 +79,29 @@ void handleMainMenu(AsyncWebServerRequest *request) {
   html += "<div class='status-item'><strong>Temperature:</strong> " + String(ControlData.temperature, 1) + " °C</div>";
   html += "<div class='status-item'><strong>Pressure:</strong> " + String(ControlData.pressure, 2) + " bar</div>";
   html += "<div class='status-item'><strong>Volume:</strong> " + String(beerVolume, 1) + " L</div>";
-  // During a pressure/temperature transition an info icon explains the rate on hover.
-  html += "<div class='status-item'><strong>SG:</strong> " + String(beerSG, 3) + " (gCO2/L/d: " + String(getBeerCO2EvolutionGramsPerLiterPerDay(), 2) +
-          (co2RateInTransition()
-               ? " <span title='Transition: net CO2 release (production &minus; absorption)' style='cursor:help'>&#9432;</span>"
-               : "") + ")</div>";
+  // During a pressure/temperature transition the last stable rate is shown;
+  // an info icon gives its time and the preliminary reading on hover.
+  String co2RateHtml = String(getBeerCO2EvolutionGramsPerLiterPerDay(), 2);
+  if (co2RateInTransition()) {
+    uint32_t stableAt = 0;
+    const float stableRate = getCO2TransitionStableRate(&stableAt);
+    String tip;
+    if (isfinite(stableRate)) {
+      const time_t at = stableAt, today = NTPEpoch();
+      struct tm atTm, todayTm;
+      gmtime_r(&at, &atTm);
+      gmtime_r(&today, &todayTm);
+      char when[16];
+      strftime(when, sizeof(when),
+               atTm.tm_yday == todayTm.tm_yday && atTm.tm_year == todayTm.tm_year ? "%H:%M" : "%d/%m %H:%M", &atTm);
+      tip = "Value is last stable reading at " + String(when) + ". Preliminary unstable reading now is " + co2RateHtml;
+      co2RateHtml = String(stableRate, 2);
+    } else {
+      tip = "Transition: net CO2 release (production &minus; absorption)";
+    }
+    co2RateHtml += " <span title='" + tip + "' style='cursor:help'>&#9432;</span>";
+  }
+  html += "<div class='status-item'><strong>SG:</strong> " + String(beerSG, 3) + " (gCO2/L/d: " + co2RateHtml + ")</div>";
   html += "<div class='status-item'><strong>Uptime:</strong> " + uptimeStr + "</div>";
   html += "<div class='status-item'><strong>Date/Time:</strong> " + String(dateTimeBuf) + "</div>";
   html += "</div>";
@@ -107,94 +126,28 @@ void handleMainMenu(AsyncWebServerRequest *request) {
   request->send(200, "text/html", html);
 }
 
-// ========== GRAPH HISTORY (CSV VALIDATION, NO CHART YET) ==========
+// ========== GRAPH HISTORY ==========
 
 void handleGraphsPage(AsyncWebServerRequest *request) {
-  String html;
-  html.reserve(1900);
-  html = "<!DOCTYPE html><html><head><meta charset='UTF-8'>"
-         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-         "<title>Povoto Graphs</title><style>"
-         "body{font-family:Arial,sans-serif;background:#f0f0f0;margin:20px;color:#333}"
-         ".box{max-width:650px;margin:auto;background:white;padding:24px;border-radius:9px}"
-         "a.button{display:inline-block;background:#5168bb;color:white;padding:12px 18px;"
-         "margin:8px 8px 8px 0;border-radius:5px;text-decoration:none}"
-         "small{color:#555}</style></head><body><div class='box'>"
-         "<h1>Graphs</h1><p>Historical observations every 15 minutes."
-         " Charts will be added in a later phase; download CSV to validate the data.</p>";
-  html += "<p>Observations: " + String(graphHistoryCount()) + "</p>";
-  html += "<a class='button' href='/graphs/data.csv'>Download CSV</a>";
-  html += "<p><small>Each row is a 15-minute snapshot, not an average. Empty cells mean "
-          "unavailable measurements. Flags describe provenance only: 1 = CO2 rate held after "
-          "reboot; 2 = transition (CO2 rate omitted); 4 = synthetic point. Values may be "
-          "combined, for example 6 = synthetic transition.</small></p>";
-  html += "<p><a href='/'>Back to menu</a></p></div></body></html>";
-  request->send(200, "text/html; charset=utf-8", html);
+  if (!LittleFS.exists("/www/graphs.html")) {
+    request->send(503, "text/plain", "Graphs page missing from LittleFS; upload data/www.");
+    return;
+  }
+  request->send(LittleFS, "/www/graphs.html", "text/html; charset=utf-8");
 }
 
-// [DIAG] Timing of the CSV download callback (temporary): how often the
-// server asks for data, how much, and how much TCP send space it has.
-struct GraphCsvDiag {
-  AsyncClient *client = nullptr;
-  unsigned long startMillis = 0, lastMillis = 0, segmentStartMillis = 0;
-  uint32_t calls = 0, segmentCalls = 0;
-  size_t bytes = 0, segmentStartBytes = 0;
-  size_t minAsk = SIZE_MAX, maxAsk = 0, segmentAsk = 0, segmentSpace = 0;
-  unsigned long maxGap = 0;
-  size_t maxGapAt = 0;
-  uint32_t gaps[5] = {}; // <50, 50-150, 150-300, 300-700, >=700 ms
-  bool reported = false;
-  size_t segMinWritten = SIZE_MAX, segMaxWritten = 0;
-  uint32_t segExitNoRows = 0, segExitFull = 0, segSkipped = 0;
-  uint16_t *next = nullptr, *total = nullptr;
-
-  void call(size_t maxLen) {
-    const unsigned long now = millis();
-    if (!calls) startMillis = lastMillis = segmentStartMillis = now;
-    const unsigned long gap = now - lastMillis;
-    if (calls) {
-      gaps[gap < 50 ? 0 : gap < 150 ? 1 : gap < 300 ? 2 : gap < 700 ? 3 : 4]++;
-      if (gap > maxGap) { maxGap = gap; maxGapAt = bytes; }
-    }
-    lastMillis = now;
-    ++calls; ++segmentCalls;
-    minAsk = maxLen < minAsk ? maxLen : minAsk;
-    maxAsk = maxLen > maxAsk ? maxLen : maxAsk;
-    segmentAsk += maxLen;
-    segmentSpace += client ? client->space() : 0;
-  }
-  void sent(size_t written, size_t maxLen) {
-    bytes += written;
-    segMinWritten = written < segMinWritten ? written : segMinWritten;
-    segMaxWritten = written > segMaxWritten ? written : segMaxWritten;
-    if (written >= maxLen) ++segExitFull; else ++segExitNoRows;
-    if (bytes - segmentStartBytes >= 16384) {
-      const unsigned long ms = millis() - segmentStartMillis;
-      Serial.printf("[DIAG CSV] %6u..%6u B: %5lu ms (%.1f KB/s), %u calls, ask avg %u, space avg %u, "
-                    "written %u..%u, exit full %u / short %u, skipped rows %u, row %u/%u\n",
-                    unsigned(segmentStartBytes), unsigned(bytes), ms,
-                    ms ? (bytes - segmentStartBytes) / 1.024 / ms : 0.0, unsigned(segmentCalls),
-                    unsigned(segmentAsk / segmentCalls), unsigned(segmentSpace / segmentCalls),
-                    unsigned(segMinWritten), unsigned(segMaxWritten), unsigned(segExitFull),
-                    unsigned(segExitNoRows), unsigned(segSkipped),
-                    unsigned(next ? *next : 0), unsigned(total ? *total : 0));
-      segmentStartBytes = bytes;
-      segmentStartMillis = millis();
-      segmentCalls = 0; segmentAsk = 0; segmentSpace = 0;
-      segMinWritten = SIZE_MAX; segMaxWritten = 0; segExitFull = segExitNoRows = segSkipped = 0;
-    }
-  }
-  void report(const char *how) {
-    if (reported) return;
-    reported = true;
-    const unsigned long ms = millis() - startMillis;
-    Serial.printf("[DIAG CSV] %s: %u B in %lu ms (%.1f KB/s), %u calls, ask %u..%u, "
-                  "max gap %lu ms at %u B, gaps <50:%u 50-150:%u 150-300:%u 300-700:%u >=700:%u\n",
-                  how, unsigned(bytes), ms, ms ? bytes / 1.024 / ms : 0.0, unsigned(calls),
-                  unsigned(minAsk == SIZE_MAX ? 0 : minAsk), unsigned(maxAsk), maxGap, unsigned(maxGapAt),
-                  unsigned(gaps[0]), unsigned(gaps[1]), unsigned(gaps[2]), unsigned(gaps[3]), unsigned(gaps[4]));
-  }
-};
+void handleGraphsMeta(AsyncWebServerRequest *request) {
+  char json[48];
+  if (isfinite(BatchData.batchOG) && BatchData.batchOG > 0.0f)
+    snprintf(json, sizeof(json), "{\"og\":%.5f}", BatchData.batchOG);
+  else
+    snprintf(json, sizeof(json), "{\"og\":null}");
+  AsyncWebServerResponse *response = request->beginResponse(
+      200, "application/json; charset=utf-8", json);
+  response->addHeader("Cache-Control", "no-store");
+  response->addHeader("Access-Control-Allow-Origin", "*");
+  request->send(response);
+}
 
 struct GraphCsvCursor {
   GraphHistoryPoint *snapshot = nullptr;
@@ -204,9 +157,7 @@ struct GraphCsvCursor {
   char line[256];
   size_t used;
   size_t position;
-  GraphCsvDiag diag; // [DIAG]
   ~GraphCsvCursor() {
-    diag.report("closed"); // [DIAG] also when the browser aborts
     if (snapshot) heap_caps_free(snapshot);
   }
 };
@@ -237,14 +188,10 @@ void handleGraphsCSV(AsyncWebServerRequest *request) {
   cursor->next = 0;
   cursor->headerSent = false;
   cursor->used = cursor->position = 0;
-  cursor->diag.client = request->client(); // [DIAG]
-  cursor->diag.next = &cursor->next;
-  cursor->diag.total = &cursor->total;
 
   AsyncWebServerResponse *response = request->beginChunkedResponse(
       "text/csv; charset=utf-8",
       [cursor](uint8_t *buffer, size_t maxLen, size_t) -> size_t {
-        cursor->diag.call(maxLen); // [DIAG]
         size_t written = 0;
         while (written < maxLen) {
           if (cursor->position == cursor->used) {
@@ -279,10 +226,7 @@ void handleGraphsCSV(AsyncWebServerRequest *request) {
                   press, pressSp, rate, abv, static_cast<unsigned long>(point.flags));
               cursor->used = length > 0 && static_cast<size_t>(length) < sizeof(cursor->line)
                   ? static_cast<size_t>(length) : 0;
-              if (!cursor->used) {
-                ++cursor->diag.segSkipped; // [DIAG] row longer than the line buffer
-                continue;
-              }
+              if (!cursor->used) continue;
             }
           }
           const size_t pending = cursor->used - cursor->position;
@@ -292,12 +236,12 @@ void handleGraphsCSV(AsyncWebServerRequest *request) {
           cursor->position += amount;
           written += amount;
         }
-        cursor->diag.sent(written, maxLen); // [DIAG]
-        if (!written) cursor->diag.report("done");
         return written;
       });
   response->addHeader("Content-Disposition", "attachment; filename=\"povoto-graphs.csv\"");
   response->addHeader("Cache-Control", "no-store");
+  // Read-only graph data may also be previewed from a local file:// page.
+  response->addHeader("Access-Control-Allow-Origin", "*");
   request->send(response);
 }
 
