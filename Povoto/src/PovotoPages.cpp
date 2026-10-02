@@ -968,6 +968,24 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
     }
   }
 
+  // k calibrated by the last fast test (docs/expansion-tank-k.md).
+  String kCalibrationHtml;
+  const VolumeKCalibration kCalibration = getVolumeKCalibration();
+  if (kCalibration.available && !isVolumeDeterminationActive()) {
+    const char *gasName = kCalibration.co2 ? "CO2" : "air";
+    kCalibrationHtml = String("<p><strong>k calibrated (") + gasName + "):</strong> " + String(kCalibration.kMedian, 4) +
+      " (median of " + String(kCalibration.count) + " reliefs, sd " + String(kCalibration.kSpread, 4) +
+      "; cumulative factor " + String(kCalibration.kOverall, 4) + "). Mean temperatures: fermenter " +
+      String(kCalibration.fermenterC, 1) + " &deg;C, ambient " +
+      (isfinite(kCalibration.ambientC) ? String(kCalibration.ambientC, 1) + " &deg;C" : String("n/a")) +
+      ". Only valid with the empty fermenter and the correct FMT volume.</p>"
+      "<form action='/calibration/savek' method='POST'><button name='target' value='k'>Save k" + (kCalibration.co2 ? "CO2" : "Air") +
+      " = " + String(kCalibration.kMedian, 4) + "</button>";
+    if (!kCalibration.co2)
+      kCalibrationHtml += " <button name='target' value='kco2est'>Save estimated kCO2 = " +
+        String(1.0f + 1.3f * (kCalibration.kMedian - 1.0f), 4) + "</button>";
+    kCalibrationHtml += "</form>";
+  }
   const String actions = String("<div class='container' style='margin-top:20px'><h2>Calibration tests</h2>") +
     "<p>Requirements: Mode OFF; initial pressure at least 1.9 bar.</p><p>No pressure target.</p>" +
     "<hr><h3>FMT volume determination</h3>" +
@@ -976,7 +994,12 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
     "The test stops when the volume estimates converge, or after 35 relief cycles. It reports both the initial-to-final-pressure and full-series-fit results, compensated for temperature.</p>" +
     "<p>Convergence requires at least 10 valid expansions: the last five fitted estimates must span less than 0.5%, with a trend below 0.05% per cycle and settled pressure. " +
     "The endpoint and full-series results must agree within 1%, and the fit of the last 10 readings must agree with the full-series fit within 0.5%. The CSV includes these diagnostics.</p>" +
-    "<form action='/startvolume' method='POST'><button name='mode' value='slow'>Volume determination (slow)</button> <button name='mode' value='fast'>Volume determination (fast)</button></form><p>" + volumeStatus + "</p>" +
+    "<p>Fast mode also calibrates the expansion-tank k against the FMT volume (" + String(FMTData.FMTVolume, 1) + " L): run it with the empty fermenter, "
+    "at most ~3 &deg;C from the ambient temperature, and repeat at a lower pressure range to detect effects proportional to 1/P. "
+    "Gas: air, or CO2 with the fermenter purged. Current k: air " + String(FMTData.expansionTankKAir, 3) + ", CO2 " + String(FMTData.expansionTankKCO2, 3) + ".</p>" +
+    "<form action='/startvolume' method='POST'><label for='volumeGas'>Gas </label><select id='volumeGas' name='gas'><option value='air'>Air</option><option value='co2'>CO2 (purged)</option></select> "
+    "<button name='mode' value='slow'>Volume determination (slow)</button> <button name='mode' value='fast'>Volume determination (fast)</button></form><p>" + volumeStatus + "</p>" +
+    kCalibrationHtml +
     "<p>Download results: <a href='/pressurehistory'>Pressure history</a> | " +
     "<a href='/pressuredump'>Pressure dump</a></p>" +
     "<hr><h3>Gas transfer speed determination</h3>" +
@@ -2394,7 +2417,8 @@ void handleStartVolume(AsyncWebServerRequest *request) {
   char reason[80];
   
   const bool fast = request->hasParam("mode", true) && request->getParam("mode", true)->value() == "fast";
-  bool started = startVolumeDetermination(fast, reason, sizeof(reason));
+  const bool co2 = request->hasParam("gas", true) && request->getParam("gas", true)->value() == "co2";
+  bool started = startVolumeDetermination(fast, co2, reason, sizeof(reason));
   if (started) {
     request->redirect("/calibration?volume=1");
   } else {
@@ -2408,6 +2432,32 @@ void handleStartVolume(AsyncWebServerRequest *request) {
     html += "</body></html>";
     request->send(200, "text/html", html);
   }
+}
+
+// Saves the k calibrated by the last fast volume test (docs/expansion-tank-k.md):
+// target "k" stores it as kAir or kCO2 (test gas); "kco2est" (air test) stores
+// kCO2 = 1 + 1.3 * (kAir - 1).
+void handleSaveVolumeK(AsyncWebServerRequest *request) {
+  const VolumeKCalibration calibration = getVolumeKCalibration();
+  const String target = request->hasParam("target", true) ? request->getParam("target", true)->value() : "";
+  if (!calibration.available || isVolumeDeterminationActive()) {
+    request->send(409, "text/plain", "No finished fast volume test to calibrate k.");
+    return;
+  }
+  float k = calibration.kMedian;
+  if (target == "kco2est" && !calibration.co2) k = 1.0f + 1.3f * (k - 1.0f);
+  else if (target != "k") {
+    request->send(400, "text/plain", "Invalid target");
+    return;
+  }
+  if (!isValidExpansionTankK(k)) {
+    request->send(400, "text/plain", "Calibrated k outside 1.0-1.5; not saved.");
+    return;
+  }
+  if (target == "k" && !calibration.co2) FMTData.expansionTankKAir = k;
+  else FMTData.expansionTankKCO2 = k;
+  writeFMTDataToNIV();
+  request->redirect("/calibration");
 }
 
 void handleControlAuto(AsyncWebServerRequest *request) {

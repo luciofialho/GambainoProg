@@ -20,6 +20,7 @@ struct ReliefLogData {
   float targetPressure;
   float atmosphericPressure;
   float environmentTemperature;
+  float tankReferenceTemperature; // expansion tank Tref, C (docs/expansion-tank-k.md)
   float reliefVolume;
   float effectiveVentingExponent;
   float pressureOnReliefMeasured;
@@ -30,16 +31,13 @@ struct ReliefLogData {
   float currentAfterRelief;
   float adjustedPressureAfterRelief;
   float adjustedEquilibriumPressure;
-  float ejectedPressure;
+  float tankPressureAtClose; // expansion tank at valve close, gauge
   float liquidMassInGasVentingPercent;
   // Final residual of the previous tank cycle, sampled at this relief's opening.
   float expansionTankResidualMoles;
   float ventingElapsedAtLogSeconds;
-  unsigned long previousReliefNumber;
   float previousTankPressureAtCloseBar;
-  float previousTankMolesAtClose;
   float previousTankPressureAtOpenBar;
-  float previousTankEjectedMolesBeforeLiquidCorrection;
   float previousTankEjectedMoles;
   float ejectedMolsBeforeLiquidCorrection;
   float instantaneousPressureDropFactor;
@@ -51,22 +49,11 @@ struct ReliefLogData {
   float gasOpeningSeconds;
   float gasPreviousVentingSeconds;
   float gasExpansionResidual;
-  float gasInitialResidualMoles;
   float gasTankMolesAtClose;
-  float gasModelTankMolesAtClose;
-  // (model - measured) / measured * 100; positive means the model overestimated.
-  float gasModelTankMolesDifferencePercent;
   float gasVentingResidualFactor;
   float gasVentingResidual;
   float gasExpansionOptimalSeconds;
-  float gasVentingOptimalSeconds;
-  float gasVentingFermenterOptimalSeconds;
-  float gasVentingVolumeRatio;
   float gasPlannedExpansionSeconds;
-  float gasPlannedVentingSeconds;
-  float gasProjectedFermenterPressure;
-  float gasProjectedExpansionPressure;
-  float gasProjectedPressureDifference;
   float gasCalculatedPressureCompensation;
   float gasAppliedPressureCompensation;
   const char *gasHeadspaceUpdateStatus;
@@ -75,11 +62,6 @@ struct ReliefLogData {
   double dissolvedCO2Mols;
   double totalCO2Mols;
   float beerSG;
-  float beerRealPlato;
-  float beerABV;
-  unsigned long totalReliefCount;
-  float reliefsPerHour;
-  float beerCO2EvolutionGramsPerLiterPerDay;
   unsigned long polytropicSourceReliefNumber;
   uint8_t polytropicSampleCount;
   float polytropicBackExtrapolatedPressure;
@@ -88,6 +70,7 @@ struct ReliefLogData {
   float polytropicFitRMSEBar;
   // [DAILY-HS] headSpaceVolume is the applied value; these explain where it came from.
   float headSpaceMeasured;   // this relief's instantaneous value (NAN = invalid)
+  float kCO2FromBeerVolume;  // k matching FMTVolume - beer volume (NAN = no beer volume)
   float headSpaceEMA;        // headspaceFiltered after the update
   float headSpaceDaily;      // 24-hour average (NAN = no hours)
   uint8_t dailyHours;

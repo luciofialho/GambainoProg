@@ -236,6 +236,7 @@ void setup() {
   server.on("/calibration/speed.csv", HTTP_GET, handleSpeedCalibrationCSV);
   server.on("/calibration/fit-expansion", HTTP_GET, handleExpansionResidualFit);
   server.on("/calibration/speed", HTTP_POST, handleStartSpeedCalibration);
+  server.on("/calibration/savek", HTTP_POST, handleSaveVolumeK);
   server.on("/calibration", HTTP_GET, handleCalibrationDataPage);
   server.on("/calibration/refresh-current", HTTP_GET, handleCalibrationCurrentRefresh);
   server.on("/calibration/update", HTTP_POST, handleCalibrationDataUpdate);

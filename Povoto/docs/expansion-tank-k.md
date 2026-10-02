@@ -7,24 +7,47 @@ internal energy of the tank. At the same pressure a warmer tank holds fewer
 moles, so counting the tank with the beer temperature overestimates the
 ejected CO2 and the headspace volume.
 
-The accounting uses an effective expansion volume `FMTReliefVolume / k`
-(`accountingReliefVolume()` in PressureControl.cpp):
+Energy balance of the tank while it fills (open volume, mixed gas, gas
+entering with the fermenter's enthalpy, Q lost to the wall):
 
-- fermentation (`FMTData.expansionTankKCO2`, NVS key `kCO2`): moles of each
-  relief (`P_tank * Vr/k / (R T)`) and headspace volume from the pressure drop
-  (`Vr/k * f / (1 - f)`, and its inverse for the relief threshold);
-- fast volume determination (`FMTData.expansionTankKAir`, NVS key `kAir`),
-  which uses the same expansion time with air. Its pressure ratio is extended
-  to full equalization, `f_eq = 1 - (1 - f) / (1 - r)` with r = 1%, as in a
-  relief;
-- slow volume determination: the valve stays open 3 min, the tank cools back
-  and equalizes, so k = 1 and no residual.
+```
+moles entering = dP_tank * Vr / (k R T),    k = gamma / (1 + q)
+```
 
-Valve timing, venting and the gas-flow model keep the physical volume.
+q is the fraction of the compression heat lost to the wall: q = 0 gives
+k = gamma (1.29 CO2, 1.40 air), q = gamma - 1 gives k = 1 (isothermal). gamma
+divides here (the tank receives gas); in the headspace, a closed gas that
+expands, it is an exponent.
 
-k = 1 is an isothermal tank; the adiabatic limit is the gas's heat-capacity
-ratio (1.29 for CO2, 1.40 for air). Both defaults are 1.08
-(`EXPANSION_TANK_K_DEFAULT`), valid range 1.0-1.5.
+The same wall exchange pulls the gas toward the ambient temperature and leaves
+the fraction phi of any temperature difference:
+
+```
+phi  = 1 - (gamma/k - 1) / (gamma - 1)          (~0.33 for k = 1.08, CO2)
+Tref = Tamb + phi * (Tferm - Tamb)
+moles in the tank = P_tank * (Vr/k) / (R Tref)
+```
+
+Relative to the fermenter gas counted at Tferm, the tank is an isothermal volume
+`Vr/k * Tferm/Tref` (`accountingReliefVolume()` in PressureControl.cpp). With
+Tamb = Tferm, or without a valid ambient reading, Tref = Tferm.
+
+- Fermentation (`FMTData.expansionTankKCO2`, NVS key `kCO2`, gamma 1.29): moles
+  of each relief and headspace volume from the pressure drop
+  (`Vr_eff * f / (1 - f)`, and its inverse for the relief threshold). The
+  Relief log has `TankReferenceTemperature`.
+- Fast volume determination (gas chosen on the Calibration page: air with
+  `FMTData.expansionTankKAir`, NVS key `kAir`, gamma 1.40; or CO2 with the
+  fermenter purged, kCO2): the same expansion time; the pressure ratio is
+  extended to full equalization, `f_eq = 1 - (1 - f) / (1 - r)` with r = 1%.
+- Slow volume determination: the valve stays open 3 min, the tank cools back and
+  equalizes; physical volume, no residual.
+
+Valve timing, venting and the gas-flow model keep the physical volume. Both k
+default to 1.08 (`EXPANSION_TANK_K_DEFAULT`), valid range 1.0-1.5. The model
+assumes a headspace at least ~10 times the tank (smaller ones send colder gas
+to the tank) and a linear wall exchange (same coefficient for the compression
+excess and for the fermenter-ambient difference; not yet tested).
 
 ## Evidence (fermenter 129.6 L by water weighing, tank 2.01 L)
 
@@ -39,7 +62,34 @@ ratio (1.29 for CO2, 1.40 for air). Both defaults are 1.08
 
 ## Calibration
 
-The fast test CSV has `kAr_para_FMTVolume`: the kAir that would make the test
-return the configured FMTVolume (empty fermenter). The serial log prints it at
-the end of the test (`[VOLUME]`). kCO2 is not derived from kAir; check it with
-degassed SG readings or a fast test with the empty fermenter purged with CO2.
+Every fast volume test also calibrates k against the configured FMTVolume. Per
+relief, the k of the test gas that makes the volume equal FMTVolume (with Tref
+and the residual) is in the CSV (`k_relief`, `T_ref_K`; `k_para_FMTVolume`
+from the cumulative factor). At the end, the Calibration page and the serial
+log (`[VOLUME]`) show the median of the per-relief k, its standard deviation
+and the number of reliefs, with buttons:
+
+- "Save kAir" / "Save kCO2" (test gas): stores the median;
+- with air, "Save estimated kCO2" = `1 + 1.3 * (kAir - 1)`.
+
+Nothing is saved without the button, so a test run only to check a volume does
+not change k. The saved value is only valid with the empty fermenter and the
+correct FMTVolume; calibrate with the fermenter within ~3 C of the ambient
+(then k barely depends on the Tref hypothesis) and repeat at a lower pressure
+range: a k that changes with the pressure points to an effect proportional to
+1/P (pressure-sensor offset or tank residual pressure).
+
+kAir to kCO2: what carries over between gases is the fraction of heat lost, not
+k. With the same fraction, kCO2 = 1.29 / (1 + 0.29 L), L = (1.40/kAir - 1)/0.40
+(1.06 for kAir 1.079); CO2 loses heat more slowly, so ~1.12. The estimate
+`1 + 1.3 (kAir - 1)` (1.10) is in the middle; the batch 160 SG gave ~1.08.
+
+## kCO2 from the beer volume (Relief log)
+
+Each relief is a small volume test with CO2. With the beer volume known
+(fermenter weighed at transfer, `initialBeerVolume`, minus `dumpedVolume`), the
+headspace is `FMTVolume - beer`, and `KCO2FromBeerVolume` is the k that makes
+this relief's equalized drop factor (`adjustedEquilibriumPressure /
+pressureOnReliefExtrapolated`) match it, with Tref (gamma 1.29). Diagnostics
+only. With ~30 L of headspace, 0.3 L of beer-volume error is ~1% in k; the
+krausen takes headspace, so use the start or the end of the fermentation.

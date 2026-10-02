@@ -98,7 +98,7 @@ Nucleação mais longa que a janela: o que sai depois da janela, com D < H, cont
 
 ## 6. Logs e status
 
-- Cold `DissolvedCO2Mode`: rótulo do estado. `DissolvedCO2CriteriaState`: `generating` / `between` / `idle` / `no-decision`. `DissolvedCO2CriteriaElapsedMillis` / `DissolvedCO2ConfirmationMillis`: tempo da condição em curso / tempo exigido.
+- Cold `DissolvedCO2Mode`: rótulo do estado. `DissolvedCO2CriteriaState`: `generating` / `between` / `idle` / `no-decision` (os tempos da condição saíram do log; o /getstatus ainda mostra).
 - Cold `GasCO2Rate`: taxa da fase gasosa, vazia sem decisão.
 - `CO2WithReliefsState`, `CO2WithoutReliefsState` ficam vazios e `Pressure10MinAgo` NaN até a revisão das colunas (critérios antigos removidos).
 - Serial: `[CO2 STATE] de -> para (motivo)`, `[CO2 REBASE]`, `[CO2 DUMP]`.

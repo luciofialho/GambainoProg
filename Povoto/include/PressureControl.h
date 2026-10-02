@@ -15,15 +15,10 @@ struct DissolvedCO2LogData {
   const char *criteriaState;
   const char *withReliefsState;
   const char *withoutReliefsState;
-  unsigned long criteriaElapsedMillis;
-  unsigned long confirmationMillis;
   unsigned long withReliefsElapsedMillis;
-  unsigned long withoutReliefsElapsedMillis;
   float calculationPressure;
   float equilibriumMols;
   float previousPressure;
-  float reliefIntervalSeconds;
-  float sinceLastReliefSeconds;
   float gasRate; // gas-phase CO2 rate, g/L/d (NAN = no decision)
 };
 DissolvedCO2LogData getDissolvedCO2LogData();
@@ -46,7 +41,23 @@ bool isSpeedCalibrationActive();
 void drawCalibrationStatus();
 void handleSpeedCalibrationCSV(AsyncWebServerRequest *request);
 void handleExpansionResidualFit(AsyncWebServerRequest *request);
-bool startVolumeDetermination(bool fast, char *reason, size_t reasonSize);
+// fast: the fermentation's expansion time; co2: the empty fermenter was purged
+// with CO2 (k and Tref of CO2 instead of air).
+bool startVolumeDetermination(bool fast, bool co2, char *reason, size_t reasonSize);
+// k calibration of the last fast volume test against FMTVolume (empty
+// fermenter); docs/expansion-tank-k.md.
+struct VolumeKCalibration {
+  bool available;   // fast test finished with per-relief k values
+  bool co2;         // test gas
+  float kMedian;    // value to save: median of the per-relief k
+  float kSpread;    // standard deviation of the per-relief k
+  float kOverall;   // from the cumulative factor, for comparison
+  uint16_t count;
+  float fermenterC; // mean temperatures of the test
+  float ambientC;
+  float volume;     // volume returned with the current k
+};
+VolumeKCalibration getVolumeKCalibration();
 bool isVolumeDeterminationActive();
 uint16_t getVolumeDeterminationIteration();
 float getVolumeDeterminationCalculatedSoFar();
@@ -120,12 +131,5 @@ extern float headSpaceCO2Mols;
 // Signed rate over up to 71 samples; averages each end from nine samples onward.
 // Zero until five samples are collected; sampling starts after two minutes uptime.
 extern float beerCO2EvolutionGramsPerLiterPerDay;
-extern float adjustedPressureAfterRelief;
-extern float pressureOnReliefExtrap; // extrapolates for relief time window
-extern float pressureAfterRelief;
-extern unsigned long pressureAfterReliefMillis;
-extern float pressureReachedTarget;
-extern unsigned long int pressureReachedTargetMillis;
-extern float pressureDropFactor;
 
 #endif // PRESSURECONTROL_H
