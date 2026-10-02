@@ -56,6 +56,10 @@ struct FMTData_t {
   // determination (empty fermenter).
   float expansionTankKCO2;
   float expansionTankKAir;
+  // Molar flow of CO2 / air through the valves (critical flow ~ sqrt(gamma/M),
+  // 0.79). The speed tests run with air; their flow and venting results are
+  // converted to CO2 with it (docs/calibration-speed-evaluation.md).
+  float flowFactorCO2Air;
   // F(P) = c*P^2 + d*P + e: residual fraction after 20 s of venting at
   // gauge pressure P (bar).
   float ventingResidualCoefficientA;
@@ -78,6 +82,10 @@ extern FMTData_t FMTData;
 constexpr float EXPANSION_TANK_K_DEFAULT = 1.08f; // fast volume test 20/09 and batch 160 SG
 inline bool isValidExpansionTankK(float k) {
   return isfinite(k) && k >= 1.0f && k <= 1.5f;
+}
+constexpr float FLOW_FACTOR_CO2_AIR_DEFAULT = 0.79f;
+inline bool isValidFlowFactor(float factor) {
+  return isfinite(factor) && factor >= 0.5f && factor <= 1.2f;
 }
 
 struct UserConfigurationData_t {

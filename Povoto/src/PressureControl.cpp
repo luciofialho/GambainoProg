@@ -1,6 +1,5 @@
 #include "PressureControl.h"
 #include "GasFlowModel.h"
-#include "ExpansionResidualFit.h"
 #include "TemperatureControl.h"
 #include "PovotoData.h"
 #include "PovotoCommon.h"
@@ -316,41 +315,75 @@ float pressureDropFactor = 0.99f;
 
 static bool volumeDeterminationActive = false;
 static bool volumeDeterminationFast = false;
+// ===== Gas-transfer speed tests (docs/calibration-speed-evaluation.md) =====
+// Empty fermenter, normally with air. Expansion: openings of several lengths
+// to fit flow, tank heating and floor; k & floor: the fermentation opening time
+// alternated with a long one; venting: the fermenter vented through the valve
+// outlet. Every wait ends when the fermenter pressure is stable.
 static bool speedCalibrationActive = false;
-static bool speedCalibrationVenting = false;
-static const uint8_t speedDurations[] = {1, 2, 4, 6, 8, 10, 12, 14, 16, 30};
-static constexpr uint8_t SPEED_VENTING_DURATION_COUNT = 1;
-static constexpr uint8_t SPEED_VENTING_CYCLES = 10;
+static uint8_t speedTest = SPEED_TEST_EXPANSION;
+static bool speedGasCO2 = false;
+static const uint8_t speedExpansionDurations[] = {1, 2, 3, 5, 7, 10, 15, 40};
+static constexpr uint8_t SPEED_EXPANSION_DURATION_COUNT =
+    sizeof(speedExpansionDurations) / sizeof(speedExpansionDurations[0]);
+static constexpr uint8_t SPEED_EXPANSION_CYCLES = 3;
+static constexpr uint8_t SPEED_K_FLOOR_PAIRS = 4;
+static constexpr uint8_t SPEED_LONG_OPEN_SECONDS = 40; // flow and heating are over
+static constexpr uint8_t SPEED_VENTING_RELEASES = 6;
 static constexpr uint8_t SPEED_VENTING_OPEN_SECONDS = 20;
-static constexpr uint8_t SPEED_EXPANSION_DURATION_COUNT = sizeof(speedDurations) / sizeof(speedDurations[0]);
-static constexpr uint8_t SPEED_CYCLES_PER_DURATION = 5;
-static constexpr uint8_t SPEED_MAX_RECORDS = SPEED_EXPANSION_DURATION_COUNT * SPEED_CYCLES_PER_DURATION;
+static constexpr uint8_t SPEED_MAX_RECORDS = 24;
+static constexpr uint8_t SPEED_TEST_COUNT = 3;
 static constexpr float SPEED_VENTING_NOISE_PRESSURE_BAR = 0.050f;
-struct SpeedRecord { float p1, p2, pl, r, openSeconds; bool valid; };
-static SpeedRecord speedRecords[2][SPEED_MAX_RECORDS];
-static uint8_t speedRecordCount[2] = {0, 0};
-static uint8_t speedStage = 0; // 0: open, 1: close, 2: settle/read
+// Adaptive wait: the fermenter pressure moved less than this in the last 30 s.
+static constexpr float SPEED_STABLE_DELTA_BAR = 0.0003f;
+static constexpr unsigned long SPEED_STABLE_WINDOW_MS = 30000UL;
+static constexpr unsigned long SPEED_AVERAGE_MS = 10000UL; // P1/P2 = mean of the last 10 s
+static constexpr unsigned long SPEED_CLOSE_READING_MS = 500UL; // P_fechamento
+static unsigned long speedWaitMinMs() { return debugging ? 5000UL : 45000UL; }
+static unsigned long speedWaitMaxMs() { return debugging ? 10000UL : 180000UL; }
+
+struct SpeedRecord {
+  uint32_t epoch;
+  float requestedSeconds, openSeconds;
+  float p1, pClose, p15, p30, p60, p2, pl, r;
+  float waitSeconds;
+  float tempFermP1, tempAmbP1, tempFermP2, tempAmbP2;
+  bool valid;
+};
+static SpeedRecord speedRecords[SPEED_TEST_COUNT][SPEED_MAX_RECORDS];
+static uint8_t speedRecordCount[SPEED_TEST_COUNT] = {0, 0, 0};
+static uint8_t speedStage = 0; // 0: stable P1 (first record), 1: valve open, 2: settling
 static unsigned long speedStageMillis = 0;
 static float speedVolumeFactor = 0.0f;
-static unsigned long speedSettlingIntervalMs() {
-  return debugging ? 10000UL : 180000UL;
-}
 static const char *speedStatus = "Idle";
+static SpeedCalibrationResults speedResults = {};
 
-static uint8_t speedDurationCount(bool venting) {
-  return venting ? SPEED_VENTING_DURATION_COUNT : SPEED_EXPANSION_DURATION_COUNT;
+// 1-Hz fermenter pressure of the current wait (ms since the wait started).
+static constexpr uint16_t SPEED_HISTORY = 200;
+static float speedHistory[SPEED_HISTORY];
+static uint32_t speedHistoryMillis[SPEED_HISTORY];
+static uint16_t speedHistoryCount = 0;
+static unsigned long speedLastAcquisition = 0;
+
+static double expansionTime(float pressure);
+
+static uint8_t speedRecordTarget(uint8_t test) {
+  switch (test) {
+    case SPEED_TEST_EXPANSION: return SPEED_EXPANSION_DURATION_COUNT * SPEED_EXPANSION_CYCLES;
+    case SPEED_TEST_K_FLOOR: return 2 * SPEED_K_FLOOR_PAIRS;
+    default: return SPEED_VENTING_RELEASES;
+  }
 }
 
-static uint8_t speedRecordTarget(bool venting) {
-  return venting ? SPEED_VENTING_CYCLES : speedDurationCount(false) * SPEED_CYCLES_PER_DURATION;
-}
-
-static uint8_t speedRequestedSeconds(uint8_t recordIndex, bool venting) {
-  return venting ? SPEED_VENTING_OPEN_SECONDS : speedDurations[recordIndex % speedDurationCount(false)];
-}
-
-static unsigned long speedOpenDurationMs(uint8_t recordIndex, bool venting) {
-  return (unsigned long)speedRequestedSeconds(recordIndex, venting) * 1000UL;
+// k & floor: even records use the fermentation opening time at this pressure.
+static float speedRequestedSeconds(uint8_t test, uint8_t index, float pressure) {
+  if (test == SPEED_TEST_VENTING) return SPEED_VENTING_OPEN_SECONDS;
+  if (test == SPEED_TEST_K_FLOOR) {
+    if (index % 2) return SPEED_LONG_OPEN_SECONDS;
+    const double seconds = expansionTime(pressure);
+    return isfinite(seconds) ? (float)fmin(60.0, fmax(0.5, seconds)) : 7.0f;
+  }
+  return speedExpansionDurations[index % SPEED_EXPANSION_DURATION_COUNT];
 }
 static float volumeStartPressure = 0.0f;
 static float volumeStartTemperatureK = 0.0f;
@@ -546,7 +579,11 @@ static float volumeRoutineReliefVolume() {
 // Pressure ratio after/before a relief extended to full equalization.
 static float volumeRoutineEquilibriumFactor(float factor) {
   if (!volumeDeterminationFast || !isfinite(factor)) return factor;
-  const float residual = FMTData.targetResidualAfterReliefPercent / 100.0f;
+  // The opening time leaves r of the CO2 flow; air flows 1/flowFactorCO2Air
+  // faster, so in the same time it leaves r^(1/factor).
+  float residual = FMTData.targetResidualAfterReliefPercent / 100.0f;
+  if (!volumeDeterminationCO2 && isValidFlowFactor(FMTData.flowFactorCO2Air))
+    residual = powf(residual, 1.0f / FMTData.flowFactorCO2Air);
   return 1.0f - (1.0f - factor) / (1.0f - residual);
 }
 
@@ -3714,13 +3751,16 @@ void handlePressureDumpCSV(AsyncWebServerRequest *request) {
 
 
 // Valve writes happen only in the main loop, just like the relief state machine.
-bool startSpeedCalibration(bool venting, char *reason, size_t reasonSize) {
+bool startSpeedCalibration(uint8_t test, bool co2, char *reason, size_t reasonSize) {
   const char *blocked = nullptr;
-  if (SetPointData.mode != MODE_OFF) blocked = "Mode must be OFF";
+  const float minimumPressure = test == SPEED_TEST_K_FLOOR ? 0.3f : 1.9f;
+  if (test >= SPEED_TEST_COUNT) blocked = "Invalid test";
+  else if (SetPointData.mode != MODE_OFF) blocked = "Mode must be OFF";
   else if (speedCalibrationActive || volumeDeterminationActive || inTheMiddleOfRelief() || taskWindowType != 0)
     blocked = "Process in progress";
-  else if (!isfinite(ControlData.pressure) || ControlData.pressure < 1.9f)
-    blocked = "Insufficient pressure (min 1.9 bar)";
+  else if (!isfinite(ControlData.pressure) || ControlData.pressure < minimumPressure)
+    blocked = test == SPEED_TEST_K_FLOOR ? "Insufficient pressure (min 0.3 bar)"
+                                         : "Insufficient pressure (min 1.9 bar)";
   else if (!isfinite(FMTData.FMTVolume) || FMTData.FMTVolume <= 0.0f ||
            !isfinite(FMTData.FMTReliefVolume) || FMTData.FMTReliefVolume <= 0.0f)
     blocked = "Invalid fermenter or expansion volume";
@@ -3728,19 +3768,33 @@ bool startSpeedCalibration(bool venting, char *reason, size_t reasonSize) {
     snprintf(reason, reasonSize, "%s", blocked);
     return false;
   }
-  speedCalibrationVenting = venting;
-  speedVolumeFactor = venting ? 0.0f : FMTData.FMTVolume / (FMTData.FMTVolume + FMTData.FMTReliefVolume);
-  speedRecordCount[venting ? 1 : 0] = 0;
+  speedTest = test;
+  speedGasCO2 = co2;
+  speedVolumeFactor = test == SPEED_TEST_VENTING ? 0.0f
+      : FMTData.FMTVolume / (FMTData.FMTVolume + FMTData.FMTReliefVolume);
+  speedRecordCount[test] = 0;
+  if (test == SPEED_TEST_EXPANSION) speedResults.expansionAvailable = false;
+  else if (test == SPEED_TEST_K_FLOOR) speedResults.kFloorAvailable = false;
+  else speedResults.ventingAvailable = false;
   speedStage = 0;
+  speedStageMillis = millis();
+  speedHistoryCount = 0;
+  speedLastAcquisition = 0;
   speedStatus = "Running";
   speedCalibrationActive = true;
   return true;
 }
 
 String getSpeedCalibrationStatus() {
-  return String(speedStatus) + " - expansion: " + String(speedRecordCount[0]) +
-         "/" + String(speedRecordTarget(false)) + "; venting: " + String(speedRecordCount[1]) +
-         "/" + String(speedRecordTarget(true));
+  return String(speedStatus) + " - expansion: " + String(speedRecordCount[SPEED_TEST_EXPANSION]) +
+         "/" + String(speedRecordTarget(SPEED_TEST_EXPANSION)) + "; k &amp; floor: " +
+         String(speedRecordCount[SPEED_TEST_K_FLOOR]) + "/" + String(speedRecordTarget(SPEED_TEST_K_FLOOR)) +
+         "; venting: " + String(speedRecordCount[SPEED_TEST_VENTING]) +
+         "/" + String(speedRecordTarget(SPEED_TEST_VENTING));
+}
+
+SpeedCalibrationResults getSpeedCalibrationResults() {
+  return speedResults;
 }
 
 static void closeSpeedValve() {
@@ -3755,33 +3809,319 @@ bool isSpeedCalibrationActive() {
   return speedCalibrationActive;
 }
 
+static const char *speedTestName(uint8_t test) {
+  return test == SPEED_TEST_VENTING ? "Venting" : test == SPEED_TEST_K_FLOOR ? "k & floor" : "Expansion";
+}
+
 static void showSpeedCalibrationProgress(bool force = false) {
   static unsigned long lastUpdate = 0;
   const unsigned long now = millis();
   if (!force && now - lastUpdate < 1000UL) return;
   lastUpdate = now;
-  const uint8_t count = speedRecordCount[speedCalibrationVenting ? 1 : 0];
-  const uint8_t target = speedRecordTarget(speedCalibrationVenting);
+  const uint8_t count = speedRecordCount[speedTest];
+  const uint8_t target = speedRecordTarget(speedTest);
   char line1[48], line2[64], line3[64];
-  snprintf(line1, sizeof(line1), "%s speed: %s",
-           speedCalibrationVenting ? "Venting" : "Expansion",
+  snprintf(line1, sizeof(line1), "%s: %s", speedTestName(speedTest),
            speedCalibrationActive ? "RUN" : (count >= target ||
-             (speedCalibrationVenting && count > 0 && speedRecords[1][count - 1].p2 < 0.4f)) ? "END" : "ABORT");
+             (speedTest == SPEED_TEST_VENTING && count > 0 &&
+              speedRecords[SPEED_TEST_VENTING][count - 1].p2 < 0.4f)) ? "END" : "ABORT");
   if (speedCalibrationActive) {
-    snprintf(line2, sizeof(line2), "Ciclo %u/%u | %us | %u/%u",
-             speedCalibrationVenting ? count + 1 : count / speedDurationCount(false) + 1,
-             speedCalibrationVenting ? SPEED_VENTING_CYCLES : SPEED_CYCLES_PER_DURATION,
-             speedRequestedSeconds(count, speedCalibrationVenting), count, target);
-    const unsigned long duration = speedStage == 1 ? speedOpenDurationMs(count, speedCalibrationVenting) : speedSettlingIntervalMs();
-    const unsigned long elapsed = now - speedStageMillis;
-    const unsigned long remaining = elapsed >= duration ? 0 : (duration - elapsed + 999UL) / 1000UL;
+    const SpeedRecord &record = speedRecords[speedTest][count < SPEED_MAX_RECORDS ? count : SPEED_MAX_RECORDS - 1];
+    snprintf(line2, sizeof(line2), "Medicao %u/%u | %.1fs", count + 1, target,
+             speedStage == 1 ? record.requestedSeconds : 0.0f);
+    const unsigned long elapsed = (now - speedStageMillis) / 1000UL;
     snprintf(line3, sizeof(line3), "%s %lus | P: %.3f bar",
-             speedStage == 1 ? "Aberta:" : "Espera:", remaining, ControlData.pressure);
+             speedStage == 1 ? "Aberta:" : "Espera:", elapsed, ControlData.pressure);
   } else {
     snprintf(line2, sizeof(line2), "Medicoes: %u/%u", count, target);
-    snprintf(line3, sizeof(line3), "%s", count == target ? "CSV na pagina Calibration" : speedStatus);
+    snprintf(line3, sizeof(line3), "%s", count == target ? "Resultado na pagina Calibration" : speedStatus);
   }
   showVolumeStatus(line1, line2, line3);
+}
+
+static void speedResetWait(unsigned long now) {
+  speedStageMillis = now;
+  speedHistoryCount = 0;
+  speedLastAcquisition = 0;
+}
+
+// One sample per second of the fermenter pressure (only fresh acquisitions;
+// the first one at least SPEED_CLOSE_READING_MS after the wait started).
+static void speedSampleWait(unsigned long now) {
+  if (speedHistoryCount >= SPEED_HISTORY || !isfinite(ControlData.pressure)) return;
+  const unsigned long elapsed = now - speedStageMillis;
+  if (elapsed < SPEED_CLOSE_READING_MS) return;
+  if (!debugging && (pressureAcquiredMillis == speedLastAcquisition ||
+                     (int32_t)(pressureAcquiredMillis - speedStageMillis) < 0)) return;
+  if (speedHistoryCount > 0 && elapsed - speedHistoryMillis[speedHistoryCount - 1] < 1000UL) return;
+  speedLastAcquisition = pressureAcquiredMillis;
+  speedHistory[speedHistoryCount] = ControlData.pressure;
+  speedHistoryMillis[speedHistoryCount] = elapsed;
+  ++speedHistoryCount;
+}
+
+static float speedPressureAt(uint32_t elapsedMs) {
+  for (uint16_t i = 0; i < speedHistoryCount; ++i)
+    if (speedHistoryMillis[i] >= elapsedMs) return speedHistory[i];
+  return NAN;
+}
+
+static float speedAverageLast(uint32_t windowMs) {
+  if (speedHistoryCount == 0) return NAN;
+  const uint32_t last = speedHistoryMillis[speedHistoryCount - 1];
+  double sum = 0.0;
+  uint16_t n = 0;
+  for (uint16_t i = 0; i < speedHistoryCount; ++i) {
+    if (last - speedHistoryMillis[i] <= windowMs) { sum += speedHistory[i]; ++n; }
+  }
+  return n ? (float)(sum / n) : NAN;
+}
+
+static bool speedWaitDone() {
+  if (speedHistoryCount == 0) return false;
+  const uint32_t last = speedHistoryMillis[speedHistoryCount - 1];
+  if (last >= speedWaitMaxMs()) return true;
+  if (last < speedWaitMinMs() || last < SPEED_STABLE_WINDOW_MS) return false;
+  float earlier = NAN;
+  for (uint16_t i = 0; i < speedHistoryCount; ++i) {
+    if (last - speedHistoryMillis[i] >= SPEED_STABLE_WINDOW_MS) earlier = speedHistory[i];
+    else break;
+  }
+  return isfinite(earlier) && fabsf(speedHistory[speedHistoryCount - 1] - earlier) < SPEED_STABLE_DELTA_BAR;
+}
+
+static float speedAmbient() {
+  return ENV_TEMP_VALID(environmentTemp) ? environmentTemp : NAN;
+}
+
+// Gas-flow factor: CO2 rate / air rate (1 when the test gas is CO2).
+static float speedFlowFactor() {
+  return speedGasCO2 ? 1.0f : FMTData.flowFactorCO2Air;
+}
+
+static float medianOf(float *values, uint8_t n) {
+  if (n == 0) return NAN;
+  std::sort(values, values + n);
+  return (n % 2) ? values[n / 2] : 0.5f * (values[n / 2 - 1] + values[n / 2]);
+}
+
+// Least squares y = c0 + c1*x; false with fewer than 3 points or no x spread.
+static bool speedLinearFit(const float *x, const float *y, uint8_t n, float &c0, float &c1) {
+  if (n < 3) return false;
+  double sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (uint8_t i = 0; i < n; ++i) { sx += x[i]; sy += y[i]; sxx += x[i] * x[i]; sxy += x[i] * y[i]; }
+  const double den = n * sxx - sx * sx;
+  if (!(fabs(den) > 1e-9)) return false;
+  c1 = (float)((n * sxy - sx * sy) / den);
+  c0 = (float)((sy - c1 * sx) / n);
+  return isfinite(c0) && isfinite(c1);
+}
+
+// Expansion: R = exp(-(a - b*P)*t) + H*exp(-t/tau) + floor/P (docs/calibration-speed-evaluation.md),
+// fitted in stages: floor from the long openings, then heating (5-15 s) and flow
+// (1-3 s) alternately, each with the other subtracted, for SPEED_FIT_PASSES
+// passes (on the 17/09 data it converges in 3-5 and lands within ~1% of k of a
+// full 5-parameter least squares).
+static void computeExpansionResults() {
+  SpeedCalibrationResults &out = speedResults;
+  const uint8_t n = speedRecordCount[SPEED_TEST_EXPANSION];
+  const SpeedRecord *rec = speedRecords[SPEED_TEST_EXPANSION];
+  out.expansionAvailable = false;
+  out.expansionGasCO2 = speedGasCO2;
+  float values[SPEED_MAX_RECORDS], values2[SPEED_MAX_RECORDS], xs[SPEED_MAX_RECORDS], ys[SPEED_MAX_RECORDS];
+  uint8_t m = 0;
+  for (uint8_t i = 0; i < n; ++i)
+    if (rec[i].valid && rec[i].requestedSeconds >= 30) { values[m] = rec[i].r * rec[i].p1; values2[m] = rec[i].r; ++m; }
+  out.floorRP = medianOf(values, m);
+  out.floorR = medianOf(values2, m);
+  if (!isfinite(out.floorRP)) return;
+  m = 0;
+  for (uint8_t i = 0; i < n; ++i) {
+    if (!rec[i].valid || rec[i].requestedSeconds < 5 || rec[i].requestedSeconds > 15) continue;
+    const float y = rec[i].r - out.floorRP / rec[i].p1;
+    if (y > 0.002f) { xs[m] = rec[i].openSeconds; ys[m] = logf(y); ++m; }
+  }
+  float c0 = NAN, c1 = NAN;
+  out.flowAvailable = false;
+  out.flowA = out.flowB = NAN;
+  static constexpr uint8_t SPEED_FIT_PASSES = 5;
+  for (uint8_t pass = 0; pass < SPEED_FIT_PASSES; ++pass) {
+    if (pass > 0) {
+      m = 0;
+      for (uint8_t i = 0; i < n; ++i) {
+        if (!rec[i].valid || rec[i].requestedSeconds < 5 || rec[i].requestedSeconds > 15) continue;
+        const float flow = out.flowAvailable ? expf(-(out.flowA - out.flowB * rec[i].p1) * rec[i].openSeconds) : 0.0f;
+        const float y = rec[i].r - out.floorRP / rec[i].p1 - flow;
+        if (y > 0.002f) { xs[m] = rec[i].openSeconds; ys[m] = logf(y); ++m; }
+      }
+    }
+    if (!speedLinearFit(xs, ys, m, c0, c1) || !(c1 < 0.0f)) { out.heatTau = NAN; out.heatH = NAN; return; }
+    out.heatH = expf(c0);
+    out.heatTau = -1.0f / c1;
+    m = 0;
+    for (uint8_t i = 0; i < n; ++i) {
+      if (!rec[i].valid || rec[i].requestedSeconds > 3) continue;
+      const float z = rec[i].r - out.heatH * expf(-rec[i].openSeconds / out.heatTau) - out.floorRP / rec[i].p1;
+      if (z > 0.001f && z < 1.0f) { xs[m] = rec[i].p1; ys[m] = -logf(z) / rec[i].openSeconds; ++m; }
+    }
+    out.flowAvailable = speedLinearFit(xs, ys, m, c0, c1);
+    out.flowA = out.flowAvailable ? c0 : NAN;
+    out.flowB = out.flowAvailable ? -c1 : NAN;
+  }
+  const float factor = speedFlowFactor();
+  out.flowACO2 = out.flowA * factor;
+  out.flowBCO2 = out.flowB * factor;
+  out.flowAvailable = out.flowAvailable && GasFlow::validExpansionParameters(out.flowACO2, out.flowBCO2, FMTData.maximumPressure);
+  // Quality of the whole model and heating at the fermentation opening times.
+  double sse = 0.0;
+  uint8_t used = 0;
+  for (uint8_t i = 0; i < n; ++i) {
+    if (!rec[i].valid) continue;
+    const float t = rec[i].openSeconds, p = rec[i].p1;
+    const float flow = out.flowAvailable ? expf(-(out.flowA - out.flowB * p) * t) : 0.0f;
+    const float predicted = flow + out.heatH * expf(-t / out.heatTau) + out.floorRP / p;
+    sse += (predicted - rec[i].r) * (predicted - rec[i].r);
+    ++used;
+  }
+  out.rmse = used ? (float)sqrt(sse / used) : NAN;
+  out.points = used;
+  const float residual = FMTData.targetResidualAfterReliefPercent / 100.0f;
+  const float pressures[3] = {0.8f, 1.5f, 1.9f};
+  for (uint8_t i = 0; i < 3; ++i) {
+    // Fermentation (CO2) opening time with the new coefficients when the flow fit is valid.
+    const float t = out.flowAvailable ? -logf(residual) / (out.flowACO2 - out.flowBCO2 * pressures[i])
+                                      : (float)expansionTime(pressures[i]);
+    out.openSeconds[i] = t;
+    out.kHeat[i] = 1.0f / (1.0f - out.heatH * expf(-t / out.heatTau));
+  }
+  out.kAir = out.kHeat[1];
+  out.kCO2Estimated = 1.0f + 1.3f * (out.kAir - 1.0f);
+  // Headspace exponent of the empty fermenter (diagnostics): adiabatic drop at
+  // close against the isothermal one after settling.
+  m = 0;
+  for (uint8_t i = 0; i < n; ++i) {
+    if (!rec[i].valid || rec[i].requestedSeconds < 3 || rec[i].requestedSeconds > 10 || !isfinite(rec[i].pClose)) continue;
+    const float closeRatio = (rec[i].pClose + Patm) / (rec[i].p1 + Patm);
+    const float settledRatio = (rec[i].p2 + Patm) / (rec[i].p1 + Patm);
+    if (closeRatio < 1.0f && settledRatio < 1.0f) values[m++] = logf(closeRatio) / logf(settledRatio);
+  }
+  out.headspaceExponent = medianOf(values, m);
+  out.expansionAvailable = isfinite(out.kAir);
+}
+
+// k & floor: floor from the long openings; heating at the fermentation time =
+// R - floor/P - flow residual (current coefficients, converted to the test gas).
+static void computeKFloorResults() {
+  SpeedCalibrationResults &out = speedResults;
+  const uint8_t n = speedRecordCount[SPEED_TEST_K_FLOOR];
+  const SpeedRecord *rec = speedRecords[SPEED_TEST_K_FLOOR];
+  out.kFloorGasCO2 = speedGasCO2;
+  float floorsRP[SPEED_MAX_RECORDS], floorsR[SPEED_MAX_RECORDS], ks[SPEED_MAX_RECORDS], times[SPEED_MAX_RECORDS];
+  uint8_t nf = 0, nk = 0;
+  double pressureSum = 0.0;
+  for (uint8_t i = 0; i < n; ++i) {
+    if (!rec[i].valid) continue;
+    pressureSum += rec[i].p1;
+    if (rec[i].requestedSeconds >= 30) { floorsRP[nf] = rec[i].r * rec[i].p1; floorsR[nf] = rec[i].r; ++nf; }
+  }
+  out.kFloorPressure = (n > 0) ? (float)(pressureSum / n) : NAN;
+  out.kFloorRP = medianOf(floorsRP, nf);
+  out.kFloorR = medianOf(floorsR, nf);
+  for (uint8_t i = 0; i < n && isfinite(out.kFloorRP); ++i) {
+    if (!rec[i].valid || rec[i].requestedSeconds >= 30) continue;
+    const float t = rec[i].openSeconds, p = rec[i].p1;
+    const float rate = (FMTData.expansionTimeCoefficientA - FMTData.expansionTimeCoefficientB * p) / speedFlowFactor();
+    const float heat = rec[i].r - out.kFloorRP / p - expf(-rate * t);
+    ks[nk] = 1.0f / (1.0f - heat);
+    times[nk] = t;
+    ++nk;
+  }
+  out.kFloorK = medianOf(ks, nk);
+  out.kFloorSeconds = medianOf(times, nk);
+  out.kFloorAvailable = isfinite(out.kFloorK) && isfinite(out.kFloorRP);
+}
+
+// Venting: parabola F(P) = c*P^2 + d*P + e over the valid releases; the CO2
+// curve fits F^factor (CO2 leaves ~21% slower in moles than air).
+static bool speedParabolaFit(const float *x, const float *y, uint8_t n, float coef[3]) {
+  if (n < 3) return false;
+  double s[5] = {0, 0, 0, 0, 0}, t[3] = {0, 0, 0};
+  for (uint8_t i = 0; i < n; ++i) {
+    double p = 1.0;
+    for (uint8_t k = 0; k < 5; ++k) { s[k] += p; if (k < 3) t[k] += p * y[i]; p *= x[i]; }
+  }
+  // Normal equations for [e, d, c] (powers 0, 1, 2).
+  double m[3][4] = {{s[0], s[1], s[2], t[0]}, {s[1], s[2], s[3], t[1]}, {s[2], s[3], s[4], t[2]}};
+  for (uint8_t col = 0; col < 3; ++col) {
+    uint8_t pivot = col;
+    for (uint8_t r = col + 1; r < 3; ++r) if (fabs(m[r][col]) > fabs(m[pivot][col])) pivot = r;
+    if (fabs(m[pivot][col]) < 1e-12) return false;
+    for (uint8_t k = 0; k < 4; ++k) { const double tmp = m[col][k]; m[col][k] = m[pivot][k]; m[pivot][k] = tmp; }
+    for (uint8_t r = 0; r < 3; ++r) {
+      if (r == col) continue;
+      const double f = m[r][col] / m[col][col];
+      for (uint8_t k = col; k < 4; ++k) m[r][k] -= f * m[col][k];
+    }
+  }
+  coef[2] = (float)(m[0][3] / m[0][0]); // e
+  coef[1] = (float)(m[1][3] / m[1][1]); // d
+  coef[0] = (float)(m[2][3] / m[2][2]); // c
+  return isfinite(coef[0]) && isfinite(coef[1]) && isfinite(coef[2]);
+}
+
+static void computeVentingResults() {
+  SpeedCalibrationResults &out = speedResults;
+  const uint8_t n = speedRecordCount[SPEED_TEST_VENTING];
+  const SpeedRecord *rec = speedRecords[SPEED_TEST_VENTING];
+  out.ventingGasCO2 = speedGasCO2;
+  float x[SPEED_MAX_RECORDS], y[SPEED_MAX_RECORDS], yCO2[SPEED_MAX_RECORDS];
+  uint8_t m = 0;
+  for (uint8_t i = 0; i < n; ++i) {
+    if (!rec[i].valid) continue;
+    x[m] = rec[i].p1;
+    y[m] = rec[i].r;
+    yCO2[m] = powf(rec[i].r, speedFlowFactor());
+    ++m;
+  }
+  out.ventingAvailable = speedParabolaFit(x, y, m, out.ventingAir) && speedParabolaFit(x, yCO2, m, out.ventingCO2);
+  double sse = 0.0;
+  for (uint8_t i = 0; i < m && out.ventingAvailable; ++i) {
+    const float predicted = (out.ventingAir[0] * x[i] + out.ventingAir[1]) * x[i] + out.ventingAir[2];
+    sse += (predicted - y[i]) * (predicted - y[i]);
+  }
+  out.ventingRmse = m ? (float)sqrt(sse / m) : NAN;
+  out.ventingPoints = m;
+  out.ventingAvailable = out.ventingAvailable &&
+      GasFlow::validVentingResidualCurve(out.ventingCO2[0], out.ventingCO2[1], out.ventingCO2[2], FMTData.maximumPressure);
+}
+
+static void speedOpenValve(SpeedRecord &record, uint8_t index, float p1, unsigned long now) {
+  record = {};
+  record.epoch = NTPEpoch();
+  record.p1 = p1;
+  record.pl = p1 * speedVolumeFactor;
+  record.requestedSeconds = speedRequestedSeconds(speedTest, index, p1);
+  record.tempFermP1 = ControlData.temperature;
+  record.tempAmbP1 = speedAmbient();
+  record.pClose = record.p15 = record.p30 = record.p60 = record.p2 = record.r = NAN;
+  digitalWrite(PINTRANSFERVALVE, HIGH);
+  ControlData.transferValve = true;
+  markSolenoidToggle();
+  speedStageMillis = now;
+  speedStage = 1;
+}
+
+static void speedFinish() {
+  if (speedTest == SPEED_TEST_EXPANSION) computeExpansionResults();
+  else if (speedTest == SPEED_TEST_K_FLOOR) computeKFloorResults();
+  else computeVentingResults();
+  static char result[80];
+  uint8_t valid = 0;
+  for (uint8_t i = 0; i < speedRecordCount[speedTest]; ++i) if (speedRecords[speedTest][i].valid) ++valid;
+  snprintf(result, sizeof(result), "Completed: %u/%u valid", valid, speedRecordCount[speedTest]);
+  speedStatus = result;
+  speedCalibrationActive = false;
+  showSpeedCalibrationProgress(true);
 }
 
 static void processSpeedCalibration() {
@@ -3794,137 +4134,139 @@ static void processSpeedCalibration() {
     return;
   }
   const unsigned long now = millis();
-  uint8_t &count = speedRecordCount[speedCalibrationVenting ? 1 : 0];
-  SpeedRecord &record = speedRecords[speedCalibrationVenting ? 1 : 0][count];
+  uint8_t &count = speedRecordCount[speedTest];
+  SpeedRecord &record = speedRecords[speedTest][count];
   if (debugging && speedStage == 1) {
     // Seconds of valve opening, capped at the requested duration even if a
     // loop iteration runs late. Keep this pressure throughout settling.
-    const float seconds = fminf((now - speedStageMillis) / 1000.0f,
-                                speedOpenDurationMs(count, speedCalibrationVenting) / 1000.0f);
-
-    float f;
-    
-    if (!speedCalibrationVenting)
-      f = 1-powf(100,-seconds/10);
-    else
-      f = 1-powf(100,-seconds/100);
-
-    ControlData.pressure = record.p1 * (1.-f) + (record.pl) * f;
+    const float seconds = fminf((now - speedStageMillis) / 1000.0f, record.requestedSeconds);
+    const float f = speedTest != SPEED_TEST_VENTING ? 1 - powf(100, -seconds / 10) : 1 - powf(100, -seconds / 100);
+    ControlData.pressure = record.p1 * (1. - f) + (record.pl) * f;
   }
   if (speedStage == 0) {
-    record.p1 = ControlData.pressure;
-    record.pl = record.p1 * speedVolumeFactor;
-    if (!speedCalibrationVenting && record.p1 - record.pl <= 0.0f) {
-      speedStatus = "Aborted: pressure too low to calculate R";
-      speedCalibrationActive = false;
+    // First record: wait for a stable fermenter pressure, then P1 = mean.
+    speedSampleWait(now);
+    if (speedWaitDone()) {
+      const float p1 = speedAverageLast(SPEED_AVERAGE_MS);
+      if (speedTest != SPEED_TEST_VENTING && !(p1 - p1 * speedVolumeFactor > 0.0f)) {
+        speedStatus = "Aborted: pressure too low to calculate R";
+        speedCalibrationActive = false;
+        showSpeedCalibrationProgress(true);
+        return;
+      }
+      speedOpenValve(record, count, p1, now);
       showSpeedCalibrationProgress(true);
-      return;
     }
-    digitalWrite(PINTRANSFERVALVE, HIGH);
-    ControlData.transferValve = true;
-    markSolenoidToggle();
-    speedStageMillis = now;
-    speedStage = 1;
-    showSpeedCalibrationProgress(true);
-  } else if (speedStage == 1 && now - speedStageMillis >= speedOpenDurationMs(count, speedCalibrationVenting)) {
+  } else if (speedStage == 1 && now - speedStageMillis >= (unsigned long)(record.requestedSeconds * 1000.0f)) {
     closeSpeedValve();
     record.openSeconds = (millis() - speedStageMillis) / 1000.0f;
-    speedStageMillis = now;
+    speedResetWait(now);
     speedStage = 2;
     showSpeedCalibrationProgress(true);
-  } else if (speedStage == 2 && now - speedStageMillis >= speedSettlingIntervalMs()) {
-    record.p2 = ControlData.pressure;
-    if (speedCalibrationVenting) {
-      record.r = record.p2 / record.p1;
-      record.valid = isfinite(record.r) && record.p1 > SPEED_VENTING_NOISE_PRESSURE_BAR &&
-                     record.p2 > SPEED_VENTING_NOISE_PRESSURE_BAR && record.r > 0.0f && record.r < 1.0f;
-    } else {
-      record.r = (record.p2 - record.pl) / (record.p1 - record.pl);
-      record.valid = isfinite(record.r);
-    }
-    ++count;
-    speedStage = 0;
-    const bool ventingReachedStopPressure = speedCalibrationVenting && record.p2 < 0.4f;
-    if (count == speedRecordTarget(speedCalibrationVenting) || ventingReachedStopPressure) {
-      if (speedCalibrationVenting) {
-        uint8_t validSampleCount = 0;
-        for (uint8_t i = 0; i < count; ++i) {
-          if (speedRecords[1][i].valid) ++validSampleCount;
-        }
-        static char ventingResult[80];
-        snprintf(ventingResult, sizeof(ventingResult), "Completed: %u/%u valid%s",
-                 validSampleCount, count, ventingReachedStopPressure ? "; below 0.4 bar" : "");
-        speedStatus = ventingResult;
-      } else speedStatus = "Completed";
-      speedCalibrationActive = false;
+  } else if (speedStage == 2) {
+    speedSampleWait(now);
+    if (speedWaitDone()) {
+      record.pClose = speedHistory[0];
+      record.p15 = speedPressureAt(15000UL);
+      record.p30 = speedPressureAt(30000UL);
+      record.p60 = speedPressureAt(60000UL);
+      record.p2 = speedAverageLast(SPEED_AVERAGE_MS);
+      record.waitSeconds = speedHistoryMillis[speedHistoryCount - 1] / 1000.0f;
+      record.tempFermP2 = ControlData.temperature;
+      record.tempAmbP2 = speedAmbient();
+      if (speedTest == SPEED_TEST_VENTING) {
+        record.r = record.p2 / record.p1;
+        record.valid = isfinite(record.r) && record.p1 > SPEED_VENTING_NOISE_PRESSURE_BAR &&
+                       record.p2 > SPEED_VENTING_NOISE_PRESSURE_BAR && record.r > 0.0f && record.r < 1.0f;
+      } else {
+        record.r = (record.p2 - record.pl) / (record.p1 - record.pl);
+        record.valid = isfinite(record.r);
+      }
+      ++count;
+      const bool ventingReachedStopPressure = speedTest == SPEED_TEST_VENTING && record.p2 < 0.4f;
+      if (count >= speedRecordTarget(speedTest) || ventingReachedStopPressure) {
+        speedFinish();
+        return;
+      }
+      // The settled pressure is the next P1: same stable state.
+      if (speedTest != SPEED_TEST_VENTING && !(record.p2 - record.p2 * speedVolumeFactor > 0.0f)) {
+        speedStatus = "Aborted: pressure too low to calculate R";
+        speedCalibrationActive = false;
+        showSpeedCalibrationProgress(true);
+        return;
+      }
+      speedOpenValve(speedRecords[speedTest][count], count, record.p2, now);
       showSpeedCalibrationProgress(true);
     }
   }
-  if (speedCalibrationActive && speedStage != 0) showSpeedCalibrationProgress();
+  if (speedCalibrationActive) showSpeedCalibrationProgress();
+}
+
+static void speedFloatCsv(char *out, size_t size, float value, uint8_t decimals) {
+  if (!isfinite(value)) { out[0] = ' '; return; }
+  formatFloatCsv(out, size, value, decimals);
 }
 
 void handleSpeedCalibrationCSV(AsyncWebServerRequest *request) {
-  const bool venting = request->hasParam("type") && request->getParam("type")->value() == "venting";
-  const uint8_t count = speedRecordCount[venting ? 1 : 0];
-  String csv = venting ? "liberacao;tempo_aberto_s;pressureBefore;pressureAfter;residualFactor;valido\n"
-                        : "ciclo;tempo;tempo_aberto_s;P1;P2;PL;R\n";
-  csv.reserve(4096);
+  const String type = request->hasParam("type") ? request->getParam("type")->value() : "expansion";
+  const uint8_t test = type == "venting" ? SPEED_TEST_VENTING : type == "kfloor" ? SPEED_TEST_K_FLOOR
+                                                                                 : SPEED_TEST_EXPANSION;
+  const bool venting = test == SPEED_TEST_VENTING;
+  const uint8_t count = speedRecordCount[test];
+  const bool gasCO2 = test == SPEED_TEST_EXPANSION ? speedResults.expansionGasCO2
+                    : test == SPEED_TEST_K_FLOOR ? speedResults.kFloorGasCO2 : speedResults.ventingGasCO2;
+  String csv = "data_hora;epoch;teste;gas;FMTVolume;Vr;Patm;temp_ferm_P1;temp_amb_P1;temp_ferm_P2;temp_amb_P2;";
+  csv += venting ? "liberacao;tempo_pedido_s;tempo_aberto_s;P1;P_fechamento;P_15s;P_30s;P_60s;P2;espera_s;F;valido\n"
+                 : "medicao;tempo_pedido_s;tempo_aberto_s;P1;P_fechamento;P_15s;P_30s;P_60s;P2;espera_s;PL;R;R_x_P1;k_efetivo\n";
+  csv.reserve(8192);
+  char common[64];
+  snprintf(common, sizeof(common), "%s;%s;", venting ? "ventilacao" : test == SPEED_TEST_K_FLOOR ? "k_piso" : "expansao",
+           gasCO2 ? "CO2" : "ar");
   for (uint8_t i = 0; i < count; ++i) {
-    const SpeedRecord &r = speedRecords[venting ? 1 : 0][i];
-    char line[160];
-    char openTimeBuf[16];
-    char timeBuf[24];
-    char p1Buf[16];
-    char p2Buf[16];
-    char plBuf[16];
-    char rBuf[16];
-    formatFloatCsv(openTimeBuf, sizeof(openTimeBuf), r.openSeconds, 3);
-    if (!venting)
-      snprintf(timeBuf, sizeof(timeBuf), "%u", speedRequestedSeconds(i, false));
-    formatFloatCsv(p1Buf, sizeof(p1Buf), r.p1, 6);
-    formatFloatCsv(p2Buf, sizeof(p2Buf), r.p2, 6);
-    formatFloatCsv(plBuf, sizeof(plBuf), r.pl, 6);
-    formatFloatCsv(rBuf, sizeof(rBuf), r.r, 6);
+    const SpeedRecord &r = speedRecords[test][i];
+    char date[24], b[18][16];
+    formatLocalEpochISO(r.epoch, date, sizeof(date));
+    speedFloatCsv(b[0], 16, FMTData.FMTVolume, 2);
+    speedFloatCsv(b[1], 16, FMTData.FMTReliefVolume, 3);
+    speedFloatCsv(b[2], 16, Patm, 4);
+    speedFloatCsv(b[3], 16, r.tempFermP1, 2);
+    speedFloatCsv(b[4], 16, r.tempAmbP1, 2);
+    speedFloatCsv(b[5], 16, r.tempFermP2, 2);
+    speedFloatCsv(b[6], 16, r.tempAmbP2, 2);
+    speedFloatCsv(b[7], 16, r.requestedSeconds, 2);
+    speedFloatCsv(b[8], 16, r.openSeconds, 3);
+    speedFloatCsv(b[9], 16, r.p1, 6);
+    speedFloatCsv(b[10], 16, r.pClose, 6);
+    speedFloatCsv(b[11], 16, r.p15, 6);
+    speedFloatCsv(b[12], 16, r.p30, 6);
+    speedFloatCsv(b[13], 16, r.p60, 6);
+    speedFloatCsv(b[14], 16, r.p2, 6);
+    speedFloatCsv(b[15], 16, r.waitSeconds, 1);
+    char line[360];
+    int len = snprintf(line, sizeof(line), "%s;%lu;%s%s;%s;%s;%s;%s;%s;%s;%u;%s;%s;%s;%s;%s;%s;%s;%s;%s;",
+                       date, (unsigned long)r.epoch, common, b[0], b[1], b[2], b[3], b[4], b[5], b[6],
+                       i + 1, b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]);
+    if (len <= 0 || len >= (int)sizeof(line)) continue;
+    char tail[96];
     if (venting) {
-      snprintf(line, sizeof(line), "%u;%s;%s;%s;%s;%s\n", i + 1, openTimeBuf, p1Buf, p2Buf,
-               rBuf, r.valid ? "sim" : "nao");
+      speedFloatCsv(b[16], 16, r.r, 6);
+      snprintf(tail, sizeof(tail), "%s;%s\n", b[16], r.valid ? "sim" : "nao");
     } else {
-      snprintf(line, sizeof(line), "%u;%s;%s;%s;%s;%s;%s\n",
-               i / speedDurationCount(false) + 1, timeBuf, openTimeBuf,
-               p1Buf, p2Buf, plBuf, rBuf);
+      char pl[16], rr[16], rp[16], k[16];
+      speedFloatCsv(pl, sizeof(pl), r.pl, 6);
+      speedFloatCsv(rr, sizeof(rr), r.r, 6);
+      speedFloatCsv(rp, sizeof(rp), r.r * r.p1, 6);
+      speedFloatCsv(k, sizeof(k), (isfinite(r.r) && r.r < 1.0f) ? 1.0f / (1.0f - r.r) : NAN, 5);
+      snprintf(tail, sizeof(tail), "%s;%s;%s;%s\n", pl, rr, rp, k);
     }
     csv += line;
+    csv += tail;
   }
   AsyncWebServerResponse *response = request->beginResponse(200, "text/csv", csv);
-  response->addHeader("Content-Disposition", venting ? "attachment; filename=venting_speed.csv" :
-                                                      "attachment; filename=expansion_speed.csv");
+  response->addHeader("Content-Disposition", venting ? "attachment; filename=venting_speed.csv"
+                                             : test == SPEED_TEST_K_FLOOR ? "attachment; filename=k_floor.csv"
+                                                                          : "attachment; filename=expansion_speed.csv");
   request->send(response);
-}
-
-void handleExpansionResidualFit(AsyncWebServerRequest *request) {
-  if (speedCalibrationActive) {
-    request->send(409, "application/json", "{\"ok\":false,\"status\":\"expansion test is still running\"}");
-    return;
-  }
-  const uint8_t count = speedRecordCount[0];
-  ExpansionResidualSample samples[SPEED_MAX_RECORDS];
-  for (uint8_t i = 0; i < count; ++i) {
-    samples[i].seconds = speedRecords[0][i].openSeconds;
-    samples[i].residual = speedRecords[0][i].r;
-  }
-  const ExpansionResidualFitResult fit = fitExpansionResidualCurve(samples, count);
-  const bool usable = fit.status == ExpansionResidualFitStatus::Success;
-  String json = "{\"ok\":" + String(usable ? "true" : "false") +
-      ",\"status\":\"" + expansionResidualFitStatusText(fit.status) + "\"" +
-      ",\"used\":" + String((unsigned)fit.usedPoints) +
-      ",\"discarded\":" + String((unsigned)fit.discardedPoints) +
-      ",\"distinctTimes\":" + String((unsigned)fit.distinctTimes);
-  if (isfinite(fit.coefficient)) json += ",\"coefficient\":" + String(fit.coefficient, 9);
-  if (isfinite(fit.exponent)) json += ",\"exponent\":" + String(fit.exponent, 9);
-  if (isfinite(fit.sse)) json += ",\"sse\":" + String(fit.sse, 9);
-  if (isfinite(fit.rmse)) json += ",\"rmse\":" + String(fit.rmse, 9);
-  json += "}";
-  request->send(200, "application/json", json);
 }
 
 bool startVolumeDetermination(bool fast, bool co2, char *reason, size_t reasonSize) {
