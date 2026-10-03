@@ -68,7 +68,7 @@ static void formatEpochDateShort(uint32_t epoch, char *buf, size_t bufSize) {
   snprintf(buf, bufSize, "%02d/%02d", dayOfMonth, month);
 }
 
-static void formatBatchDateShort(const char *batchDate, char *buf, size_t bufSize) {
+void formatBatchDateShort(const char *batchDate, char *buf, size_t bufSize) {
   if (!buf || bufSize == 0) return;
   if (!batchDate || batchDate[0] == '\0') {
     snprintf(buf, bufSize, "n/a");

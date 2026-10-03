@@ -73,6 +73,8 @@ SpeedCalibrationResults getSpeedCalibrationResults();
 String getSpeedCalibrationStatus();
 bool isSpeedCalibrationActive();
 void drawCalibrationStatus();
+// Line 0..2 of the calibration panel; empty while the panel is hidden.
+const char *getCalibrationDisplayLine(uint8_t index);
 void handleSpeedCalibrationCSV(AsyncWebServerRequest *request);
 // fast: the fermentation's expansion time; co2: the empty fermenter was purged
 // with CO2 (k and Tref of CO2 instead of air).

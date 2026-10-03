@@ -6,10 +6,13 @@ void handleUserConfigUpdate(AsyncWebServerRequest *request);
 
 // Web interface handlers
 void handleMainMenu(AsyncWebServerRequest *request);
+void sendWebPageFile(AsyncWebServerRequest *request, const char *path, const char *contentType);
 void handleGraphsPage(AsyncWebServerRequest *request);
 void handleGraphsMeta(AsyncWebServerRequest *request);
 void handleGraphsCSV(AsyncWebServerRequest *request);
 void handleGraphsGenerateDemo(AsyncWebServerRequest *request);
+void handleDashboardPage(AsyncWebServerRequest *request);
+void handleDashboardStatus(AsyncWebServerRequest *request);
 
 void handleFMTDataPage(AsyncWebServerRequest *request);
 void handleFMTDataUpdate(AsyncWebServerRequest *request);

@@ -19,6 +19,7 @@
 #include <memory>
 #include <esp_heap_caps.h>
 #include "GraphHistory.h"
+#include "Povoto_UI.h"
 
 // ========== MAIN MENU ==========
 
@@ -112,6 +113,7 @@ void handleMainMenu(AsyncWebServerRequest *request) {
   html += "<a href='/control' class='menu-button'><span class='icon'>&#128736;</span>Control</a>";
   html += "<a href='/calibration' class='menu-button'><span class='icon'>&#128200;</span>Calibration</a>";
   html += "<a href='/graphs' class='menu-button'><span class='icon'>&#128202;</span>Graphs</a>";
+  html += "<a href='/dashboard' class='menu-button'><span class='icon'>&#128421;&#65039;</span>Dashboard</a>";
   html += "<a href='/fmtdata' class='menu-button'><span class='icon'>&#9881;</span>Settings</a>";
   html += "<a href='/userConfig' class='menu-button'><span class='icon'>&#127899;&#65039;</span>User Configuration</a>";
   if (debugging) {
@@ -128,12 +130,20 @@ void handleMainMenu(AsyncWebServerRequest *request) {
 
 // ========== GRAPH HISTORY ==========
 
+// Page files from the web LittleFS. Browsers revalidate them on every load,
+// so a new filesystem image takes effect without a stale cached script.
+void sendWebPageFile(AsyncWebServerRequest *request, const char *path, const char *contentType) {
+  AsyncWebServerResponse *response = request->beginResponse(LittleFS, path, contentType);
+  response->addHeader("Cache-Control", "no-cache");
+  request->send(response);
+}
+
 void handleGraphsPage(AsyncWebServerRequest *request) {
   if (!LittleFS.exists("/www/graphs.html")) {
     request->send(503, "text/plain", "Graphs page missing from LittleFS; upload data/www.");
     return;
   }
-  request->send(LittleFS, "/www/graphs.html", "text/html; charset=utf-8");
+  sendWebPageFile(request, "/www/graphs.html", "text/html; charset=utf-8");
 }
 
 void handleGraphsMeta(AsyncWebServerRequest *request) {
@@ -260,6 +270,113 @@ void handleGraphsGenerateDemo(AsyncWebServerRequest *request) {
     return;
   }
   request->redirect("/graphs");
+}
+
+// ========== WEB DASHBOARD ==========
+
+void handleDashboardPage(AsyncWebServerRequest *request) {
+  if (!LittleFS.exists("/www/dashboard.html")) {
+    request->send(503, "text/plain", "Dashboard page missing from LittleFS; upload data/www.");
+    return;
+  }
+  sendWebPageFile(request, "/www/dashboard.html", "text/html; charset=utf-8");
+}
+
+static void dashboardJsonText(String &json, const char *value) {
+  json += '"';
+  for (const char *c = value; *c; ++c) {
+    const uint8_t ch = uint8_t(*c);
+    if (ch == '"' || ch == '\\') {
+      json += '\\';
+      json += char(ch);
+    } else if (ch < 0x20) {
+      char escaped[8];
+      snprintf(escaped, sizeof(escaped), "\\u%04x", ch);
+      json += escaped;
+    } else {
+      json += char(ch);
+    }
+  }
+  json += '"';
+}
+
+static void dashboardJsonString(String &json, const char *key, const char *value) {
+  json += '"';
+  json += key;
+  json += "\":";
+  dashboardJsonText(json, value);
+  json += ',';
+}
+
+// Texts are formatted exactly as screenData() draws them on the TFT, so the
+// page shows the same digits; the page only positions them.
+void handleDashboardStatus(AsyncWebServerRequest *request) {
+  char text[96];
+  String json;
+  json.reserve(1024);
+  json += '{';
+
+  snprintf(text, sizeof(text), "%04d", BatchData.batchNumber);
+  dashboardJsonString(json, "batchNumber", text);
+  formatBatchDateShort(BatchData.batchDate, text, sizeof(text));
+  dashboardJsonString(json, "batchDate", text);
+  snprintf(text, sizeof(text), "%d", FMTData.PovotoNum);
+  dashboardJsonString(json, "povotoNum", text);
+  dashboardJsonString(json, "batchName", BatchData.batchName);
+  snprintf(text, sizeof(text), "SG   [ OG=%.3f ]", BatchData.batchOG);
+  dashboardJsonString(json, "ogLabel", text);
+
+  if (ControlData.temperature != NOTaTEMP)
+    snprintf(text, sizeof(text), "%.1f", ControlData.temperature);
+  else
+    snprintf(text, sizeof(text), "ERR");
+  dashboardJsonString(json, "temperature", text);
+  if (SetPointData.setPointTemp != NOTaTEMP)
+    snprintf(text, sizeof(text), "%.1f", SetPointData.setPointTemp);
+  else
+    snprintf(text, sizeof(text), "n/a");
+  dashboardJsonString(json, "tempTarget", text);
+  if (SetPointData.setPointSlowTemp != NOTaTEMP)
+    snprintf(text, sizeof(text), "%.1f", SetPointData.setPointSlowTemp);
+  else
+    snprintf(text, sizeof(text), "n/a");
+  dashboardJsonString(json, "slowTarget", text);
+  snprintf(text, sizeof(text), "%.1f", ControlData.pressure);
+  dashboardJsonString(json, "pressure", text);
+  if (SetPointData.setPointPressure != 0)
+    snprintf(text, sizeof(text), "%.2f", SetPointData.setPointPressure);
+  else
+    snprintf(text, sizeof(text), "n/a");
+  dashboardJsonString(json, "pressureTarget", text);
+
+  char reliefsPerHourCompact[24];
+  getReliefsPerHourCompactText(reliefsPerHourCompact, sizeof(reliefsPerHourCompact));
+  snprintf(text, sizeof(text), "g CO2%s", reliefsPerHourCompact);
+  dashboardJsonString(json, "co2Label", text);
+  snprintf(text, sizeof(text), "%.0f", CO2Mass());
+  dashboardJsonString(json, "co2Mass", text);
+  snprintf(text, sizeof(text), "%.0f", beerVolume);
+  dashboardJsonString(json, "volume", text);
+  snprintf(text, sizeof(text), "%.3f", beerSG);
+  dashboardJsonString(json, "sg", text);
+  snprintf(text, sizeof(text), "%.2f", beerABV);
+  dashboardJsonString(json, "abv", text);
+
+  const int wifiBars = povotoWiFiStatusIndicator(text, sizeof(text));
+  dashboardJsonString(json, "wifiText", text);
+  json += "\"wifiBars\":";
+  json += wifiBars;
+  json += ",\"calibration\":[";
+  for (uint8_t i = 0; i < 3; ++i) {
+    if (i) json += ',';
+    dashboardJsonText(json, getCalibrationDisplayLine(i));
+  }
+  json += "]}";
+
+  AsyncWebServerResponse *response = request->beginResponse(
+      200, "application/json; charset=utf-8", json);
+  response->addHeader("Cache-Control", "no-store");
+  request->send(response);
 }
 
 // ========== DEBUG PARAMS HANDLERS ==========

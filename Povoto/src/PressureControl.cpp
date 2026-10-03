@@ -2435,6 +2435,10 @@ void drawCalibrationStatus() {
   }
 }
 
+const char *getCalibrationDisplayLine(uint8_t index) {
+  return index < 3 ? calibrationDisplayLines[index] : "";
+}
+
 static void formatFloatCsv(char *out, size_t size, float value, uint8_t decimals) {
   snprintf(out, size, "%.*f", decimals, value);
   for (size_t i = 0; out[i] != '\0'; ++i) {

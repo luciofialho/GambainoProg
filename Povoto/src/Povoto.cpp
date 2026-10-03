@@ -281,14 +281,35 @@ void setup() {
     request->send(LittleFS, "/www/uPlot.min.css", "text/css");
   });
   server.on("/graphs/graphs.js", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(LittleFS, "/www/graphs.js", "application/javascript");
+    sendWebPageFile(request, "/www/graphs.js", "application/javascript");
   });
   server.on("/graphs/graphs.css", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(LittleFS, "/www/graphs.css", "text/css");
+    sendWebPageFile(request, "/www/graphs.css", "text/css");
   });
   server.on("/graphs/", HTTP_GET, handleGraphsPage);
   server.on("/graphs", HTTP_GET, [](AsyncWebServerRequest *request) {
     request->redirect("/graphs/");
+  });
+
+  // Register child paths before /dashboard (prefix-matching async server).
+  server.on("/dashboard/status.json", HTTP_GET, handleDashboardStatus);
+  server.on("/dashboard/dashboard.js", HTTP_GET, [](AsyncWebServerRequest *request) {
+    sendWebPageFile(request, "/www/dashboard.js", "application/javascript");
+  });
+  server.on("/dashboard/lcars.ttf", HTTP_GET, [](AsyncWebServerRequest *request) {
+    AsyncWebServerResponse *response = request->beginResponse(LittleFS, "/www/lcars.ttf", "font/ttf");
+    response->addHeader("Cache-Control", "max-age=86400");
+    request->send(response);
+  });
+  // Same background bitmap as the TFT main screen; browsers render BMP natively.
+  server.on("/dashboard/LCars.bmp", HTTP_GET, [](AsyncWebServerRequest *request) {
+    AsyncWebServerResponse *response = request->beginResponse(LittleFS, "/LCars.bmp", "image/bmp");
+    response->addHeader("Cache-Control", "max-age=86400");
+    request->send(response);
+  });
+  server.on("/dashboard/", HTTP_GET, handleDashboardPage);
+  server.on("/dashboard", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->redirect("/dashboard/");
   });
 
   // Sub-routes must be registered BEFORE the parent /tasks route (ESPAsyncWebServer prefix matching)

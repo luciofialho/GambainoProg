@@ -345,6 +345,24 @@ void povotoWiFiDrawStatusIndicator() {
   previousState = wifiState;
 }
 
+int povotoWiFiStatusIndicator(char *text, size_t size) {
+  if (size) text[0] = ' ';
+  if (wifiState == WiFiState::Unconfigured) {
+    snprintf(text, size, "No WiFi configured");
+    return 0;
+  }
+  if (wifiState == WiFiState::Connecting) {
+    snprintf(text, size, "Connecting to %.16s", configuredSsid.c_str());
+    return 0;
+  }
+  if (wifiState == WiFiState::Configuring) {
+    snprintf(text, size, "WiFi setup");
+    return 0;
+  }
+  const int rssi = WiFi.RSSI();
+  return rssi > -55 ? 4 : rssi > -65 ? 3 : rssi > -75 ? 2 : 1;
+}
+
 void handlePovotoWiFiPage(AsyncWebServerRequest *request) {
   String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Configure WiFi</title>";
   if (scannedNetworkCount < 0) html += "<meta http-equiv='refresh' content='2'>";

@@ -13,7 +13,9 @@
   let chart = null;
   let historyData = null;
   let transitionBands = [];
-  let activeGraph = 'evolution';
+  const GRAPHS = ['evolution', 'temperature', 'pressure', 'attenuation'];
+  // /graphs/#temperature opens that tab (used by the /dashboard touch zones).
+  let activeGraph = GRAPHS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'evolution';
   let originalGravity = null;
   let metaLoaded = false;
   let allMin = 0;
@@ -233,8 +235,9 @@
   }
 
   function selectGraph(mode) {
-    if (!historyData || !['evolution', 'temperature', 'pressure', 'attenuation'].includes(mode)) return;
+    if (!historyData || !GRAPHS.includes(mode)) return;
     activeGraph = mode;
+    if (location.protocol !== 'file:') history.replaceState(null, '', `#${mode}`);
     chartTitle.textContent = mode === 'temperature' ? 'Temperature'
       : mode === 'pressure' ? 'Pressure'
         : mode === 'attenuation' ? 'Attenuation' : 'Evolution';
