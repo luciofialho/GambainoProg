@@ -37,10 +37,10 @@ export function ageText(seconds: number): string {
 // page shows `updated` below the screen instead of the WiFi indicator; the
 // cloud is read-only.
 export function dashboardStatus(log: LogRow, batch: BatchRow | null, num: number, nowLocal: number) {
-  // gCO2/L/d with the graph's rule (null outside Fermenting or in a transition).
-  const rate = log.mode === MODE_FERMENTING
-    ? (log.rate === null ? ' ÷(L.d):N/A' : ` ÷(L.d):${log.rate.toFixed(1)}`)
-    : '';
+  // gCO2/L/d with the graph's rule (null outside Fermenting or in a transition),
+  // in the device's format (handleDashboardStatus).
+  const co2Label = log.mode !== MODE_FERMENTING ? 'g CO2'
+    : log.rate === null ? 'gCO2 [N/A/L.d]' : `gCO2 [${log.rate.toFixed(1)}/(L.d)]`;
   return {
     batchNumber: String(log.batch).padStart(4, '0'),
     batchDate: batchDateShort(batch?.date ?? ''),
@@ -52,7 +52,7 @@ export function dashboardStatus(log: LogRow, batch: BatchRow | null, num: number
     slowTarget: fixed(log.temp_slow, 1, 'n/a'),
     pressure: fixed(log.press, 1, 'ERR'),
     pressureTarget: log.press_sp ? log.press_sp.toFixed(2) : 'n/a',
-    co2Label: `g CO2${rate}`,
+    co2Label,
     co2Mass: fixed(log.co2_mass, 0, ''),
     volume: fixed(log.volume, 0, ''),
     sg: fixed(log.sg, 3, ''),

@@ -29,8 +29,9 @@ sync with the selected tab). The batch number opens `/batch`, the left strip
 batch info, task and keyboard screens).
 
 Differences from the TFT: the label next to g CO2 shows gCO2/L/d
-(`g CO2 ÷(L.d):8.3`) instead of reliefs per hour, with the graph's rule
-(Fermenting only, positive, outside a transition; otherwise `N/A`). The screen
+(`gCO2 [8.3/(L.d)]`; `gCO2 [N/A/L.d]` without a value; `g CO2` outside
+Fermenting) instead of reliefs per hour, with the graph's rule
+(Fermenting only, positive, outside a transition). The screen
 sits in a rounded frame like the chart of `/graphs`, with a small link above
 it (`← Back`: to the menu on the device, to the Povoto list in the cloud,
 from `back` in `status.json`) and the Brewtal signature (`/assets/brewtal.svg`, inverted to
