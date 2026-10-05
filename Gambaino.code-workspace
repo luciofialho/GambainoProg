@@ -13,6 +13,9 @@
       "path": "Common"
     },
     {
+      "path": "cloud"
+    },
+    {
       "path": "../../Arduino/Sketches/libraries/__IOTK_GLog"
     },
     {
