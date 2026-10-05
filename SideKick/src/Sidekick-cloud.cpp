@@ -10,7 +10,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include "Sidekick-cloud.h"
-#include "CloudRootCAs.h"
+#include "HttpsRootCAs.h"
 
 namespace {
 constexpr char SPOOL_DIR[] = "/cloud";
@@ -20,8 +20,10 @@ constexpr char NVS_NAMESPACE[] = "sk_cloud";
 // ~1,300 records: more than a day of 4 Povotos every 5 min.
 constexpr size_t SPOOL_MAX_BYTES = 600UL * 1024UL;
 constexpr size_t RECORD_MAX_BYTES = 1024;
-constexpr size_t POST_MAX_RECORDS = 24;
-constexpr size_t POST_MAX_BYTES = 8192;
+// Small posts: TLS needs two ~16.7 KB contiguous buffers and the heap is
+// fragmented; 8 records still drain a day of backlog in ~40 min.
+constexpr size_t POST_MAX_RECORDS = 8;
+constexpr size_t POST_MAX_BYTES = 3072;
 
 SemaphoreHandle_t spoolMutex = nullptr;
 bool spoolReady = false;
@@ -232,7 +234,7 @@ void sendCloudLog() {
   if (!count) return;
 
   WiFiClientSecure client;
-  client.setCACert(cloudRootCAs);
+  client.setCACert(httpsRootCAs);
   client.setTimeout(10);          // seconds
   client.setHandshakeTimeout(10); // seconds
   HTTPClient http;
@@ -257,7 +259,8 @@ void sendCloudLog() {
   const bool advance = (code >= 200 && code < 300) || code == 400;
   if (!advance) {
     ++postsFailed;
-    Serial.printf("[CLOUD] POST failed: %d\n", code);
+    Serial.printf("[CLOUD] POST failed: %d (heap %u, largest block %u)\n", code,
+                  (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
     return;
   }
   if (code == 400) Serial.println("[CLOUD] Batch rejected (400); skipped");
@@ -287,6 +290,10 @@ void appendCloudLogStatus(char *st, size_t size) {
            !spoolReady ? "LittleFS unavailable" : cloudUrl.length() ? "configured" : "not configured (/cloud)",
            recordsSpooled.load(), recordsPosted.load(), recordsDropped.load(), postsFailed.load(),
            (unsigned)pendingBytes.load(), lastHttpCode.load());
+  strncat(st, line, size - strlen(st) - 1);
+  // TLS needs ~40 KB, partly contiguous: watch the largest block.
+  snprintf(line, sizeof(line), "Heap free: %u, largest block: %u, minimum ever: %u<br>",
+           (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap(), (unsigned)ESP.getMinFreeHeap());
   strncat(st, line, size - strlen(st) - 1);
   appendAgo(st, size, "Last cloud post attempt:", lastPostAttemptMs.load());
   appendAgo(st, size, "Last cloud post OK:", lastPostOkMs.load());

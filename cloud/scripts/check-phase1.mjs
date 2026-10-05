@@ -3,9 +3,6 @@
 //   node scripts/check-phase1.mjs <povotoId> [batch] [--local]
 // povotoId = site * 100 + PovotoNum. Without a batch, the latest one.
 import { execSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { syntheticDay, syntheticPoint } from './synthetic.mjs';
 
 const args = process.argv.slice(2);
@@ -17,17 +14,14 @@ if (!Number.isInteger(povoto)) {
   process.exit(1);
 }
 
+// --command, not --file: on the remote database --file goes through the
+// import API, which does not return query results. The SQL here has no
+// double quotes, so one quoted argument survives the shell.
 function query(sql) {
-  const dir = mkdtempSync(join(tmpdir(), 'povoto-'));
-  const file = join(dir, 'query.sql');
-  writeFileSync(file, sql);
-  try {
-    const output = execSync(`npx wrangler d1 execute povoto ${local ? '--local' : '--remote'} --json --file "${file}"`,
-      { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'inherit'] });
-    return JSON.parse(output)[0].results;
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  const command = sql.replace(/\s+/g, ' ').trim();
+  const output = execSync(`npx wrangler d1 execute povoto ${local ? '--local' : '--remote'} --json --command "${command}"`,
+    { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'inherit'] });
+  return JSON.parse(output)[0].results;
 }
 
 const batch = batchText !== undefined ? Number(batchText)

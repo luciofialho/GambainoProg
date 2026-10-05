@@ -54,12 +54,20 @@ Formato (uma linha JSON, até ~450 bytes):
   Povotos). `/cloud/sent` guarda até onde já foi enviado; quando tudo foi
   enviado, os dois arquivos são apagados. A fila sobrevive a reboot e a queda
   de internet.
-- A task LogSend (a cada 15 s) envia até 24 linhas por POST para a URL
+- A task LogSend (a cada 15 s) envia até 8 linhas (~3 KB) por POST para a URL
   configurada, com `Authorization: Bearer <token>`, corpo NDJSON. 2xx avança;
   400 pula o lote (um lote que a nuvem recusa travaria a fila); rede, 401 e
   5xx tentam de novo.
-- TLS verificado com as raízes que a Cloudflare usa (`include/CloudRootCAs.h`,
-  copiadas do bundle do ESP-IDF).
+- TLS verificado com quatro raízes (`include/HttpsRootCAs.h`, copiadas do
+  bundle do ESP-IDF): ISRG X1/X2 (Let's Encrypt; o workers.dev encadeava no
+  X2 em outubro de 2026) e GTS R1/R4 (Google). O POST do Google Sheets usa a
+  mesma lista: só com a GTS R1 ele falhava na verificação.
+- Memória: cada conexão TLS precisa de ~50 KB, com dois buffers contíguos de
+  ~16,7 KB, e o heap do SideKick é curto. Com a fila RAM do Google Sheets em
+  20 posições de 2 KB, os handshakes falhavam por falta de memória e o
+  próprio Wi-Fi caía durante eles. A fila foi reduzida para 8 posições, e os
+  POSTs da nuvem são pequenos. `/cloud` mostra o heap livre, o maior bloco e
+  o mínimo desde o boot.
 - Configuração em `/cloud` (URL e token, na NVS `sk_cloud`); contadores em
   `/cloud` e `/getstatus`.
 - O LittleFS é montado com formatação se não montar: a partição do SideKick
