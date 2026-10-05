@@ -48,7 +48,13 @@ decisions: `Povoto/docs/cloud-plan.md`; record format and the device side:
 
 ## Day to day
 
-- `npm run deploy` after changing `src/` or the Povoto pages.
+- Automatic deploy (Cloudflare Workers Builds, connected to GitHub on
+  2026-10-05): a push to `master` that touches `cloud/`, `Povoto/data/` or
+  `Povoto/include/PovotoLogos.h` runs `npm run assets` and
+  `npx wrangler deploy && npx wrangler deploy --env public` in `cloud/`.
+  Results in the dashboard: Workers & Pages → povoto-cloud → Deployments.
+  Database migrations are not applied by it: run `npm run migrate:remote`.
+- By hand, from this folder: `npm run deploy`.
 - Phase 1 check: `node scripts/check-phase1.mjs <povotoId> [batch]` (rows per
   day, gaps, delay, synthetic values).
 - Without hardware: `node scripts/feed-test.mjs https://povoto-public.povoto-cloud.workers.dev/api/ingest <token> [num] [batch] [days]`
