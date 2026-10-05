@@ -28,6 +28,14 @@ sync with the selected tab). The batch number opens `/batch`, the left strip
 `/tasks` and the target fields `/setpoint` (the web pages replacing the TFT
 batch info, task and keyboard screens).
 
+Differences from the TFT: the label next to g CO2 shows gCO2/L/d
+(`g CO2 g/L/d:8.3`) instead of reliefs per hour, with the graph's rule
+(Fermenting only, positive, outside a transition; otherwise `N/A`). Below the
+screen a footer carries the Brewtal signature (`/assets/brewtal.svg`,
+inverted to light on the dark page) and, in the cloud only, the data age
+(`updated` in `status.json`, e.g. "Updated 3 min ago"), which replaces the
+WiFi indicator. `/graphs` has the same signature below the chart.
+
 Links between the pages are relative (`../graphs/#pressure`, `../batch`), so
 the same files also work in the cloud under `/p/<id>/dashboard/`. Two fields
 exist only in the cloud's responses: `readOnly` in `status.json` keeps only

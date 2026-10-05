@@ -46,9 +46,13 @@ const ASSET_TYPES: Record<string, string> = {
   'graphs.css': 'text/css',
   'uPlot.iife.min.js': 'application/javascript',
   'uPlot.min.css': 'text/css',
+  'povoto.svg': 'image/svg+xml',
+  'brewtal.svg': 'image/svg+xml',
 };
 const DASHBOARD_FILES = new Set(['dashboard.js', 'lcars.ttf', 'LCars.bmp']);
 const GRAPH_FILES = new Set(['graphs.js', 'graphs.css', 'uPlot.iife.min.js', 'uPlot.min.css']);
+// Same paths as on the device (/assets/povoto.svg), public like the links.
+const LOGO_FILES = new Set(['povoto.svg', 'brewtal.svg']);
 
 function nowUtc(): number {
   return Math.floor(Date.now() / 1000);
@@ -93,6 +97,11 @@ app.post('/api/ingest', async c => {
 
 // ------------------------------------------------- public link (no login)
 
+app.get('/assets/:file', c => {
+  const file = c.req.param('file');
+  return LOGO_FILES.has(file) ? asset(c, file) : c.text('Not found', 404);
+});
+
 async function shareFor(c: Ctx): Promise<db.ShareRow | null> {
   const token = c.req.param('token') ?? '';
   return /^[A-Za-z0-9_-]{16,64}$/.test(token) ? db.getShare(c.env.DB, token) : null;
@@ -100,7 +109,7 @@ async function shareFor(c: Ctx): Promise<db.ShareRow | null> {
 
 app.get('/s/:token', c => c.redirect(`/s/${c.req.param('token')}/`, 301));
 app.get('/s/:token/', async c => (await shareFor(c)) ? asset(c, 'graphs.html')
-  : c.html(messagePage('Link indisponível', 'Este link foi revogado ou o batch foi apagado.'), 404));
+  : c.html(messagePage('Link unavailable', 'This link was revoked or its batch was deleted.'), 404));
 app.get('/s/:token/data.csv', async c => {
   const share = await shareFor(c);
   if (!share) return c.text('Not found', 404);
@@ -125,7 +134,7 @@ app.use('*', async (c, next) => {
   const local = host === 'localhost' || host === '127.0.0.1';
   const email = local && c.env.DEV_USER_EMAIL ? c.env.DEV_USER_EMAIL.toLowerCase()
     : await accessEmail(c.req.raw, c.env.ACCESS_TEAM_DOMAIN, c.env.ACCESS_AUD);
-  if (!email) return c.html(messagePage('Acesso negado', 'Entre pelo Cloudflare Access.'), 401);
+  if (!email) return c.html(messagePage('Access denied', 'Sign in through Cloudflare Access.'), 401);
   const roles = new Map<number, db.Role>();
   let all: db.Role | null = null;
   for (const { povoto_id, role } of await db.permissionsFor(c.env.DB, email)) {
@@ -163,7 +172,7 @@ async function povotoFor(c: Ctx, edit = false) {
   return db.getPovoto(c.env.DB, id);
 }
 
-const notFound = (c: Ctx) => c.html(messagePage('Não encontrado', 'Povoto ou batch inexistente, ou sem permissão.'), 404);
+const notFound = (c: Ctx) => c.html(messagePage('Not found', 'No such Povoto or batch, or no permission.'), 404);
 
 app.get('/p/:id', c => c.redirect(`/p/${c.req.param('id')}/`, 301));
 app.get('/p/:id/', async c => {
@@ -253,6 +262,6 @@ app.post('/p/:id/batches/:batch/delete', async c => {
   return c.redirect(`/p/${povoto.id}/`, 303);
 });
 
-app.notFound(c => c.html(messagePage('Não encontrado', 'Página inexistente.'), 404));
+app.notFound(c => c.html(messagePage('Not found', 'No such page.'), 404));
 
 export default app;

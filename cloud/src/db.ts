@@ -9,6 +9,7 @@ export interface PovotoRow {
   site: number;
   num: number;
   last_epoch: number | null;
+  mode: number | null;
   batch: number | null;
   batch_name: string | null;
 }
@@ -109,7 +110,7 @@ export async function storeRecords(db: D1Database, site: number, records: LogRec
 export async function listPovotos(db: D1Database, ids: number[] | null): Promise<PovotoRow[]> {
   const filter = ids ? `WHERE p.id IN (${ids.map(() => '?').join(',')})` : '';
   const { results } = await db.prepare(
-    `SELECT p.id, p.site, p.num, l.epoch AS last_epoch, l.batch, b.name AS batch_name
+    `SELECT p.id, p.site, p.num, l.epoch AS last_epoch, l.mode, l.batch, b.name AS batch_name
      FROM povotos p
      LEFT JOIN logs l ON l.povoto_id = p.id
        AND l.epoch = (SELECT MAX(epoch) FROM logs WHERE povoto_id = p.id)

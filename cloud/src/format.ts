@@ -27,17 +27,19 @@ export function localDateTime(epoch: number): string {
 }
 
 export function ageText(seconds: number): string {
-  if (seconds < 90) return 'agora';
-  if (seconds < 90 * 60) return `há ${Math.round(seconds / 60)} min`;
-  if (seconds < 36 * 3600) return `há ${Math.round(seconds / 3600)} h`;
-  return `há ${Math.round(seconds / 86400)} dias`;
+  if (seconds < 90) return 'now';
+  if (seconds < 90 * 60) return `${Math.round(seconds / 60)} min ago`;
+  if (seconds < 36 * 3600) return `${Math.round(seconds / 3600)} h ago`;
+  return `${Math.round(seconds / 86400)} days ago`;
 }
 
-// handleDashboardStatus(): texts formatted as the TFT draws them. The WiFi
-// slot shows the age of the data instead; the cloud is read-only.
+// handleDashboardStatus(): texts formatted as the device sends them. The
+// page shows `updated` below the screen instead of the WiFi indicator; the
+// cloud is read-only.
 export function dashboardStatus(log: LogRow, batch: BatchRow | null, num: number, nowLocal: number) {
-  const rph = log.mode === MODE_FERMENTING
-    ? (log.reliefs_per_hour === null ? ' RPH:N/A' : ` RPH:${log.reliefs_per_hour.toFixed(1)}`)
+  // gCO2/L/d with the graph's rule (null outside Fermenting or in a transition).
+  const rate = log.mode === MODE_FERMENTING
+    ? (log.rate === null ? ' g/L/d:N/A' : ` g/L/d:${log.rate.toFixed(1)}`)
     : '';
   return {
     batchNumber: String(log.batch).padStart(4, '0'),
@@ -50,12 +52,13 @@ export function dashboardStatus(log: LogRow, batch: BatchRow | null, num: number
     slowTarget: fixed(log.temp_slow, 1, 'n/a'),
     pressure: fixed(log.press, 1, 'ERR'),
     pressureTarget: log.press_sp ? log.press_sp.toFixed(2) : 'n/a',
-    co2Label: `g CO2${rph}`,
+    co2Label: `g CO2${rate}`,
     co2Mass: fixed(log.co2_mass, 0, ''),
     volume: fixed(log.volume, 0, ''),
     sg: fixed(log.sg, 3, ''),
     abv: fixed(log.abv, 2, ''),
-    wifiText: `Atualizado ${ageText(Math.max(0, nowLocal - log.epoch))}`,
+    wifiText: '',
+    updated: `Updated ${ageText(Math.max(0, nowLocal - log.epoch))}`,
     wifiBars: 0,
     calibration: ['', '', ''],
     readOnly: true,
@@ -80,5 +83,5 @@ export function graphCsv(rows: LogRow[]): string {
 
 export function batchLabel(batch: BatchRow): string {
   const date = batch.date ? ` (${batch.date})` : '';
-  return `${batch.batch} - ${batch.name || 'sem nome'}${date}`;
+  return `${batch.batch} - ${batch.name || 'no name'}${date}`;
 }

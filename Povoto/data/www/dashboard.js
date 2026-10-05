@@ -10,6 +10,8 @@
   const MAX_SCALE = 2; // 960 x 640 on large screens
   const STATUS_MS = 3000;
   const canvas = document.getElementById('screen');
+  const footer = document.getElementById('footer');
+  const updated = document.getElementById('updated');
   const ctx = canvas.getContext('2d');
 
   const rgb = (r, g, b) => `rgb(${r},${g},${b})`;
@@ -111,6 +113,8 @@
 
   // ----------------------------------------------------------- main screen
   function drawWifi() {
+    // The cloud shows the data age below the screen instead.
+    if (status && typeof status.updated === 'string') return;
     const text = !online ? 'No connection to Povoto' : status ? status.wifiText : '';
     if (text) {
       fillRect(W - 180, H - 32, 180, 32, BLACK);
@@ -192,13 +196,16 @@
   // ------------------------------------------------------------ plumbing
   function render() {
     drawMain();
+    updated.textContent = status && typeof status.updated === 'string' ? status.updated : '';
   }
 
   function resize() {
-    const scale = Math.min(window.innerWidth / W, window.innerHeight / H, MAX_SCALE);
+    const available = window.innerHeight - footer.offsetHeight;
+    const scale = Math.min(window.innerWidth / W, available / H, MAX_SCALE);
     const ratio = window.devicePixelRatio || 1;
     canvas.style.width = `${W * scale}px`;
     canvas.style.height = `${H * scale}px`;
+    footer.style.width = `${W * scale}px`;
     canvas.width = Math.round(W * scale * ratio);
     canvas.height = Math.round(H * scale * ratio);
     ctx.setTransform(canvas.width / W, 0, 0, canvas.height / H, 0, 0);
