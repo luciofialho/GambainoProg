@@ -4,7 +4,7 @@ import { getCookie, setCookie } from 'hono/cookie';
 import { accessEmail, randomToken, sha256Hex } from './auth';
 import * as db from './db';
 import { batchLabel, dashboardStatus, graphCsv } from './format';
-import { homePage, messagePage, povotoName, povotoPage, searchPage } from './pages';
+import { currentBatch, homePage, messagePage, povotoName, povotoPage, searchPage } from './pages';
 import { parseBody } from './records';
 
 interface Env {
@@ -195,10 +195,12 @@ app.get('/p/:id/', async c => {
   const povoto = await povotoFor(c);
   if (!povoto) return notFound(c);
   const canEdit = c.get('access').canEdit(povoto.id);
-  const [batches, shares] = await Promise.all([db.listBatches(c.env.DB, povoto.id),
-    canEdit ? db.listShares(c.env.DB, povoto.id) : Promise.resolve([])]);
+  const [batches, shares, latest] = await Promise.all([db.listBatches(c.env.DB, povoto.id),
+    canEdit ? db.listShares(c.env.DB, povoto.id) : Promise.resolve([]),
+    db.latestLog(c.env.DB, povoto.id)]);
   const publicOrigin = c.env.PUBLIC_ORIGIN || new URL(c.req.url).origin;
-  return c.html(povotoPage(povoto, batches, shares, canEdit, publicOrigin));
+  return c.html(povotoPage(povoto, batches, shares, canEdit, publicOrigin,
+    currentBatch(latest, nowLocal(c.env))));
 });
 
 // Dashboard: the device page, fed by the latest log row.

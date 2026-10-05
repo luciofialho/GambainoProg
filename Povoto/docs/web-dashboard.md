@@ -32,11 +32,11 @@ Differences from the TFT: the label next to g CO2 shows gCO2/L/d
 (`g CO2 ÷(L.d):8.3`) instead of reliefs per hour, with the graph's rule
 (Fermenting only, positive, outside a transition; otherwise `N/A`). The screen
 sits in a rounded frame like the chart of `/graphs`, with a small link above
-it (`← Menu` on the device; `← Povotos` in the cloud, from `back` in
-`status.json`) and the Brewtal signature (`/assets/brewtal.svg`, inverted to
+it (`← Back`: to the menu on the device, to the Povoto list in the cloud,
+from `back` in `status.json`) and the Brewtal signature (`/assets/brewtal.svg`, inverted to
 light on the dark page) below. In the cloud only, the data age (`updated` in
 `status.json`, e.g. "Updated 3 min ago") appears inside the frame, under the
-screen, instead of the WiFi indicator. `/graphs` has the same signature, and
+screen and aligned right, instead of the WiFi indicator. `/graphs` has the same signature, and
 its `← Back` link returns to the dashboard.
 
 Links between the pages are relative (`../graphs/#pressure`, `../batch`), so

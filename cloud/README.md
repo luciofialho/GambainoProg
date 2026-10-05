@@ -50,8 +50,13 @@ decisions: `Povoto/docs/cloud-plan.md`; record format and the device side:
 
 - Automatic deploy (Cloudflare Workers Builds, connected to GitHub on
   2026-10-05): a push to `master` that touches `cloud/`, `Povoto/data/` or
-  `Povoto/include/PovotoLogos.h` runs `npm run assets` and
-  `npx wrangler deploy && npx wrangler deploy --env public` in `cloud/`.
+  `Povoto/include/PovotoLogos.h` runs `npm run assets` in `cloud/` and then
+  one deploy per Worker, each from its own connected build: povoto-cloud
+  runs `npx wrangler deploy`, povoto-public runs
+  `npx wrangler deploy --env public`. A connected build deploys only its own
+  Worker: with both commands in one build, the second overrode the name and
+  deployed the public config onto povoto-cloud. Close without merging any
+  Cloudflare pull request that renames the Worker in `wrangler.toml`.
   Results in the dashboard: Workers & Pages → povoto-cloud → Deployments.
   Database migrations are not applied by it: run `npm run migrate:remote`.
   The build clones the whole repository: a nested git repository committed

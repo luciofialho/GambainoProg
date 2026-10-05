@@ -147,7 +147,8 @@ Dois testes complementares:
 ### Apagar um batch (nuvem)
 Opção para apagar as linhas de log de um batch de um Povoto, só para quem
 tem papel "editar" naquele Povoto. Serve para limpar os dados de teste e
-batches gravados por engano. Registros que ainda chegarem daquele batch
+batches gravados por engano. Desde 05/10/2026 a página não mostra o botão
+(a rota `POST /p/<id>/batches/<n>/delete` continua no Worker). Registros que ainda chegarem daquele batch
 (fila do SideKick, bancada ligada) o recriam: desligar o log antes.
 
 ## Fase 2: setpoints e ações automáticas pela nuvem (desenho decidido)

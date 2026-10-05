@@ -29,7 +29,7 @@ a { color: #a9c4f5; }
 .muted { color: #aeb9c6; font-size: 13px; }
 .button, button, input { border: 1px solid #454e5e; border-radius: 7px; background: #29313d; color: #f2f5fa; padding: 8px 12px; font: inherit; text-decoration: none; }
 button { cursor: pointer; }
-button.danger { border-color: #8a3b3b; background: #3a2324; }
+button:disabled { opacity: .45; cursor: not-allowed; }
 form.inline { display: inline; margin: 0; }
 input[type=search] { min-width: 0; flex: 1; }
 .share { font-size: 13px; word-break: break-all; }
@@ -56,22 +56,30 @@ function searchForm(query = ''): string {
 <button type="submit">Search</button></form>`;
 }
 
-// The site appears only when the list has Povotos from more than one site.
-export function povotoName(povoto: { site: number; num: number }, withSite = true): string {
-  return withSite ? `Povoto ${povoto.num} · site ${povoto.site}` : `Povoto ${povoto.num}`;
+// Each user sees the Povotos of one site, so the site is not shown.
+export function povotoName(povoto: { num: number }): string {
+  return `Povoto ${povoto.num}`;
+}
+
+// The batch a Povoto is running: its latest record is recent and in
+// Fermenting or Conditioning. null otherwise.
+export function currentBatch(latest: { epoch: number; mode: number; batch: number } | null,
+                             nowLocal: number): number | null {
+  if (!latest || !(latest.mode in MODE_NAMES)) return null;
+  return nowLocal - latest.epoch <= ACTIVE_SECONDS ? latest.batch : null;
 }
 
 export function homePage(email: string, povotos: PovotoRow[], nowLocal: number): string {
-  const withSite = new Set(povotos.map(p => p.site)).size > 1;
   const cards = povotos.map(p => {
-    const age = p.last_epoch === null ? null : Math.max(0, nowLocal - p.last_epoch);
-    const active = age !== null && age <= ACTIVE_SECONDS && p.mode !== null && p.mode in MODE_NAMES;
-    const batch = active ? `<div>Batch ${p.batch} · ${escapeHtml(p.batch_name || 'no name')}</div>
-<div class="muted">${MODE_NAMES[p.mode!]} · updated ${ageText(age!)}</div>` : '';
-    return `<div class="card row"><div class="grow"><div class="name">${escapeHtml(povotoName(p, withSite))}</div>
+    const latest = p.last_epoch === null || p.mode === null || p.batch === null ? null
+      : { epoch: p.last_epoch, mode: p.mode, batch: p.batch };
+    const batch = currentBatch(latest, nowLocal) === null ? ''
+      : `<div>Batch ${p.batch} · ${escapeHtml(p.batch_name || 'no name')}</div>
+<div class="muted">${MODE_NAMES[p.mode!]} · updated ${ageText(Math.max(0, nowLocal - p.last_epoch!))}</div>`;
+    return `<div class="card row"><div class="grow"><div class="name">${escapeHtml(povotoName(p))}</div>
 ${batch}</div>
 <a class="button" href="/p/${p.id}/dashboard/">Dashboard</a>
-<a class="button" href="/p/${p.id}/">Old batches</a></div>`;
+<a class="button" href="/p/${p.id}/">All batches</a></div>`;
   }).join('');
   return layout('Povoto', `${brandTitle('Povoto')}${searchForm()}<h2>Fermenters</h2>
 ${cards || '<p class="muted">No Povoto is shared with this e-mail.</p>'}
@@ -84,37 +92,41 @@ export function searchPage(query: string, results: BatchRow[], names: Map<number
 <div class="muted">${escapeHtml(names.get(b.povoto_id) ?? `Povoto ${b.povoto_id}`)} ·
 ${escapeHtml(localDateTime(b.first_epoch))} to ${escapeHtml(localDateTime(b.last_epoch))}</div></div>
 <a class="button" href="/p/${b.povoto_id}/graphs/?batch=${b.batch}">Graphs</a>
-<a class="button" href="/p/${b.povoto_id}/">Old batches</a></div>`).join('');
-  return layout('Search', `<p><a href="/povotos">&larr; Povotos</a></p>${brandTitle('Search')}${searchForm(query)}
+<a class="button" href="/p/${b.povoto_id}/">All batches</a></div>`).join('');
+  return layout('Search', `<p><a href="/povotos">&larr; Back</a></p>${brandTitle('Search')}${searchForm(query)}
 <h2>Results</h2>${items || '<p class="muted">No batch found.</p>'}`);
 }
 
-export function povotoPage(povoto: { id: number; site: number; num: number }, batches: BatchRow[],
-                           shares: ShareRow[], canEdit: boolean, origin: string): string {
+// The running batch opens the dashboard, the others their graphs. One public
+// link per batch: the button is disabled while one exists. (Deleting a batch
+// is kept in the routes, without a button for now.)
+export function povotoPage(povoto: { id: number; num: number }, batches: BatchRow[],
+                           shares: ShareRow[], canEdit: boolean, origin: string,
+                           running: number | null): string {
   const items = batches.map(b => {
-    const links = shares.filter(s => s.batch === b.batch).map(s => {
+    const batchShares = shares.filter(s => s.batch === b.batch);
+    const links = batchShares.map(s => {
       const url = `${origin}/s/${s.token}/`;
       return `<div class="row share"><a href="${escapeHtml(url)}">${escapeHtml(url)}</a>
 <form class="inline" method="post" action="/p/${povoto.id}/shares/${escapeHtml(s.token)}/revoke">
 <button type="submit">Revoke</button></form></div>`;
     }).join('');
-    const actions = canEdit ? `
-<form class="inline" method="post" action="/p/${povoto.id}/batches/${b.batch}/share">
-<button type="submit">Create public link</button></form>
-<form class="inline" method="post" action="/p/${povoto.id}/batches/${b.batch}/delete"
- onsubmit="return confirm('Delete batch ${b.batch} and all its cloud data? This cannot be undone.')">
-<input type="hidden" name="confirm" value="${b.batch}">
-<button class="danger" type="submit">Delete</button></form>` : '';
+    const share = !canEdit ? '' : batchShares.length
+      ? '<button type="button" disabled title="This batch already has a public link">Create public link</button>'
+      : `<form class="inline" method="post" action="/p/${povoto.id}/batches/${b.batch}/share">
+<button type="submit">Create public link</button></form>`;
+    const open = b.batch === running
+      ? '<a class="button" href="dashboard/">Dashboard</a>'
+      : `<a class="button" href="graphs/?batch=${b.batch}">Graphs</a>`;
     return `<div class="card"><div class="row"><div class="grow"><strong>${escapeHtml(batchLabel(b))}</strong>
 <div class="muted">${escapeHtml(localDateTime(b.first_epoch))} to ${escapeHtml(localDateTime(b.last_epoch))}</div></div>
-<a class="button" href="graphs/?batch=${b.batch}">Graphs</a>${actions}</div>${links}</div>`;
+${open}${share}</div>${links}</div>`;
   }).join('');
-  return layout(povotoName(povoto), `<p><a href="/povotos">&larr; Povotos</a></p>
+  return layout(povotoName(povoto), `<p><a href="/povotos">&larr; Back</a></p>
 ${brandTitle(povotoName(povoto))}
-<div class="row"><a class="button" href="dashboard/">Dashboard</a></div>
 <h2>Batches</h2>${items || '<p class="muted">No batch recorded.</p>'}`);
 }
 
 export function messagePage(title: string, message: string): string {
-  return layout(title, `${brandTitle(title)}<p>${escapeHtml(message)}</p><p><a href="/povotos">Povotos</a></p>`);
+  return layout(title, `${brandTitle(title)}<p>${escapeHtml(message)}</p><p><a href="/povotos">&larr; Back</a></p>`);
 }

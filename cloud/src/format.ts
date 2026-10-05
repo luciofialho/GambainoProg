@@ -62,7 +62,7 @@ export function dashboardStatus(log: LogRow, batch: BatchRow | null, num: number
     wifiBars: 0,
     calibration: ['', '', ''],
     readOnly: true,
-    back: { href: '/povotos', label: 'Povotos' },
+    back: { href: '/povotos', label: 'Back' },
   };
 }
 
