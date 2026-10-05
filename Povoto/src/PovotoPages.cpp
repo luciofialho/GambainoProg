@@ -592,9 +592,9 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
     return;
   }
   
-  char buffer[200];
+  char buffer[320];
   size_t remaining;
-  
+
   strcpy(html, "<!DOCTYPE html><html><head>"
                 "<meta charset='UTF-8'>"
                 "<meta name='viewport' content='width=device-width, initial-scale=1.0'>"
