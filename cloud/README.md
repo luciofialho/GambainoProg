@@ -54,6 +54,10 @@ decisions: `Povoto/docs/cloud-plan.md`; record format and the device side:
   `npx wrangler deploy && npx wrangler deploy --env public` in `cloud/`.
   Results in the dashboard: Workers & Pages → povoto-cloud → Deployments.
   Database migrations are not applied by it: run `npm run migrate:remote`.
+  The build clones the whole repository: a nested git repository committed
+  as a submodule without `.gitmodules` (the old `Gambaino/` Lovable folder)
+  made it fail at "updating repository submodules". Retry rebuilds the same
+  commit; a new push to a watched path builds the latest one.
 - By hand, from this folder: `npm run deploy`.
 - The site root opens where the browser last was: the Povoto list
   (`/povotos`) or the dashboard of the last Povoto seen (cookie
