@@ -2,6 +2,7 @@
 #include "ProcVar.h"
 //#include <WiFi.h>
 #include "GambainoCommon.h"
+#include "GambainoWiFi.h"
 #include "EspNowPackets.h"
 #include <BrewCoreCommon.h>
 #include <Status.h>
@@ -55,10 +56,9 @@ extern char bigBuffer[];
 #define INSTRSAVEPROCESS        19
 #define INSTRRESUMEPROCESS      20
 #define INSTRFACTORYRESET       21
-#define INSTRCOLDSTATUS         22
-#define INSTRSTARTDIAG          23
-#define INSTRRECONNECTNETWORK   24
-#define NUMCOMMANDS             25
+#define INSTRSTARTDIAG          22
+#define INSTRRECONNECTNETWORK   23
+#define NUMCOMMANDS             24
 
 #define INSTRSYNTAX_CMDONLY     0
 #define INSTRSYNTAX_TAG         1
@@ -89,7 +89,6 @@ const int INSTRSYNTAX[NUMCOMMANDS] = {
   INSTRSYNTAX_CMDONLY,        // INSTRSAVEPROCESS
   INSTRSYNTAX_CMDONLY,        // INSTRRESUMEPROCESS
   INSTRSYNTAX_CMDONLY,        // INSTRFACTORYRESET
-  INSTRSYNTAX_CMDONLY,        // INSTRCOLDSTATUS
   INSTRSYNTAX_VALUE,          // STARTDIAG
   INSTRSYNTAX_CMDONLY         // INSTRRECONNECTNETWORK
 };
@@ -98,7 +97,6 @@ int echoMode = 0;
 ProcVar * monitoredVar;
 
 void getDataLog(AsyncWebServerRequest *request);
-void ColdSideWebPage(AsyncWebServerRequest *request);
 void commandHelp(AsyncWebServerRequest *request);
 void calibrResultPage(AsyncWebServerRequest *request);
 
@@ -237,7 +235,8 @@ void gambaino_JS(AsyncWebServerRequest *request) {
   uint32_t ip;
   byte *oct;
 
-  ip = WiFi.localIP();
+  // address the request arrived on: the station IP, or the AP IP in contingency mode
+  ip = request->client()->localIP();
   oct = (byte*)&ip;
   snprintf(st, 511,  "var URLArduino = \"http://%hhu.%hhu.%hhu.%hhu/\";\nSTMINMLT_ = %d; STMAXMLT_ = %d; STMINBK1_ = %d; STMAXBK1_ = %d; STMINBK2_ = %d; STMAXBK2_ = %d; STTRAN_ = %d;\n",
       oct[0], oct[1], oct[2], oct[3], MASHGRAINREST, PREPSPARGE, SPARGE, KS_WHIRLPOOL, WAITBOIL, WHIRLPOOLREST, TRANSFER);
@@ -463,7 +462,6 @@ void cmdProcess(AsyncWebServerRequest *request,char *cmd) {
     if (!strcmp(cmdToken[0],"saveprocess")   || !strcmp(cmdToken[0],"save"))    instr = INSTRSAVEPROCESS;
     if (!strcmp(cmdToken[0],"resumeprocess") || !strcmp(cmdToken[0],"resume"))  instr = INSTRRESUMEPROCESS;
     if (!strcmp(cmdToken[0],"factoryreset"))                                    instr = INSTRFACTORYRESET;
-    if (!strcmp(cmdToken[0],"coldstatus")    || !strcmp(cmdToken[0],"cold"))    instr = INSTRCOLDSTATUS;
     if (!strcmp(cmdToken[0],"startdiag"))                                       instr = INSTRSTARTDIAG;
     if (!strcmp(cmdToken[0],"reconnectnetwork") || !strcmp(cmdToken[0],"net"))   instr = INSTRRECONNECTNETWORK;
 
@@ -701,7 +699,7 @@ void cmdProcess(AsyncWebServerRequest *request,char *cmd) {
                     client.stop();
                     delay(100);
                 }                
-                reconnectNetwork();
+                gambainoWiFiReconnect();
                 break;
 
             case INSTRREINIT:
@@ -778,13 +776,6 @@ void cmdProcess(AsyncWebServerRequest *request,char *cmd) {
               ProcVar::forceResetToFactory();
               break;
                 
-            case INSTRCOLDSTATUS:
-              if (!requestFromIP)
-                SIPOutput(request,"ERROR: COLDSTATUS is for HTTP use only",1);
-              else
-                ColdSideWebPage(request);
-              break;
-                
             case INSTRSTARTDIAG:
               //responseConfirmation(request, "Starting diagnostic","./diag");
               //SIPOutput(request, "Starting diagnostic");
@@ -827,118 +818,6 @@ void getDataLog(AsyncWebServerRequest *request)
   */
 }
 
-
-void formatColdSideNum(char * buf, float f) {
-    if (f == NOTaTEMP || f==85)
-      strcpy(buf, "N/A");
-    else {
-      if (f>0)
-        if (f<100)
-            dtostrf(f,2,1,buf);
-        else
-            dtostrf(f,4,0,buf);
-      else if (f >= -0.05 && f <= 0.05)
-        strcpy(buf, " 0.0");
-      else if (f >= -9.5) {
-        dtostrf(-f,1,1,buf+1);
-        buf[0] = '-';
-      }
-      else {
-        dtostrf(-f,2,0,buf+1);
-        buf[0] = '-';
-      }
-    }
-}
-
-
-
-void ColdSideWebPage(AsyncWebServerRequest *request) {
-    char stOff[]="off";
-    char stOn[]="ON";
-    char stHeater[] = "HEATER";
-    char stChill[] = "ON";
-
-    char st[1024];
-
-    char f1at[10],f1t[10],f1st[10],f2at[10],f2t[10],f2st[10],cat[10],ct[10],cst[10],cbat[10],cbt[10],cbst[10],env[10],f1lt[10],f2lt[10],
-         uptime[20],time[20];
-/*
-    formatColdSideNum(f1at,Fermenter1Temp);
-    formatColdSideNum(f1t,Fermenter1TargetTemp);
-    formatColdSideNum(f2at,Fermenter2Temp);
-    formatColdSideNum(f2t,Fermenter2TargetTemp);
-    formatColdSideNum(cat,CellarTemp);
-    formatColdSideNum(ct,CellarTargetTemp);
-    formatColdSideNum(cbat,ColdBankTemp);
-    formatColdSideNum(cbt,ColdBankTargetTemp);
-    formatColdSideNum(env,EnvironmentTemp);
-    formatColdSideNum(f1lt,Fermenter1SlowTargetTemp);
-    formatColdSideNum(f2lt,Fermenter2SlowTargetTemp);
-    formatedUptime(uptime);
-    NTPFormatedDateTime(time);
-
-    snprintf(st,511,"<script>\
-function loadValues() {\
-f1at.innerHTML='%s';\n\
-f1t.value='%s';\n\
-f1st.innerHTML='%s';\n\
-f2at.innerHTML='%s';\n\
-f2t.value='%s';\n\
-f2st.innerHTML='%s';\n\
-cat.innerHTML='%s';\n\
-ct.value='%s';\n\
-cst.innerHTML='%s';\n\
-cbat.innerHTML='%s';\n\
-cbt.value='%s';\n\
-cbst.innerHTML='%s';\n\
-env.innerHTML='%s';\n\
-f1lt.value='%s';\n\
-f2lt.value='%s';\n\
-uptime.innerHTML='%s';\n\
-time.innerHTML='%s';\n\
-}\n\
-</script>",
-    f1at,f1t,Fermenter1Control.asBoolean() ? stChill : Fermenter1Heater.asBoolean() ? stHeater : stOff,
-    f2at,f2t,Fermenter2Control.asBoolean() ? stChill : Fermenter2Heater.asBoolean() ? stHeater : stOff,
-    cat,ct,CellarControl.asBoolean() ? stOn : stOff,
-    cbat,cbt,ColdBankControl.asBoolean() ? stOn : stOff,
-    env,
-    f1lt,f2lt,
-    uptime,time);
-*/
-  ethernetProcessString_and_Page(request, st,"/www/coldSide.html");
-
-}
-
-float convertColdSideValue(const char *st) {
-  float f= atof(st);
-  if (f==0) {
-    bool trueZero = true;
-    for (int i=0;st[i];i++)
-      if (st[i] != '.' && (st[i]<'0' || st[i]>'9'))
-        trueZero = false;
-    if (!trueZero)
-      f = NOTaTEMP;
-  }
-  return f;
-}
-
-void saveColdSide(AsyncWebServerRequest *request) {
-  for (int i = 0; i<request->args(); i++) {
-    ProcVar *var = ProcVar::ProcVarByID(request->argName(i).c_str());
-    if (var) {
-      char buf[10];
-      if (convertColdSideValue(request->arg(i).c_str()) != float(*var)) {
-        Serial.print(var->alias()); Serial.print(" = "); Serial.println(request->arg(i));      
-        (*var) = convertColdSideValue(request->arg(i).c_str());
-      }
-
-    }
-  }
-
-  ProcVar::writeToEEPROM(CONFIGPERSISTENCE);
-  responseConfirmation(request,"Cold side set points saved","./cold");
-}
 
 void formatRecipeNum(char *buf, float f,int decPlaces=1, const char * strIfMissing=NULL, int missingValue=0) {
   if (f == missingValue && strIfMissing)
@@ -1101,6 +980,7 @@ char * getGambainoStatus(char *st) {
   yield();
   taskYIELD();
 
+  gambainoWiFiStatus(st, MAXSTATUSLEN);
   getPeerStatus(st, MAXSTATUSLEN);
 
   return st;
@@ -1135,7 +1015,8 @@ void safeModeCmd(AsyncWebServerRequest *request) {
 void UI_SETUP() {
   cmdSerialBuf[0] = '\0';
 
-  setupWiFi();
+  // "/" in the setup AP gives the contingency access to the BrewCore UI
+  gambainoWiFiBegin("BrewCore", "gambaino", "/");
   loadPeers();
   registerOwnPeer(PEERTYPE_BREWCORE);
 
@@ -1150,10 +1031,8 @@ void UI_SETUP() {
 
   setStatusSource(getGambainoStatus);
   registerPeerSetupRoute();
-  server.on("/cold",HTTP_GET, [](AsyncWebServerRequest *request){ColdSideWebPage(request);});
   server.on("/heat/data",HTTP_GET, [](AsyncWebServerRequest *request){heatExchangeData(request);});
   server.on("/heat",HTTP_GET, [](AsyncWebServerRequest *request){heatExchangeWebPage(request);});
-  server.on("/saveColdSide",HTTP_GET, [](AsyncWebServerRequest *request){saveColdSide(request);});
   server.on("/recipe",HTTP_GET, [](AsyncWebServerRequest *request){recipeWebPage(request);});
   server.on("/favicon",HTTP_GET, [](AsyncWebServerRequest *request){ethernetProcessPage(request,"/www/img/favicon.ico");});
   server.on("/gj_1",HTTP_GET, [](AsyncWebServerRequest *request){requestFromIP = true; JSONOutput(request, 1);});

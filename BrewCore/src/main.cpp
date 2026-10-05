@@ -3,6 +3,7 @@
 
 
 #include "GambainoCommon.h"
+#include "GambainoWiFi.h"
 #include <BrewCoreCommon.h>
 #include <Time.h>
 #include "ProcVar.h"
@@ -271,8 +272,7 @@ void loop() {
 
   startPerfSentinel();  
   //
-  verifyWiFiConnection();
-  checkDebugMode();
+  gambainoWiFiProcess();
   checkPerfSentinel("VerifyWifi");
 
   readBLE();

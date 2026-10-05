@@ -3,6 +3,7 @@
 //#include <IRac.h>
 #include <WiFi.h>
 #include "GambainoCommon.h"
+#include "GambainoWiFi.h"
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include "Sidekick-log.h"
@@ -93,7 +94,6 @@ static StaticQueue_t espnowQueueControl;
 static QueueHandle_t espnowQueue = nullptr;
 static std::atomic<unsigned long> espnowQueueDrops{0};
 
-static volatile bool reconnectNetworkRequested = false;
 static volatile unsigned long resetBrewCoreUntil = 0;
 
 static void handleResetBrewCore(AsyncWebServerRequest *request) {
@@ -105,7 +105,7 @@ static void handleResetBrewCore(AsyncWebServerRequest *request) {
 static void handleReconnectNetwork(AsyncWebServerRequest *request) {
   Serial.println(">>> RECONNECTNETWORK REQUEST <<<");
   responseConfirmation(request, "Reconnecting to WiFi...", "/getstatus");
-  reconnectNetworkRequested = true;
+  gambainoWiFiReconnect();
 }
 
 static void handlePacket(char type, const char *payload) {
@@ -223,6 +223,7 @@ char *getSideKickStatus(char *st) {
            espnowQueueDrops.load());
   strcat(st, buf2);
 
+  gambainoWiFiStatus(st, MAXSTATUSLEN);
   getPeerStatus(st, MAXSTATUSLEN);
 
   return st;
@@ -241,10 +242,8 @@ void setup() {
       reinterpret_cast<uint8_t *>(espnowQueueStorage), &espnowQueueControl);
   if (!espnowQueue) Serial.println("[ESP-NOW] Could not initialize receive queue");
 
-  // WiFi Setup
-  setupWiFi();
-  // Keep the in-RAM log cache while the network is unavailable.
-  setRestartOnWiFiFailure(false);
+  // WiFi Setup (never restarts on Wi-Fi failure: keeps the in-RAM log cache)
+  gambainoWiFiBegin("SideKick", "gambaino");
   loadPeers();
   registerOwnPeer(PEERTYPE_SIDEKICK);
 
@@ -314,13 +313,7 @@ void loop() {
     digitalWrite(RESETBREWCOREPIN, LOW);
     resetBrewCoreUntil = 0;
   }
-  if (reconnectNetworkRequested) {
-    reconnectNetworkRequested = false;
-    reconnectNetwork();
-  }
-
-  verifyWiFiConnection();
-  checkDebugMode();
+  gambainoWiFiProcess();
   handle_IOTK();
 
   // reads Serial2 
