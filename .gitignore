@@ -13,3 +13,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Lovable project (discarded), a separate git repository
+Gambaino/
