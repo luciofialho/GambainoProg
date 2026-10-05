@@ -113,6 +113,10 @@ GraphHistoryPoint capturePoint(uint32_t epoch) {
 }
 } // namespace
 
+GraphHistoryPoint graphCapturePoint(uint32_t epoch) {
+  return capturePoint(epoch);
+}
+
 bool graphHistoryBegin() {
   if (ready) return true;
   if (!psramFound()) {
@@ -266,6 +270,50 @@ uint16_t graphHistoryCopyPoints(GraphHistoryPoint *destination, uint16_t capacit
   return copied;
 }
 
+// The cloud check (cloud/scripts/synthetic.mjs) repeats these formulas: keep
+// both in step.
+void graphSyntheticPoint(float day, GraphHistoryPoint &point) {
+  constexpr float PI2 = 6.28318530718f;
+  const float dailyPhase = PI2 * day;
+  point = {};
+  point.flags = GRAPH_SYNTHETIC;
+
+  // Slow start, vigorous fermentation, then a progressively flatter tail.
+  point.sg = GRAPH_SYNTHETIC_OG - 0.004f * smoothStep((day - 0.3f) / 1.6f)
+                - 0.032f * smoothStep((day - 1.3f) / 8.8f)
+                - 0.007f * smoothStep((day - 7.0f) / 7.0f);
+  point.abv = 100.0f * (105.0f * (GRAPH_SYNTHETIC_OG - point.sg) / (100.0f - point.sg)
+                        * (point.sg / 0.79f));
+
+  // A raised temperature target near the end, with circadian and control
+  // oscillations that make actual temperature visually distinguishable.
+  point.temperatureSetpoint = day < 8.0f ? 19.0f : (day < 12.5f ? 20.0f : 21.0f);
+  point.temperature = 19.0f + 1.0f * smoothStep((day - 8.0f) / 0.6f)
+                      + 1.0f * smoothStep((day - 12.5f) / 0.6f)
+                      + 0.14f * sinf(dailyPhase - 0.5f)
+                      + 0.06f * sinf(PI2 * day * 5.0f);
+
+  // Gradual spunding rise and a late pressure-target step as in the example.
+  point.pressureSetpoint = 0.20f + 0.90f * smoothStep((day - 0.7f) / 7.8f)
+                           + 0.55f * smoothStep((day - 13.25f) / 0.35f);
+  point.pressure = point.pressureSetpoint
+                   - 0.08f * expf(-day / 1.0f)
+                   + 0.035f * sinf(PI2 * day * 1.7f);
+
+  // Positive rate: one broad active-fermentation maximum and a small tail.
+  const float mainPeak = (day - 4.5f) / 2.8f;
+  const float tailPeak = (day - 9.0f) / 1.6f;
+  point.co2Rate = 0.35f + 12.0f * expf(-0.5f * mainPeak * mainPeak)
+                  + 1.2f * expf(-0.5f * tailPeak * tailPeak);
+  // Mirror Brewfather's omission during temperature/pressure transitions.
+  if ((day >= 8.0f && day < 8.7f) ||
+      (day >= 12.5f && day < 13.2f) ||
+      (day >= 13.25f && day < 13.7f)) {
+    point.co2Rate = NAN;
+    point.flags |= GRAPH_RATE_TRANSITION;
+  }
+}
+
 bool graphHistoryGenerateDemo14Days() {
   if (!ready) return false;
   const uint32_t now = NTPEpoch();
@@ -280,50 +328,10 @@ bool graphHistoryGenerateDemo14Days() {
   }
 
   const uint32_t firstEpoch = now - 14UL * 24UL * 60UL * 60UL;
-  constexpr float PI2 = 6.28318530718f;
-  constexpr float OG = 1.054f;
   for (uint16_t i = 0; i < GRAPH_HISTORY_DEMO_POINTS; ++i) {
-    const float day = float(i) / 96.0f;
-    const float dailyPhase = PI2 * day;
     GraphHistoryPoint &point = generated[i];
-    point = {};
+    graphSyntheticPoint(float(i) / 96.0f, point);
     point.epoch = firstEpoch + uint32_t(i) * GRAPH_HISTORY_INTERVAL_SECONDS;
-    point.flags = GRAPH_SYNTHETIC;
-
-    // Slow start, vigorous fermentation, then a progressively flatter tail.
-    point.sg = OG - 0.004f * smoothStep((day - 0.3f) / 1.6f)
-                  - 0.032f * smoothStep((day - 1.3f) / 8.8f)
-                  - 0.007f * smoothStep((day - 7.0f) / 7.0f);
-    point.abv = 100.0f * (105.0f * (OG - point.sg) / (100.0f - point.sg)
-                          * (point.sg / 0.79f));
-
-    // A raised temperature target near the end, with circadian and control
-    // oscillations that make actual temperature visually distinguishable.
-    point.temperatureSetpoint = day < 8.0f ? 19.0f : (day < 12.5f ? 20.0f : 21.0f);
-    point.temperature = 19.0f + 1.0f * smoothStep((day - 8.0f) / 0.6f)
-                        + 1.0f * smoothStep((day - 12.5f) / 0.6f)
-                        + 0.14f * sinf(dailyPhase - 0.5f)
-                        + 0.06f * sinf(PI2 * day * 5.0f);
-
-    // Gradual spunding rise and a late pressure-target step as in the example.
-    point.pressureSetpoint = 0.20f + 0.90f * smoothStep((day - 0.7f) / 7.8f)
-                             + 0.55f * smoothStep((day - 13.25f) / 0.35f);
-    point.pressure = point.pressureSetpoint
-                     - 0.08f * expf(-day / 1.0f)
-                     + 0.035f * sinf(PI2 * day * 1.7f);
-
-    // Positive rate: one broad active-fermentation maximum and a small tail.
-    const float mainPeak = (day - 4.5f) / 2.8f;
-    const float tailPeak = (day - 9.0f) / 1.6f;
-    point.co2Rate = 0.35f + 12.0f * expf(-0.5f * mainPeak * mainPeak)
-                    + 1.2f * expf(-0.5f * tailPeak * tailPeak);
-    // Mirror Brewfather's omission during temperature/pressure transitions.
-    if ((day >= 8.0f && day < 8.7f) ||
-        (day >= 12.5f && day < 13.2f) ||
-        (day >= 13.25f && day < 13.7f)) {
-      point.co2Rate = NAN;
-      point.flags |= GRAPH_RATE_TRANSITION;
-    }
   }
 
   // Write a complete replacement before touching the current history.

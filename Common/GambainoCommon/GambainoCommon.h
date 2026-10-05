@@ -24,6 +24,7 @@
 #define FERMERTEMPPACKET     'F'   // Povoto→BrewCore: "povotoIndex,temperature"
 #define ENVTEMPPACKET        'V'   // BrewCore→broadcast: "environmentTemp"
 #define BREWFATHERLOGPACKET  'W'   // Povoto→SideKick: full Brewfather JSON payload
+#define CLOUDLOGPACKET       'G'   // Povoto→SideKick: one cloud log record (JSON, Povoto/docs/cloud-log.md)
 
 #define SERIAL2_SPEED 1000000
 #define SERIAL2TIMEOUT 100

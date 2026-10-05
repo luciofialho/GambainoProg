@@ -7,10 +7,10 @@ Run as a post script so this overrides the builder's discovered FS range.
 
 Import("env")
 
-WEB_START = 0x670000
-WEB_SIZE = 0x110000
-PERSIST_START = 0x780000
-PERSIST_SIZE = 0x70000
+WEB_START = 0x510000
+WEB_SIZE = 0x210000
+PERSIST_START = 0x720000
+PERSIST_SIZE = 0xD0000
 
 with open(env.subst("$PROJECT_DIR/partitions.csv"), encoding="utf-8") as table:
     entries = [

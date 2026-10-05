@@ -32,6 +32,8 @@ struct GraphHistoryPoint {
 // ignored on restore; good records remain available.
 bool graphHistoryBegin();
 void graphHistorySampleIfDue();
+// The current values as one graph point (same validity rules as the samples).
+GraphHistoryPoint graphCapturePoint(uint32_t epoch);
 void graphHistoryResetForNewBatch();
 uint16_t graphHistoryCount();
 bool graphHistoryGetPoint(uint16_t chronologicalIndex, GraphHistoryPoint &point);
@@ -41,5 +43,10 @@ uint16_t graphHistoryCopyPoints(GraphHistoryPoint *destination, uint16_t capacit
 // Debug-only replacement of the single persisted series, from 14 days ago
 // through now. Requires valid NTP; future real samples append normally.
 bool graphHistoryGenerateDemo14Days();
+
+// Synthetic fermentation profile used by the demo and by the synthetic cloud
+// log: values for `day` days after the start (epoch left 0).
+constexpr float GRAPH_SYNTHETIC_OG = 1.054f;
+void graphSyntheticPoint(float day, GraphHistoryPoint &point);
 
 #endif

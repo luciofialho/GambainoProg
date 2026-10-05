@@ -28,9 +28,18 @@ sync with the selected tab). The batch number opens `/batch`, the left strip
 `/tasks` and the target fields `/setpoint` (the web pages replacing the TFT
 batch info, task and keyboard screens).
 
+Links between the pages are relative (`../graphs/#pressure`, `../batch`), so
+the same files also work in the cloud under `/p/<id>/dashboard/`. Two fields
+exist only in the cloud's responses: `readOnly` in `status.json` keeps only
+the graph touch zones; in `/graphs/meta.json`, `readOnly` hides the menu link
+and Export CSV (public links), and `batches`/`batch` show a batch selector.
+The data URLs carry the page's query string (`data.csv?batch=160`), which
+the device ignores. See docs/cloud-plan.md.
+
 The HTML, JS and CSS of `/dashboard` and `/graphs` are sent with
 `Cache-Control: no-cache`, so the browser revalidates them and a new web
 filesystem image takes effect immediately.
 
-The web LittleFS partition is nearly full (258 of 272 4 KB blocks with these
-files).
+The web files take ~1.03 MB (mostly `LCars.bmp` and `SplashScreen.bmp`). The
+old web partition (1.06 MB, 258 of 272 blocks used) was nearly full; the
+October 2026 layout gives it 2.06 MB (docs/graph-history.md).

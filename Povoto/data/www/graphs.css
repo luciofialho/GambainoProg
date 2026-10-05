@@ -13,6 +13,7 @@ p { margin: 0; }
 .panel { min-width: 0; background: #22272e; border: 1px solid #343d48; border-radius: 12px; padding: 18px; }
 #status { color: #aeb9c6; font-size: 13px; }
 #status[hidden] { display: none; }
+[hidden] { display: none !important; }
 .zoom-label { display: flex; flex-direction: column; gap: 5px; color: #aeb9c6; font-size: 12px; }
 select { min-width: 120px; }
 #status { margin: 12px 0; min-height: 18px; }

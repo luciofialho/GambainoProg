@@ -308,21 +308,46 @@
     }
   }
 
+  // Cloud only: readOnly (public link) hides the menu and the CSV export;
+  // batches fills the batch selector. The device sends neither.
+  function applyCloudMeta(meta) {
+    if (meta.readOnly) {
+      document.querySelector('.back').hidden = true;
+      document.getElementById('download-csv').hidden = true;
+    }
+    if (!Array.isArray(meta.batches) || !meta.batches.length) return;
+    const select = document.getElementById('batch');
+    for (const batch of meta.batches) {
+      const option = document.createElement('option');
+      option.value = String(batch.batch);
+      option.textContent = batch.label;
+      option.selected = batch.batch === meta.batch;
+      select.append(option);
+    }
+    select.hidden = false;
+    select.addEventListener('change', () => {
+      location.search = `?batch=${encodeURIComponent(select.value)}`;
+    });
+  }
+
   if (location.protocol === 'file:') {
     document.getElementById('download-csv').href = 'http://192.168.13.180/graphs/data.csv';
     document.querySelector('.back').hidden = true;
     status.textContent = 'Loading CSV from Povoto at 192.168.13.180...';
   }
+  // The cloud passes the batch in the query (?batch=160); the device ignores it.
   const url = location.protocol === 'file:'
-    ? 'http://192.168.13.180/graphs/data.csv' : 'data.csv';
+    ? 'http://192.168.13.180/graphs/data.csv' : `data.csv${location.search}`;
   const metaUrl = location.protocol === 'file:'
-    ? 'http://192.168.13.180/graphs/meta.json' : 'meta.json';
+    ? 'http://192.168.13.180/graphs/meta.json' : `meta.json${location.search}`;
+  if (location.protocol !== 'file:') document.getElementById('download-csv').href = url;
   fetch(metaUrl, {cache: 'no-store', mode: 'cors'})
     .then(response => {
       if (!response.ok) throw new Error(`OG request failed (${response.status}).`);
       return response.json();
     })
     .then(meta => {
+      applyCloudMeta(meta);
       originalGravity = typeof meta.og === 'number' && Number.isFinite(meta.og) && meta.og > 0
         ? meta.og : null;
       metaLoaded = true;

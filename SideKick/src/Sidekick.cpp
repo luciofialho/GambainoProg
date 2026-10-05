@@ -7,6 +7,7 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include "Sidekick-log.h"
+#include "Sidekick-cloud.h"
 #include "IOTK.h"
 #include <RCSwitch.h>
 #include <esp_now.h>
@@ -132,6 +133,10 @@ static void handlePacket(char type, const char *payload) {
       }
     } break;
 
+    case CLOUDLOGPACKET:
+      cashCloudLogRecord(payload);
+      break;
+
     case SENTINELPACKET:
       Serial.print("Sentinel from Brewcore: ");
       Serial.println(payload);
@@ -177,6 +182,7 @@ void logSendTask(void *pvParameters) {
   for(;;) {
     sendLogToGoogleSheets();
     sendLogToBrewfather();
+    sendCloudLog();
     
     vTaskDelay(xDelay); // Suspende a task por 15 segundos
   }
@@ -223,6 +229,7 @@ char *getSideKickStatus(char *st) {
            espnowQueueDrops.load());
   strcat(st, buf2);
 
+  appendCloudLogStatus(st, MAXSTATUSLEN);
   gambainoWiFiStatus(st, MAXSTATUSLEN);
   getPeerStatus(st, MAXSTATUSLEN);
 
@@ -241,6 +248,7 @@ void setup() {
   espnowQueue = xQueueCreateStatic(ESPNOW_QUEUE_SLOTS, sizeof(EspNowFrame),
       reinterpret_cast<uint8_t *>(espnowQueueStorage), &espnowQueueControl);
   if (!espnowQueue) Serial.println("[ESP-NOW] Could not initialize receive queue");
+  if (!initCloudLog()) Serial.println("[CLOUD] Cloud log unavailable");
 
   // WiFi Setup (never restarts on Wi-Fi failure: keeps the in-RAM log cache)
   gambainoWiFiBegin("SideKick", "gambaino");
@@ -251,6 +259,7 @@ void setup() {
   registerPeerSetupRoute();
   server.on("/resetbrewcore", HTTP_GET, handleResetBrewCore);
   server.on("/net", HTTP_GET, handleReconnectNetwork);
+  registerCloudLogRoutes();
 
   pinMode(RESETBREWCOREPIN, OUTPUT);
   digitalWrite(RESETBREWCOREPIN, LOW); 
@@ -259,7 +268,7 @@ void setup() {
   BaseType_t taskCreated = logQueuesReady ? xTaskCreatePinnedToCore(
     logSendTask,           // Função da task
     "LogSend",             // Nome da task (para debug)
-    8192,                  // Stack size in bytes
+    12288,                 // Stack size in bytes (three TLS clients run here)
     NULL,                  // Parâmetros (não usado)
     1,                     // Prioridade (1 = baixa)
     &logSendTaskHandle,    // Handle da task

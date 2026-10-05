@@ -28,6 +28,7 @@
 #include "PovotoTasks.h"
 #include "AutoSetpoints.h"
 #include "GraphHistory.h"
+#include "CloudLog.h"
 #include "PovotoFilesystem.h"
 #include "PovotoGraphScreen.h"
 #include "PovotoLogos.h"
@@ -200,6 +201,7 @@ void setup() {
 
 
   povotoDataInit();
+  cloudLogBegin();
   ElegantOTA.onStart([]() {
     writeCountersDataToNIV();
     saveCO2Buffers(); // the CO2 windows continue after the update (docs/gco2-rate.md)
@@ -270,6 +272,7 @@ void setup() {
 
   server.on("/debugparams/graphs/demo", HTTP_POST, handleGraphsGenerateDemo);
   server.on("/debugparams/update", HTTP_POST, handleDebugParamsUpdate);
+  server.on("/debugparams/cloud", HTTP_POST, handleDebugCloudUpdate);
   server.on("/debugparams", HTTP_GET, handleDebugParamsPage);
   // Register child paths before /graphs (prefix-matching async server).
   server.on("/graphs/meta.json", HTTP_GET, handleGraphsMeta);
@@ -444,6 +447,7 @@ void loop() {
   updateGraphScreenIfNeeded();
   evaluateAutoSetpoints();
   maybeSendBrewfatherLog();
+  maybeSendCloudLog();
   maybePersistCountersData();
 
   static unsigned long lastDataLog = 0;

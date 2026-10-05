@@ -1,0 +1,22 @@
+{
+  "name": "povoto-cloud",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "assets": "node scripts/copy-assets.mjs",
+    "dev": "node scripts/copy-assets.mjs && wrangler dev",
+    "deploy": "node scripts/copy-assets.mjs && wrangler deploy && wrangler deploy --env public",
+    "migrate:local": "wrangler d1 migrations apply povoto --local",
+    "migrate:remote": "wrangler d1 migrations apply povoto --remote",
+    "typecheck": "tsc --noEmit",
+    "check": "node scripts/check-phase1.mjs"
+  },
+  "dependencies": {
+    "hono": "^4.13.13"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261005.1",
+    "typescript": "^5.9.0",
+    "wrangler": "^4.147.0"
+  }
+}

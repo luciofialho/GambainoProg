@@ -169,16 +169,19 @@
   }
 
   // Touch zones in displayUtils.cpp processTouch(). The TFT graph, keyboard,
-  // task and batch screens are the existing web pages here.
+  // task and batch screens are the existing web pages here. Paths are
+  // relative so the page also works under the cloud's /p/<id>/dashboard/;
+  // a read-only status (cloud) keeps only the graphs.
   function mainAction(x, y) {
-    if (x >= 45 && x <= 160 && y <= 50) return () => go('/batch');
-    if (x < 80) return () => go('/tasks');
-    if (x >= 125 && x <= 220 && y >= 88 && y <= 148) return () => go('/graphs/#temperature');
-    if (x >= 235 && x <= 470 && y <= 55) return () => go('/graphs/#evolution');
-    if (x >= 125 && x <= 220 && y >= 162 && y <= 219) return () => go('/graphs/#attenuation');
-    if (x >= 125 && x <= 220 && y >= 235 && y <= 301) return () => go('/graphs/#pressure');
-    if (x >= 260 && x <= 430 && ((y >= 85 && y <= 165) || (y >= 230 && y <= 262)))
-      return () => go('/setpoint');
+    const editable = !(status && status.readOnly);
+    if (editable && x >= 45 && x <= 160 && y <= 50) return () => go('../batch');
+    if (editable && x < 80) return () => go('../tasks');
+    if (x >= 125 && x <= 220 && y >= 88 && y <= 148) return () => go('../graphs/#temperature');
+    if (x >= 235 && x <= 470 && y <= 55) return () => go('../graphs/#evolution');
+    if (x >= 125 && x <= 220 && y >= 162 && y <= 219) return () => go('../graphs/#attenuation');
+    if (x >= 125 && x <= 220 && y >= 235 && y <= 301) return () => go('../graphs/#pressure');
+    if (editable && x >= 260 && x <= 430 && ((y >= 85 && y <= 165) || (y >= 230 && y <= 262)))
+      return () => go('../setpoint');
     return null;
   }
 

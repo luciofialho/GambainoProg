@@ -18,6 +18,7 @@
 #include <stdarg.h>
 #include <memory>
 #include <esp_heap_caps.h>
+#include "CloudLog.h"
 #include "GraphHistory.h"
 #include "Povoto_UI.h"
 
@@ -387,7 +388,7 @@ void handleDebugParamsPage(AsyncWebServerRequest *request) {
     return;
   }
 
-  const size_t BUFFER_SIZE = 4500;
+  const size_t BUFFER_SIZE = 6000;
   char* html = (char*)malloc(BUFFER_SIZE);
   if (!html) {
     request->send(500, "text/plain", "Out of memory");
@@ -476,12 +477,46 @@ void handleDebugParamsPage(AsyncWebServerRequest *request) {
                "onsubmit='return confirm(\"Replace the current graph history in PSRAM and LittleFS with 14 days of synthetic data?\")'>"
                "<input type='hidden' name='confirm' value='replace'>"
                "<button type='submit'>Replace graph history with 14-day demo</button></form>"
-               "<p><a href='/graphs'>Open Graphs / CSV downloads</a></p>"
-               "</div>"
-               "</body></html>", remaining);
+               "<p><a href='/graphs'>Open Graphs / CSV downloads</a></p>", remaining);
+
+  {
+    char startText[20], lastText[20], cloud[800];
+    formatLocalEpochISO(cloudSyntheticLogStart(), startText, sizeof(startText));
+    formatLocalEpochISO(cloudLogLastSentEpoch(), lastText, sizeof(lastText));
+    snprintf(cloud, sizeof(cloud),
+             "<hr><h2>Cloud log</h2>"
+             "<p>One record every %lu s to the SideKick. Sent: %lu, errors: %lu, last: %s.</p>"
+             "<form action='/debugparams/cloud' method='POST'>"
+             "<label><input type='checkbox' name='synthetic' value='1'%s> Synthetic log</label>"
+             "<small>The cloud records carry the 14-day synthetic profile (restarting every 14 days) "
+             "instead of the measurements; kept across reboots. %s%s</small><br>"
+             "<button type='submit'>Save cloud log</button></form>",
+             (unsigned long)cloudLogSlotSeconds(), cloudLogSentCount(), cloudLogSendErrors(),
+             lastText[0] ? lastText : "never",
+             cloudSyntheticLogStored() ? " checked" : "",
+             cloudSyntheticLogStored() ? "Day 0: " : "",
+             cloudSyntheticLogStored() ? startText : "");
+    remaining = BUFFER_SIZE - strlen(html) - 1;
+    strncat(html, cloud, remaining);
+  }
+  remaining = BUFFER_SIZE - strlen(html) - 1;
+  strncat(html, "</div></body></html>", remaining);
 
   request->send(200, "text/html", html);
   free(html);
+}
+
+void handleDebugCloudUpdate(AsyncWebServerRequest *request) {
+  if (!debugging) {
+    request->send(403, "text/plain", "Debug mode only");
+    return;
+  }
+  const bool synthetic = request->hasParam("synthetic", true);
+  if (!setCloudSyntheticLog(synthetic)) {
+    request->send(503, "text/plain", "Could not save: NTP or NVS unavailable.");
+    return;
+  }
+  request->redirect("/debugparams");
 }
 
 void handleDebugParamsUpdate(AsyncWebServerRequest *request) {

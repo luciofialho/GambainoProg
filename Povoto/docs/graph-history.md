@@ -80,10 +80,13 @@ Firmware and LittleFS uploads remain separate operations.
   every exported row.
 - The home page uses compact vector logos converted from the supplied Povoto
   and Brewtal SVGs and served from firmware; no LittleFS asset upload is needed.
-- `partitions.csv` retains both OTA firmware slots and the coredump at their
-  original offsets. The former `0x180000`-byte filesystem region is split into
-  `spiffs` (web assets, `0x670000` + `0x110000` = 1,114,112 B) and `persist`
-  (graph history and CO2 buffers, `0x780000` + `0x70000` = 458,752 B).
+- `partitions.csv` (8 MB flash): two OTA firmware slots of 2.5 MB
+  (`app0` `0x10000`, `app1` `0x290000`, `0x280000` each; the firmware used
+  1.50 MB in October 2026), `spiffs` (web assets, `0x510000` + `0x210000` =
+  2,162,688 B), `persist` (graph history and CO2 buffers, `0x720000` +
+  `0xd0000` = 851,968 B) and the coredump at `0x7F0000`. The previous layout
+  (default 8 MB table: 3.19 MB slots and one shared `0x180000` filesystem at
+  `0x670000`) is still on boards not yet migrated.
   Firmware detects whether `persist` exists in the *device's* partition table:
   old devices continue using their single shared LittleFS; migrated devices
   use separate mounts. No failed mount formats existing data. A fully erased
@@ -93,18 +96,24 @@ Firmware and LittleFS uploads remain separate operations.
   `scripts/webfs_partition.py` redirects its `buildfs`/`uploadfs` image size
   and USB write offset to the web partition. The `data/` directory must contain
   only deployable assets, never a live copy of a persistence file.
-- Migration is **not** a normal firmware OTA. Back up both live files first,
-  then install the new partition table over USB, erase only the future persist
-  region (`0x780000` through `0x7effff`), upload the web filesystem image,
-  and restore the backed-up files to the new data partition. Do not erase the
-  whole flash. Merely updating firmware on an old device does not change its
-  partition table and remains compatible, but a filesystem-image upload on an
-  unmigrated device still overwrites its shared filesystem and live data.
-  The first migrated boot can start
-  with an empty persist partition, but old history/buffers will then be absent
-  unless they were restored. The CO2 buffer restoration also requires its
-  saved timestamp to be at most 10 minutes old; preserving its bytes does not
-  override that freshness rule.
+- Migration is **not** a normal firmware OTA: every board is written once
+  over USB, preferably between batches. NVS (settings, calibration, batch,
+  rules, counters) is kept because the flash is not fully erased. The graph
+  history and the CO2 buffers are lost: there is no backup route, and the
+  buffers would be older than their 10-minute freshness limit anyway. Export
+  the graph CSV first if the history matters.
+  1. Erase the new `persist` region, so the first boot formats it (old
+     filesystem bytes there would only fail to mount):
+     `pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32s3 --port COMx erase_region 0x720000 0xd0000`
+  2. `pio run -e Povoto -t upload`: bootloader, new table, firmware in
+     `app0` and the OTA data pointing to it.
+  3. `pio run -e Povoto -t uploadfs`: web image at `0x510000`.
+  4. Check `/getstatus`: web and data LittleFS reported separately, with the
+     new sizes.
+  Do not erase the whole flash (NVS). Do not use `uploadfs` with this table
+  on a board still on the old layout: it would write the web image over the
+  middle of the old shared filesystem. After the migration, firmware and web
+  updates go back to OTA.
 
 The Evolution chart loads its observations through the existing chunked CSV
 endpoint rather than embedding history in the HTML page.

@@ -47,6 +47,7 @@ void handleControlAuto(AsyncWebServerRequest *request);
 void handleControlReliefOnce(AsyncWebServerRequest *request);
 void handleDebugParamsPage(AsyncWebServerRequest *request);
 void handleDebugParamsUpdate(AsyncWebServerRequest *request);
+void handleDebugCloudUpdate(AsyncWebServerRequest *request);
 
 void handleTasksPage(AsyncWebServerRequest *request);
 void handleTaskStart(AsyncWebServerRequest *request);
