@@ -42,4 +42,4 @@ filesystem image takes effect immediately.
 
 The web files take ~1.03 MB (mostly `LCars.bmp` and `SplashScreen.bmp`). The
 old web partition (1.06 MB, 258 of 272 blocks used) was nearly full; the
-October 2026 layout gives it 2.06 MB (docs/graph-history.md).
+October 2026 layout (16 MB flash) gives it 4 MB (docs/graph-history.md).

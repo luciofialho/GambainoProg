@@ -80,13 +80,14 @@ Firmware and LittleFS uploads remain separate operations.
   every exported row.
 - The home page uses compact vector logos converted from the supplied Povoto
   and Brewtal SVGs and served from firmware; no LittleFS asset upload is needed.
-- `partitions.csv` (8 MB flash): two OTA firmware slots of 2.5 MB
-  (`app0` `0x10000`, `app1` `0x290000`, `0x280000` each; the firmware used
-  1.50 MB in October 2026), `spiffs` (web assets, `0x510000` + `0x210000` =
-  2,162,688 B), `persist` (graph history and CO2 buffers, `0x720000` +
-  `0xd0000` = 851,968 B) and the coredump at `0x7F0000`. The previous layout
-  (default 8 MB table: 3.19 MB slots and one shared `0x180000` filesystem at
-  `0x670000`) is still on boards not yet migrated.
+- Povotos require an ESP32-S3 with 16 MB flash and 8 MB PSRAM (N16R8);
+  `platformio.ini` builds for 16 MB. `partitions.csv`: two OTA firmware slots
+  of 3 MB (`app0` `0x10000`, `app1` `0x310000`, `0x300000` each; the firmware
+  used 1.50 MB in October 2026), `spiffs` (web assets, `0x610000` +
+  `0x400000` = 4 MB), `persist` (graph history and CO2 buffers, `0xa10000` +
+  `0x5e0000` = 6,160,384 B) and the coredump at `0xff0000`. The previous
+  layout (default 8 MB table: 3.19 MB slots and one shared `0x180000`
+  filesystem at `0x670000`) is still on boards not yet migrated.
   Firmware detects whether `persist` exists in the *device's* partition table:
   old devices continue using their single shared LittleFS; migrated devices
   use separate mounts. No failed mount formats existing data. A fully erased
@@ -104,10 +105,10 @@ Firmware and LittleFS uploads remain separate operations.
   the graph CSV first if the history matters.
   1. Erase the new `persist` region, so the first boot formats it (old
      filesystem bytes there would only fail to mount):
-     `pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32s3 --port COMx erase_region 0x720000 0xd0000`
+     `pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32s3 --port COMx erase_region 0xa10000 0x5e0000`
   2. `pio run -e Povoto -t upload`: bootloader, new table, firmware in
      `app0` and the OTA data pointing to it.
-  3. `pio run -e Povoto -t uploadfs`: web image at `0x510000`.
+  3. `pio run -e Povoto -t uploadfs`: web image at `0x610000`.
   4. Check `/getstatus`: web and data LittleFS reported separately, with the
      new sizes.
   Do not erase the whole flash (NVS). Do not use `uploadfs` with this table
