@@ -357,9 +357,9 @@ void handleDashboardStatus(AsyncWebServerRequest *request) {
   } else {
     const float rate = getBeerCO2EvolutionGramsPerLiterPerDay();
     if (isfinite(rate) && rate > 0.0f && !co2RateInTransition())
-      snprintf(text, sizeof(text), "g CO2 g/L/d:%.1f", rate);
+      snprintf(text, sizeof(text), "g CO2 ÷(L.d):%.1f", rate);
     else
-      snprintf(text, sizeof(text), "g CO2 g/L/d:N/A");
+      snprintf(text, sizeof(text), "g CO2 ÷(L.d):N/A");
   }
   dashboardJsonString(json, "co2Label", text);
   snprintf(text, sizeof(text), "%.0f", CO2Mass());

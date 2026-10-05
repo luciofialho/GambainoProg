@@ -1,5 +1,6 @@
 // Povoto cloud, phase 1 (Povoto/docs/cloud-plan.md, cloud/README.md).
 import { Hono, type Context } from 'hono';
+import { getCookie, setCookie } from 'hono/cookie';
 import { accessEmail, randomToken, sha256Hex } from './auth';
 import * as db from './db';
 import { batchLabel, dashboardStatus, graphCsv } from './format';
@@ -66,9 +67,8 @@ function nowLocal(env: Env): number {
 async function asset(c: Ctx, name: string): Promise<Response> {
   const response = await c.env.ASSETS.fetch(new URL(`/${name}`, c.req.url));
   if (!response.ok) return c.text('Not found', 404);
-  return new Response(response.body, {
-    headers: { 'Content-Type': ASSET_TYPES[name], 'Cache-Control': 'no-cache' },
-  });
+  // Through the context, so headers set before (the last-visit cookie) go too.
+  return c.body(await response.arrayBuffer(), 200, { 'Content-Type': ASSET_TYPES[name], 'Cache-Control': 'no-cache' });
 }
 
 function noStore(response: Response): Response {
@@ -150,10 +150,26 @@ app.use('*', async (c, next) => {
   await next();
 });
 
-app.get('/', async c => {
+// The site opens where the last visit ended: the list, or the dashboard of
+// the last Povoto seen (its dashboard or graphs). Kept per browser in a cookie.
+const LAST_COOKIE = 'povoto_last';
+
+function rememberPage(c: Ctx, path: string): void {
+  setCookie(c, LAST_COOKIE, path, { path: '/', maxAge: 365 * 86400, sameSite: 'Lax', secure: true, httpOnly: true });
+}
+
+async function listPage(c: Ctx): Promise<Response> {
+  rememberPage(c, '/povotos');
   const povotos = await db.listPovotos(c.env.DB, c.get('access').viewableIds());
   return c.html(homePage(c.get('email'), povotos, nowLocal(c.env)));
+}
+
+app.get('/', async c => {
+  const match = /^\/p\/(\d{1,9})\/dashboard\/$/.exec(getCookie(c, LAST_COOKIE) ?? '');
+  if (match && c.get('access').canView(Number(match[1]))) return c.redirect(match[0], 302);
+  return listPage(c);
 });
+app.get('/povotos', listPage);
 
 app.get('/search', async c => {
   const query = (c.req.query('q') ?? '').trim().slice(0, 64);
@@ -187,7 +203,12 @@ app.get('/p/:id/', async c => {
 
 // Dashboard: the device page, fed by the latest log row.
 app.get('/p/:id/dashboard', c => c.redirect(`/p/${c.req.param('id')}/dashboard/`, 301));
-app.get('/p/:id/dashboard/', async c => (await povotoFor(c)) ? asset(c, 'dashboard.html') : notFound(c));
+app.get('/p/:id/dashboard/', async c => {
+  const povoto = await povotoFor(c);
+  if (!povoto) return notFound(c);
+  rememberPage(c, `/p/${povoto.id}/dashboard/`);
+  return asset(c, 'dashboard.html');
+});
 app.get('/p/:id/dashboard/status.json', async c => {
   const povoto = await povotoFor(c);
   if (!povoto) return c.json({}, 404);
@@ -209,7 +230,12 @@ async function graphBatch(c: Ctx, povotoId: number): Promise<db.BatchRow | null>
 }
 
 app.get('/p/:id/graphs', c => c.redirect(`/p/${c.req.param('id')}/graphs/`, 301));
-app.get('/p/:id/graphs/', async c => (await povotoFor(c)) ? asset(c, 'graphs.html') : notFound(c));
+app.get('/p/:id/graphs/', async c => {
+  const povoto = await povotoFor(c);
+  if (!povoto) return notFound(c);
+  rememberPage(c, `/p/${povoto.id}/dashboard/`);
+  return asset(c, 'graphs.html');
+});
 app.get('/p/:id/graphs/data.csv', async c => {
   const povoto = await povotoFor(c);
   if (!povoto) return c.text('Not found', 404);

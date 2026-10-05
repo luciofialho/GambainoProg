@@ -10,7 +10,8 @@
   const MAX_SCALE = 2; // 960 x 640 on large screens
   const STATUS_MS = 3000;
   const canvas = document.getElementById('screen');
-  const footer = document.getElementById('footer');
+  const page = document.getElementById('page');
+  const back = document.getElementById('back');
   const updated = document.getElementById('updated');
   const ctx = canvas.getContext('2d');
 
@@ -196,16 +197,31 @@
   // ------------------------------------------------------------ plumbing
   function render() {
     drawMain();
-    updated.textContent = status && typeof status.updated === 'string' ? status.updated : '';
   }
 
+  // Cloud only: the data age below the screen and the link back to the list.
+  function applyPageTexts() {
+    const text = status && typeof status.updated === 'string' ? status.updated : '';
+    const lineChanged = !text !== !updated.textContent;
+    updated.textContent = text;
+    if (status && status.back && typeof status.back.href === 'string') {
+      back.href = status.back.href;
+      back.textContent = `← ${status.back.label}`;
+    }
+    if (lineChanged) resize(); // the line below the screen appeared or vanished
+  }
+
+  // The screen takes what the link, frame and signature leave of the window.
   function resize() {
-    const available = window.innerHeight - footer.offsetHeight;
-    const scale = Math.min(window.innerWidth / W, available / H, MAX_SCALE);
+    const pageBox = page.getBoundingClientRect();
+    const canvasBox = canvas.getBoundingClientRect();
+    const extraWidth = pageBox.width - canvasBox.width;
+    const extraHeight = pageBox.height - canvasBox.height;
+    const scale = Math.max(0.1, Math.min((window.innerWidth - extraWidth) / W,
+                                         (window.innerHeight - extraHeight) / H, MAX_SCALE));
     const ratio = window.devicePixelRatio || 1;
     canvas.style.width = `${W * scale}px`;
     canvas.style.height = `${H * scale}px`;
-    footer.style.width = `${W * scale}px`;
     canvas.width = Math.round(W * scale * ratio);
     canvas.height = Math.round(H * scale * ratio);
     ctx.setTransform(canvas.width / W, 0, 0, canvas.height / H, 0, 0);
@@ -235,6 +251,7 @@
       const response = await fetch('status.json', { cache: 'no-store' });
       if (!response.ok) throw new Error(response.statusText);
       status = await response.json();
+      applyPageTexts();
       online = true;
     } catch (error) {
       online = false;

@@ -5,29 +5,37 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="theme-color" content="#000000">
+  <meta name="theme-color" content="#16191e">
   <title>Povoto Dashboard</title>
   <style>
-    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+    /* Same frame and colors as the /graphs page. */
+    html, body { margin: 0; height: 100%; background: #16191e; color: #e8edf3; overflow: hidden; }
     body {
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      display: flex; align-items: center; justify-content: center;
+      font-family: Arial, Helvetica, sans-serif;
       touch-action: manipulation; user-select: none; -webkit-user-select: none;
       -webkit-tap-highlight-color: transparent;
     }
+    #page { display: flex; flex-direction: column; padding: 12px 16px; }
+    .back { align-self: flex-start; margin-bottom: 10px; color: #a9b8d6; text-decoration: none; font-size: 15px; }
+    .panel { background: #22272e; border: 1px solid #343d48; border-radius: 12px; padding: 14px; }
     canvas { display: block; }
-    footer {
-      display: flex; align-items: center; justify-content: space-between; gap: 12px;
-      box-sizing: border-box; padding: 6px 4px 0; font: 12px Arial, Helvetica, sans-serif; color: #9aa3ad;
-    }
-    footer img { height: 40px; width: auto; display: block; filter: invert(1); opacity: .7; }
+    #updated { margin-top: 8px; font-size: 12px; color: #9aa3ad; }
+    #updated:empty { display: none; }
+    .signature { display: flex; justify-content: center; margin-top: 14px; }
+    .signature img { width: 160px; max-width: 45%; height: auto; display: block; filter: invert(1); opacity: .7; }
   </style>
 </head>
 <body>
-  <canvas id="screen" width="480" height="320" aria-label="Povoto screen"></canvas>
-  <footer id="footer">
-    <span id="updated"></span>
-    <img src="/assets/brewtal.svg" alt="Brewtal" onerror="this.hidden = true">
-  </footer>
+  <div id="page">
+    <!-- The cloud replaces the target and text through status.json (back). -->
+    <a id="back" class="back" href="../">&larr; Menu</a>
+    <section class="panel">
+      <canvas id="screen" width="480" height="320" aria-label="Povoto screen"></canvas>
+      <div id="updated"></div>
+    </section>
+    <footer class="signature"><img src="/assets/brewtal.svg" alt="Brewtal" onerror="this.hidden = true"></footer>
+  </div>
   <script src="dashboard.js"></script>
 </body>
 </html>

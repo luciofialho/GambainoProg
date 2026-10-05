@@ -85,7 +85,7 @@ export function searchPage(query: string, results: BatchRow[], names: Map<number
 ${escapeHtml(localDateTime(b.first_epoch))} to ${escapeHtml(localDateTime(b.last_epoch))}</div></div>
 <a class="button" href="/p/${b.povoto_id}/graphs/?batch=${b.batch}">Graphs</a>
 <a class="button" href="/p/${b.povoto_id}/">Old batches</a></div>`).join('');
-  return layout('Search', `<p><a href="/">&larr; Povotos</a></p>${brandTitle('Search')}${searchForm(query)}
+  return layout('Search', `<p><a href="/povotos">&larr; Povotos</a></p>${brandTitle('Search')}${searchForm(query)}
 <h2>Results</h2>${items || '<p class="muted">No batch found.</p>'}`);
 }
 
@@ -109,12 +109,12 @@ export function povotoPage(povoto: { id: number; site: number; num: number }, ba
 <div class="muted">${escapeHtml(localDateTime(b.first_epoch))} to ${escapeHtml(localDateTime(b.last_epoch))}</div></div>
 <a class="button" href="graphs/?batch=${b.batch}">Graphs</a>${actions}</div>${links}</div>`;
   }).join('');
-  return layout(povotoName(povoto), `<p><a href="/">&larr; Povotos</a></p>
+  return layout(povotoName(povoto), `<p><a href="/povotos">&larr; Povotos</a></p>
 ${brandTitle(povotoName(povoto))}
 <div class="row"><a class="button" href="dashboard/">Dashboard</a></div>
 <h2>Batches</h2>${items || '<p class="muted">No batch recorded.</p>'}`);
 }
 
 export function messagePage(title: string, message: string): string {
-  return layout(title, `${brandTitle(title)}<p>${escapeHtml(message)}</p><p><a href="/">Home</a></p>`);
+  return layout(title, `${brandTitle(title)}<p>${escapeHtml(message)}</p><p><a href="/povotos">Povotos</a></p>`);
 }

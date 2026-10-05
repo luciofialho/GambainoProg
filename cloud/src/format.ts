@@ -39,7 +39,7 @@ export function ageText(seconds: number): string {
 export function dashboardStatus(log: LogRow, batch: BatchRow | null, num: number, nowLocal: number) {
   // gCO2/L/d with the graph's rule (null outside Fermenting or in a transition).
   const rate = log.mode === MODE_FERMENTING
-    ? (log.rate === null ? ' g/L/d:N/A' : ` g/L/d:${log.rate.toFixed(1)}`)
+    ? (log.rate === null ? ' ÷(L.d):N/A' : ` ÷(L.d):${log.rate.toFixed(1)}`)
     : '';
   return {
     batchNumber: String(log.batch).padStart(4, '0'),
@@ -62,6 +62,7 @@ export function dashboardStatus(log: LogRow, batch: BatchRow | null, num: number
     wifiBars: 0,
     calibration: ['', '', ''],
     readOnly: true,
+    back: { href: '/povotos', label: 'Povotos' },
   };
 }
 

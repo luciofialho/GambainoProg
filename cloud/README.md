@@ -55,6 +55,9 @@ decisions: `Povoto/docs/cloud-plan.md`; record format and the device side:
   Results in the dashboard: Workers & Pages → povoto-cloud → Deployments.
   Database migrations are not applied by it: run `npm run migrate:remote`.
 - By hand, from this folder: `npm run deploy`.
+- The site root opens where the browser last was: the Povoto list
+  (`/povotos`) or the dashboard of the last Povoto seen (cookie
+  `povoto_last`, set by the list, dashboard and graphs pages).
 - Phase 1 check: `node scripts/check-phase1.mjs <povotoId> [batch]` (rows per
   day, gaps, delay, synthetic values).
 - Without hardware: `node scripts/feed-test.mjs https://povoto-public.povoto-cloud.workers.dev/api/ingest <token> [num] [batch] [days]`
