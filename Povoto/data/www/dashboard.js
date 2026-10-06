@@ -105,8 +105,15 @@
   }
 
   // ------------------------------------------------------------- state
+  // Nothing but "Loading..." until the background and the first status have
+  // arrived (or failed), so the numbers never show without the screen.
+  let backgroundSettled = false;
+  let firstPollDone = false;
   const background = new Image();
-  background.onload = () => render();
+  background.onload = background.onerror = () => {
+    backgroundSettled = true;
+    render();
+  };
   background.src = 'LCars.bmp';
 
   let status = null;
@@ -195,8 +202,14 @@
   }
 
   // ------------------------------------------------------------ plumbing
+  function drawLoading() {
+    fillRect(0, 0, W, H, BLACK);
+    glcd('Loading...', '16px Arial, Helvetica, sans-serif', W / 2, H / 2, 'MC', LIGHTGREY);
+  }
+
   function render() {
-    drawMain();
+    if (backgroundSettled && firstPollDone) drawMain();
+    else drawLoading();
   }
 
   // Cloud only: the data age below the screen and the link back to the list.
@@ -256,6 +269,7 @@
     } catch (error) {
       online = false;
     }
+    firstPollDone = true;
     render();
     if (!document.hidden) pollTimer = setTimeout(poll, STATUS_MS);
   }

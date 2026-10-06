@@ -1016,7 +1016,7 @@ void UI_SETUP() {
   cmdSerialBuf[0] = '\0';
 
   // "/" in the setup AP gives the contingency access to the BrewCore UI
-  gambainoWiFiBegin("BrewCore", "gambaino", "/");
+  gambainoWiFiBegin("BrewCore", nullptr, "/");   // open AP
   loadPeers();
   registerOwnPeer(PEERTYPE_BREWCORE);
 

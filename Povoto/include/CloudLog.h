@@ -3,8 +3,8 @@
 
 #include <Arduino.h>
 
-// One record per 5-minute slot to the SideKick, which forwards it to the
-// cloud (docs/cloud-log.md).
+// One history record and one batch state per 5-minute slot to the SideKick,
+// which forwards them to the cloud (docs/cloud-log.md).
 void cloudLogBegin();
 void maybeSendCloudLog();
 

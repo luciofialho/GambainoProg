@@ -145,7 +145,8 @@ const char *getCO2EvolutionSource(); // "calculated", "held" or "transition"
 float CO2DissolvedMols(float pressureBar, float sg, float temperatureC, float volumeL);
 boolean inPressureNoiseWindow();
 void getReliefsPerHourText(char *out, size_t outSize);
-void getReliefsPerHourCompactText(char *out, size_t outSize);
+// "gCO2 [x.x/(L.d)]" in Fermenting, "g CO2" otherwise (TFT and dashboards).
+void getCO2RateLabel(char *out, size_t outSize);
 float getReliefsPerHourValue();
 float SGToApparentPlato(float sg);
 float SGToRealPlato(float sg);

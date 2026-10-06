@@ -137,6 +137,10 @@ static void handlePacket(char type, const char *payload) {
       cashCloudLogRecord(payload);
       break;
 
+    case CLOUDSTATEPACKET:
+      cashCloudState(payload);
+      break;
+
     case SENTINELPACKET:
       Serial.print("Sentinel from Brewcore: ");
       Serial.println(payload);
@@ -231,6 +235,11 @@ char *getSideKickStatus(char *st) {
 
   appendCloudLogStatus(st, MAXSTATUSLEN);
   gambainoWiFiStatus(st, MAXSTATUSLEN);
+  char bfURL[BREWFATHER_URL_MAXLEN + 1];
+  getBrewfatherStreamURL(bfURL, sizeof(bfURL));
+  strlcat(st, bfURL[0] ? "&nbsp;&nbsp;Brewfather key: configured<br>"
+                       : "&nbsp;&nbsp;Brewfather key: not configured (sending disabled)<br>", MAXSTATUSLEN);
+  appendCloudSiteStatus(st, MAXSTATUSLEN);
   getPeerStatus(st, MAXSTATUSLEN);
 
   return st;
@@ -251,15 +260,19 @@ void setup() {
   if (!initCloudLog()) Serial.println("[CLOUD] Cloud log unavailable");
 
   // WiFi Setup (never restarts on Wi-Fi failure: keeps the in-RAM log cache)
-  gambainoWiFiBegin("SideKick", "gambaino");
+  gambainoWiFiBegin("SideKick", nullptr);   // open AP
+  loadBrewfatherSettings();
+  gambainoWiFiAddSettingsField({"bfurl", "Brewfather stream URL (blank disables)", BREWFATHER_URL_MAXLEN,
+                                getBrewfatherStreamURL, setBrewfatherStreamURL});
   loadPeers();
   registerOwnPeer(PEERTYPE_SIDEKICK);
 
   setStatusSource(getSideKickStatus);
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) { request->redirect("/getstatus"); });
   registerPeerSetupRoute();
   server.on("/resetbrewcore", HTTP_GET, handleResetBrewCore);
   server.on("/net", HTTP_GET, handleReconnectNetwork);
-  registerCloudLogRoutes();
+  registerCloudLogSettings();
 
   pinMode(RESETBREWCOREPIN, OUTPUT);
   digitalWrite(RESETBREWCOREPIN, LOW); 

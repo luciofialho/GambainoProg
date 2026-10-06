@@ -1,7 +1,7 @@
 // Server-rendered pages of the cloud itself (the Povoto pages are static
 // assets). Plain HTML, in English like the Povoto, styled like its graphs page.
 import type { BatchRow, PovotoRow, ShareRow } from './db';
-import { ageText, batchLabel, localDateTime } from './format';
+import { ageText, batchLabel, batchStateText, localDateTime } from './format';
 
 // A Povoto is shown with its batch while records keep arriving in Fermenting
 // or Conditioning (it sends every 5 min while a batch is on).
@@ -119,7 +119,8 @@ export function povotoPage(povoto: { id: number; num: number }, batches: BatchRo
       ? '<a class="button" href="dashboard/">Dashboard</a>'
       : `<a class="button" href="graphs/?batch=${b.batch}">Graphs</a>`;
     return `<div class="card"><div class="row"><div class="grow"><strong>${escapeHtml(batchLabel(b))}</strong>
-<div class="muted">${escapeHtml(localDateTime(b.first_epoch))} to ${escapeHtml(localDateTime(b.last_epoch))}</div></div>
+<div class="muted">${escapeHtml(localDateTime(b.first_epoch))} to ${escapeHtml(localDateTime(b.last_epoch))}</div>
+${batchStateText(b) ? `<div class="muted">${escapeHtml(batchStateText(b))}</div>` : ''}</div>
 ${open}${share}</div>${links}</div>`;
   }).join('');
   return layout(povotoName(povoto), `<p><a href="/povotos">&larr; Back</a></p>

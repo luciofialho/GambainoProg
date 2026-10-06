@@ -82,6 +82,26 @@ export function graphCsv(rows: LogRow[]): string {
   return lines.join('\r\n') + '\r\n';
 }
 
+function hoursMinutes(seconds: number | null): string {
+  if (seconds === null) return '-';
+  const minutes = Math.floor(seconds / 60);
+  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`;
+}
+
+function mol(value: number | null): string {
+  return value === null ? '-' : value.toFixed(2);
+}
+
+// Latest batch state (counters), or '' when none was received.
+export function batchStateText(batch: BatchRow): string {
+  if (batch.state_epoch === null) return '';
+  return `Chiller ${hoursMinutes(batch.chill_seconds)} · Heater ${hoursMinutes(batch.heat_seconds)}` +
+    ` · Expansions ${batch.expansions ?? '-'} · CO2 mol: headspace ${mol(batch.mol_headspace)},` +
+    ` dissolved ${mol(batch.mol_dissolved)}, ejected ${mol(batch.mol_ejected)}` +
+    ` · Dumped ${batch.dumped_volume === null ? '-' : `${batch.dumped_volume.toFixed(1)} L`}` +
+    ` (at ${localDateTime(batch.state_epoch)})`;
+}
+
 export function batchLabel(batch: BatchRow): string {
   const date = batch.date ? ` (${batch.date})` : '';
   return `${batch.batch} - ${batch.name || 'no name'}${date}`;

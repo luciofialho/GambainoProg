@@ -2032,22 +2032,22 @@ void getReliefsPerHourText(char *out, size_t outSize) {
   snprintf(out, outSize, " (Reliefs/hour: %.1f)", reliefsPerHourValue);
 }
 
-void getReliefsPerHourCompactText(char *out, size_t outSize) {
+void getCO2RateLabel(char *out, size_t outSize) {
   if (!out || outSize == 0) {
     return;
   }
 
-  out[0] = '\0';
+  // gCO2/L/d with the graph's rule: Fermenting only, positive and outside a
+  // transition. Same text on the TFT, the web dashboard and the cloud one.
   if (SetPointData.mode != MODE_FERMENTING) {
+    snprintf(out, outSize, "g CO2");
     return;
   }
-
-  if (!reliefsPerHourAvailable || reliefsPerHourValue < RELIEF_PER_HOUR_MIN_DISPLAY) {
-    snprintf(out, outSize, " RPH:N/A");
-    return;
-  }
-
-  snprintf(out, outSize, " RPH:%.1f", reliefsPerHourValue);
+  const float rate = getBeerCO2EvolutionGramsPerLiterPerDay();
+  if (isfinite(rate) && rate > 0.0f && !co2RateInTransition())
+    snprintf(out, outSize, "gCO2 [%.1f/(L.d)]", rate);
+  else
+    snprintf(out, outSize, "gCO2 [N/A/L.d]");
 }
 
 float getReliefsPerHourValue() {

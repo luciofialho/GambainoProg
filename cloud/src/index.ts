@@ -82,17 +82,30 @@ function intParam(value: string | undefined): number | null {
 
 // ---------------------------------------------------------------- SideKick
 
-app.post('/api/ingest', async c => {
+// The bearer token defines the site (scripts/add-sidekick.mjs).
+async function tokenSidekick(c: Ctx): Promise<{ site: number; name: string } | null> {
   const match = /^Bearer\s+(\S+)$/.exec(c.req.header('Authorization') ?? '');
-  const site = match ? await db.siteForTokenHash(c.env.DB, await sha256Hex(match[1])) : null;
-  if (site === null) return c.json({ error: 'invalid token' }, 401);
+  return match ? db.sidekickForTokenHash(c.env.DB, await sha256Hex(match[1])) : null;
+}
+
+app.post('/api/ingest', async c => {
+  const sidekick = await tokenSidekick(c);
+  if (sidekick === null) return c.json({ error: 'invalid token' }, 401);
+  const site = sidekick.site;
   const body = await c.req.text();
   // 400 makes the SideKick skip the post instead of retrying it forever.
   if (body.length > MAX_INGEST_BYTES) return c.json({ error: 'body too large' }, 400);
-  const { records, rejected } = parseBody(body, nowUtc());
-  const inserted = await db.storeRecords(c.env.DB, site, records, nowUtc());
+  const { records, states, rejected } = parseBody(body, nowUtc());
+  const inserted = await db.storeRecords(c.env.DB, site, records, states, nowUtc());
   if (rejected) console.log(`ingest site ${site}: ${rejected} invalid line(s)`);
-  return c.json({ inserted, duplicates: records.length - inserted, rejected });
+  return c.json({ inserted, duplicates: records.length - inserted, states: states.length, rejected });
+});
+
+// The SideKick shows the site of its token on /getstatus.
+app.get('/api/whoami', async c => {
+  const sidekick = await tokenSidekick(c);
+  if (sidekick === null) return c.json({ error: 'invalid token' }, 401);
+  return c.json({ site: sidekick.site, name: sidekick.name });
 });
 
 // ------------------------------------------------- public link (no login)

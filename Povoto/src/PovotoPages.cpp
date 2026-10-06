@@ -350,17 +350,7 @@ void handleDashboardStatus(AsyncWebServerRequest *request) {
     snprintf(text, sizeof(text), "n/a");
   dashboardJsonString(json, "pressureTarget", text);
 
-  // The web dashboard shows gCO2/L/d where the TFT shows reliefs per hour,
-  // with the graph's rule: Fermenting only, positive and outside a transition.
-  if (SetPointData.mode != MODE_FERMENTING) {
-    snprintf(text, sizeof(text), "g CO2");
-  } else {
-    const float rate = getBeerCO2EvolutionGramsPerLiterPerDay();
-    if (isfinite(rate) && rate > 0.0f && !co2RateInTransition())
-      snprintf(text, sizeof(text), "gCO2 [%.1f/(L.d)]", rate);
-    else
-      snprintf(text, sizeof(text), "gCO2 [N/A/L.d]");
-  }
+  getCO2RateLabel(text, sizeof(text));
   dashboardJsonString(json, "co2Label", text);
   snprintf(text, sizeof(text), "%.0f", CO2Mass());
   dashboardJsonString(json, "co2Mass", text);

@@ -37,8 +37,10 @@ decisions: `Povoto/docs/cloud-plan.md`; record format and the device side:
    e-mail (Zero Trust → Access → Applications → the povoto-cloud app →
    Policies), besides their row in `permissions`.
 6. One token per SideKick site: `node scripts/add-sidekick.mjs <site> [name]`.
-   The token is printed once; type it on the SideKick page `/cloud` with the
-   URL `https://povoto-public.povoto-cloud.workers.dev/api/ingest`.
+   The token is printed once; type it on the SideKick page "Connection
+   settings" (link on `/getstatus`) with the URL
+   `https://povoto-public.povoto-cloud.workers.dev/api/ingest`. The SideKick
+   then shows its site on `/getstatus` (asked to `/api/whoami`).
 7. Permissions (role `view` or `edit`; Povoto id = site × 100 + PovotoNum;
    id 0 = every Povoto):
 
@@ -64,6 +66,12 @@ decisions: `Povoto/docs/cloud-plan.md`; record format and the device side:
   made it fail at "updating repository submodules". Retry rebuilds the same
   commit; a new push to a watched path builds the latest one.
 - By hand, from this folder: `npm run deploy`.
+- Order when the database or the record format changes: run
+  `npm run migrate:remote` before pushing (the push deploys code that may
+  need the new columns), then update the SideKicks and only then the
+  Povotos. The Worker keeps accepting the older record formats, so a site
+  can run old firmware for a while. Batch state lines (`"k":"s"`,
+  migration 0002) need the new SideKick to reach the cloud at all.
 - The site root opens where the browser last was: the Povoto list
   (`/povotos`) or the dashboard of the last Povoto seen (cookie
   `povoto_last`, set by the list, dashboard and graphs pages).

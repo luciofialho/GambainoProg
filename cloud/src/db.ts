@@ -1,6 +1,6 @@
 // The only module that talks to the database: plain SQLite SQL over D1, so a
 // move to another SQLite host replaces this file alone.
-import type { LogRecord } from './records';
+import type { LogRecord, StateRecord } from './records';
 
 export type Role = 'view' | 'edit';
 
@@ -22,6 +22,15 @@ export interface BatchRow {
   og: number | null;
   first_epoch: number;
   last_epoch: number;
+  // Latest batch state only (migration 0002); null until the first state line.
+  state_epoch: number | null;
+  chill_seconds: number | null;
+  heat_seconds: number | null;
+  mol_headspace: number | null;
+  mol_dissolved: number | null;
+  mol_ejected: number | null;
+  expansions: number | null;
+  dumped_volume: number | null;
 }
 
 export interface LogRow {
@@ -52,19 +61,20 @@ export interface ShareRow {
   created_at: number;
 }
 
-export async function siteForTokenHash(db: D1Database, hash: string): Promise<number | null> {
-  const row = await db.prepare('SELECT site FROM sidekicks WHERE token_hash = ?')
-    .bind(hash).first<{ site: number }>();
-  return row ? row.site : null;
+export async function sidekickForTokenHash(db: D1Database, hash: string): Promise<{ site: number; name: string } | null> {
+  return db.prepare('SELECT site, name FROM sidekicks WHERE token_hash = ?')
+    .bind(hash).first<{ site: number; name: string }>();
 }
 
-// Stores the records of one SideKick post. Returns how many were new.
+// Stores the history records and batch states of one SideKick post. Returns
+// how many history records were new.
 export async function storeRecords(db: D1Database, site: number, records: LogRecord[],
-                                   receivedAt: number): Promise<number> {
-  if (!records.length) return 0;
+                                   states: StateRecord[], receivedAt: number): Promise<number> {
+  if (!records.length && !states.length) return 0;
   const statements: D1PreparedStatement[] = [];
-  const povotos = new Set<number>();
-  // Batch name/date/OG come from the newest record of each batch in the post.
+  const povotos = new Set<number>(states.map(s => s.num));
+  // Batch epoch range from the records of the post; name/date/OG from the
+  // newest record that still carries them (firmware before the batch state).
   const batches = new Map<string, { id: number; first: number; last: LogRecord }>();
   const insertLog = db.prepare(
     `INSERT OR IGNORE INTO logs (povoto_id, epoch, batch, mode, temp, temp_sp, temp_slow,
@@ -88,19 +98,39 @@ export async function storeRecords(db: D1Database, site: number, records: LogRec
   const insertPovoto = db.prepare(
     'INSERT INTO povotos (id, site, num) VALUES (?, ?, ?) ON CONFLICT (id) DO NOTHING');
   for (const num of povotos) statements.push(insertPovoto.bind(site * 100 + num, site, num));
-  // A late record (spool backlog) never overwrites newer batch details.
+  // A late record (spool backlog) never overwrites newer batch details, and a
+  // record without name (null: sent as batch state) leaves them alone.
   const upsertBatch = db.prepare(
     `INSERT INTO batches (povoto_id, batch, name, date, og, first_epoch, last_epoch)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+     VALUES (?1, ?2, COALESCE(?3, ''), COALESCE(?4, ''), ?5, ?6, ?7)
      ON CONFLICT (povoto_id, batch) DO UPDATE SET
-       name = CASE WHEN ?7 >= last_epoch THEN ?3 ELSE name END,
-       date = CASE WHEN ?7 >= last_epoch THEN ?4 ELSE date END,
-       og = CASE WHEN ?7 >= last_epoch THEN ?5 ELSE og END,
+       name = CASE WHEN ?3 IS NOT NULL AND ?7 >= last_epoch THEN ?3 ELSE name END,
+       date = CASE WHEN ?3 IS NOT NULL AND ?7 >= last_epoch THEN ?4 ELSE date END,
+       og = CASE WHEN ?3 IS NOT NULL AND ?7 >= last_epoch THEN ?5 ELSE og END,
        first_epoch = MIN(first_epoch, ?6),
        last_epoch = MAX(last_epoch, ?7)`);
   for (const { id, first, last } of batches.values()) {
     statements.push(upsertBatch.bind(id, last.batch, last.batchName, last.batchDate, last.og,
       first, last.epoch));
+  }
+  // Batch state: one row per batch, overwritten only by a newer version.
+  const upsertState = db.prepare(
+    `INSERT INTO batches (povoto_id, batch, name, date, og, first_epoch, last_epoch, state_epoch,
+       chill_seconds, heat_seconds, mol_headspace, mol_dissolved, mol_ejected, expansions,
+       dumped_volume)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+     ON CONFLICT (povoto_id, batch) DO UPDATE SET
+       name = excluded.name, date = excluded.date, og = excluded.og,
+       state_epoch = excluded.state_epoch,
+       chill_seconds = excluded.chill_seconds, heat_seconds = excluded.heat_seconds,
+       mol_headspace = excluded.mol_headspace, mol_dissolved = excluded.mol_dissolved,
+       mol_ejected = excluded.mol_ejected, expansions = excluded.expansions,
+       dumped_volume = excluded.dumped_volume
+     WHERE excluded.state_epoch >= COALESCE(batches.state_epoch, 0)`);
+  for (const s of states) {
+    statements.push(upsertState.bind(site * 100 + s.num, s.batch, s.batchName, s.batchDate, s.og,
+      s.epoch, s.chillSeconds, s.heatSeconds, s.molHeadspace, s.molDissolved, s.molEjected,
+      s.expansions, s.dumpedVolume));
   }
   const results = await db.batch(statements);
   return results.slice(0, records.length).reduce((sum, result) => sum + (result.meta.changes ?? 0), 0);

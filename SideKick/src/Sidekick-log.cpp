@@ -2,6 +2,7 @@
 #include <HTTPClient.h>
 #include <WiFiClient.h>
 #include <WiFiClientSecure.h>
+#include <Preferences.h>
 #include <GambainoCommon.h>
 #include "Sidekick-log.h"
 #include "HttpsRootCAs.h"
@@ -77,7 +78,52 @@ const char* dataLogScriptURL = "https://script.google.com/macros/s/AKfycbyBmwFQo
 #define BREWFATHER_STREAM_URL "http://log.brewfather.net/stream?id=JQ3NcxkNWbcDdD"
 #endif
 
-const char* brewfatherStreamURL = BREWFATHER_STREAM_URL;
+// Brewfather stream URL: NVS, written from the Connection settings page and read by
+// the LogSend task (copied under the lock). Without an NVS value the code default applies.
+#define SIDEKICK_NVS_NAMESPACE "sidekick"
+#define BREWFATHER_URL_KEY     "bf_url"
+static bool startsWithIgnoreCase(const char *value, const char *prefix);
+static char brewfatherStreamURL[BREWFATHER_URL_MAXLEN + 1] = BREWFATHER_STREAM_URL;
+static portMUX_TYPE brewfatherURLMux = portMUX_INITIALIZER_UNLOCKED;
+
+void loadBrewfatherSettings() {
+  Preferences store;
+  if (!store.begin(SIDEKICK_NVS_NAMESPACE, true)) return;  // namespace absent: keep the default
+  if (store.isKey(BREWFATHER_URL_KEY)) {
+    char url[sizeof(brewfatherStreamURL)];
+    store.getString(BREWFATHER_URL_KEY, url, sizeof(url));
+    portENTER_CRITICAL(&brewfatherURLMux);
+    strlcpy(brewfatherStreamURL, url, sizeof(brewfatherStreamURL));
+    portEXIT_CRITICAL(&brewfatherURLMux);
+  }
+  store.end();
+}
+
+void getBrewfatherStreamURL(char *buf, size_t size) {
+  portENTER_CRITICAL(&brewfatherURLMux);
+  strlcpy(buf, brewfatherStreamURL, size);
+  portEXIT_CRITICAL(&brewfatherURLMux);
+}
+
+bool setBrewfatherStreamURL(const char *url) {
+  // empty disables the Brewfather send
+  if (strlen(url) > BREWFATHER_URL_MAXLEN) return false;
+  if (url[0] && !startsWithIgnoreCase(url, "http://") && !startsWithIgnoreCase(url, "https://")) return false;
+  char current[sizeof(brewfatherStreamURL)];
+  getBrewfatherStreamURL(current, sizeof(current));
+  if (!strcmp(current, url)) return true;
+
+  Preferences store;
+  if (!store.begin(SIDEKICK_NVS_NAMESPACE, false)) return false;
+  const bool saved = store.putString(BREWFATHER_URL_KEY, url) == strlen(url);
+  store.end();
+  if (!saved) return false;
+  portENTER_CRITICAL(&brewfatherURLMux);
+  strlcpy(brewfatherStreamURL, url, sizeof(brewfatherStreamURL));
+  portEXIT_CRITICAL(&brewfatherURLMux);
+  Serial.printf("[BREWFATHER] stream URL changed to '%s'\n", url);
+  return true;
+}
 
 static bool startsWithIgnoreCase(const char *value, const char *prefix) {
   if (!value || !prefix) return false;
@@ -218,6 +264,8 @@ void sendLogToGoogleSheets() {
 }
 
 void sendLogToBrewfather() {
+  char brewfatherStreamURL[BREWFATHER_URL_MAXLEN + 1];
+  getBrewfatherStreamURL(brewfatherStreamURL, sizeof(brewfatherStreamURL));
   if (!brewfatherStreamURL[0] || !brewfatherQueue || WiFi.status() != WL_CONNECTED) return;
   // LogSend alone owns the retry payload. Keep it until a successful POST,
   // then take the next queued payload on the following send attempt.

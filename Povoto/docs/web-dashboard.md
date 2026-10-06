@@ -28,10 +28,10 @@ sync with the selected tab). The batch number opens `/batch`, the left strip
 `/tasks` and the target fields `/setpoint` (the web pages replacing the TFT
 batch info, task and keyboard screens).
 
-Differences from the TFT: the label next to g CO2 shows gCO2/L/d
-(`gCO2 [8.3/(L.d)]`; `gCO2 [N/A/L.d]` without a value; `g CO2` outside
-Fermenting) instead of reliefs per hour, with the graph's rule
-(Fermenting only, positive, outside a transition). The screen
+The label next to g CO2 shows gCO2/L/d (`gCO2 [8.3/(L.d)]`;
+`gCO2 [N/A/L.d]` without a value; `g CO2` outside Fermenting), with the
+graph's rule (Fermenting only, positive, outside a transition), the same
+text as the TFT (`getCO2RateLabel()`). Differences from the TFT: the screen
 sits in a rounded frame like the chart of `/graphs`, with a small link above
 it (`← Back`: to the menu on the device, to the Povoto list in the cloud,
 from `back` in `status.json`) and the Brewtal signature (`/assets/brewtal.svg`, inverted to
@@ -39,6 +39,11 @@ light on the dark page) below. In the cloud only, the data age (`updated` in
 `status.json`, e.g. "Updated 3 min ago") appears inside the frame, under the
 screen and aligned right, instead of the WiFi indicator. `/graphs` has the same signature, and
 its `← Back` link returns to the dashboard.
+
+The canvas shows only "Loading..." until both the background image and the
+first `status.json` have arrived (or failed), so values never appear on an
+empty screen. `/graphs` marks the tab of the URL hash (e.g. `#temperature`)
+as soon as the page loads, before the CSV arrives.
 
 Links between the pages are relative (`../graphs/#pressure`, `../batch`), so
 the same files also work in the cloud under `/p/<id>/dashboard/`. Two fields

@@ -21,7 +21,7 @@
 #define GAMBAINOWIFI_AP_FORCED_MS      600000UL  // AP opened on request stays at least this long
 
 // Starts the Wi-Fi stack, web server/OTA (ESPSetupServerOnly) and the /wifi routes.
-// apPassword: at least 8 characters.
+// apPassword: nullptr or "" for an open AP, otherwise at least 8 characters.
 // uiPath: when not null, the setup page links to the device UI (BrewCore contingency).
 void gambainoWiFiBegin(const char *apName, const char *apPassword, const char *uiPath = nullptr);
 
@@ -35,7 +35,20 @@ void gambainoWiFiStartAP();
 bool gambainoWiFiConnected();
 bool gambainoWiFiApActive();
 
-// Appends an HTML status block (for /getstatus).
+// Appends an HTML status block (for /getstatus), with the link to the settings page.
 void gambainoWiFiStatus(char *st, size_t maxLen);
+
+// Extra text field on the Connection settings page (/wifi), stored by the app.
+// Both callbacks run in the web server task.
+struct GambainoSettingsField {
+  const char *name;                              // form field name
+  const char *label;
+  size_t maxLen;
+  void (*getValue)(char *buf, size_t size);      // current value, for the page
+  bool (*setValue)(const char *value);           // validates and stores; false rejects the value
+  bool secret;   // password input, value never shown (getValue only tells if it is set); blank keeps it
+};
+#define GAMBAINOWIFI_MAX_SETTINGS_FIELDS 4
+void gambainoWiFiAddSettingsField(const GambainoSettingsField &field);
 
 #endif

@@ -234,10 +234,9 @@
     updatePan();
   }
 
-  function selectGraph(mode) {
-    if (!historyData || !GRAPHS.includes(mode)) return;
-    activeGraph = mode;
-    if (location.protocol !== 'file:') history.replaceState(null, '', `#${mode}`);
+  // Title and selected tab; also called at load, before the data arrives, so
+  // the page never shows another tab first.
+  function markGraph(mode) {
     chartTitle.textContent = mode === 'temperature' ? 'Temperature'
       : mode === 'pressure' ? 'Pressure'
         : mode === 'attenuation' ? 'Attenuation' : 'Evolution';
@@ -247,6 +246,14 @@
       if (selected) button.setAttribute('aria-current', 'page');
       else button.removeAttribute('aria-current');
     }
+  }
+  markGraph(activeGraph);
+
+  function selectGraph(mode) {
+    if (!historyData || !GRAPHS.includes(mode)) return;
+    activeGraph = mode;
+    if (location.protocol !== 'file:') history.replaceState(null, '', `#${mode}`);
+    markGraph(mode);
     draw(mode);
     updateOgStatus();
   }

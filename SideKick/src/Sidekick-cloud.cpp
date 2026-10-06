@@ -9,10 +9,13 @@
 #include <atomic>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include <sys/stat.h>
 #include "Sidekick-cloud.h"
+#include "GambainoWiFi.h"
 #include "HttpsRootCAs.h"
 
 namespace {
+constexpr char LITTLEFS_MOUNT[] = "/littlefs";
 constexpr char SPOOL_DIR[] = "/cloud";
 constexpr char SPOOL_FILE[] = "/cloud/spool.txt";
 constexpr char OFFSET_FILE[] = "/cloud/sent";
@@ -28,21 +31,77 @@ constexpr size_t POST_MAX_BYTES = 3072;
 SemaphoreHandle_t spoolMutex = nullptr;
 bool spoolReady = false;
 
+// Batch state: only the latest version of each Povoto, in RAM (not spooled);
+// posted with the history while newer than the last one the cloud accepted.
+// A reboot loses it, but the Povoto sends a new one every slot.
+constexpr size_t STATE_MAX_BYTES = 320;
+constexpr int STATE_SLOTS = 10;
+struct CloudState {
+  uint8_t num;            // PovotoNum, 0 = free slot
+  uint32_t version;       // bumped on every state received
+  uint32_t sentVersion;   // version the cloud accepted
+  char json[STATE_MAX_BYTES];
+};
+CloudState cloudStates[STATE_SLOTS];  // guarded by spoolMutex
+
 // Written by the web task, read by LogSend: copies under the mutex.
 String cloudUrl;
 String cloudToken;
+std::atomic<bool> cloudConfigured{false};
+// Bumped on every settings change: a whoami answer for older settings is dropped.
+std::atomic<uint32_t> cloudConfigGeneration{0};
+
+// Site of the token, asked to the cloud (GET /api/whoami): >0 site, 0 unknown, -1 invalid token.
+constexpr unsigned long WHOAMI_RETRY_MS = 5UL * 60UL * 1000UL;
+std::atomic<int> cloudSite{0};
+std::atomic<unsigned long> lastWhoamiMs{0};
+// Name of the site (cloud table sidekicks), written by LogSend, read by the web task.
+char cloudSiteName[48] = "";
+portMUX_TYPE cloudSiteNameMux = portMUX_INITIALIZER_UNLOCKED;
+
+// Reads the JSON string value of key ("name") from the whoami answer.
+String jsonStringField(const String &body, const char *key) {
+  const String pattern = String("\"") + key + "\":\"";
+  int pos = body.indexOf(pattern);
+  if (pos < 0) return String();
+  String value;
+  for (pos += pattern.length(); pos < (int)body.length() && body[pos] != '"'; ++pos) {
+    if (body[pos] == '\\' && pos + 1 < (int)body.length()) {
+      const char escaped = body[++pos];
+      if (escaped == 'u') { pos += 4; value += '?'; }   // non-ASCII: not needed here
+      else value += escaped == 'n' || escaped == 't' ? ' ' : escaped;
+    }
+    else value += body[pos];
+  }
+  return value;
+}
 
 std::atomic<unsigned long> recordsSpooled{0};
 std::atomic<unsigned long> recordsDropped{0};
 std::atomic<unsigned long> recordsPosted{0};
+std::atomic<unsigned long> statesPosted{0};
 std::atomic<unsigned long> postsFailed{0};
 std::atomic<int> lastHttpCode{0};
 std::atomic<unsigned long> lastPostOkMs{0};
 std::atomic<unsigned long> lastPostAttemptMs{0};
 std::atomic<size_t> pendingBytes{0};
 
+// stat() on the VFS path: unlike LittleFS.open()/exists(), a missing file is
+// not logged as an error. The spool files are absent whenever everything was
+// sent, and LogSend looks at them every 15 s.
+bool fileSize(const char *path, size_t &size) {
+  char full[48];
+  snprintf(full, sizeof(full), "%s%s", LITTLEFS_MOUNT, path);
+  struct stat info;
+  if (stat(full, &info) != 0) return false;
+  size = (size_t)info.st_size;
+  return true;
+}
+
 // Callers hold spoolMutex.
 size_t readOffset() {
+  size_t size;
+  if (!fileSize(OFFSET_FILE, size)) return 0;
   File file = LittleFS.open(OFFSET_FILE, "r");
   if (!file) return 0;
   const size_t offset = (size_t)file.parseInt();
@@ -59,16 +118,14 @@ bool writeOffset(size_t offset) {
 }
 
 size_t spoolSize() {
-  File file = LittleFS.open(SPOOL_FILE, "r");
-  if (!file) return 0;
-  const size_t size = file.size();
-  file.close();
-  return size;
+  size_t size;
+  return fileSize(SPOOL_FILE, size) ? size : 0;
 }
 
 void clearSpool() {
-  LittleFS.remove(SPOOL_FILE);
-  LittleFS.remove(OFFSET_FILE);
+  size_t size;
+  if (fileSize(SPOOL_FILE, size)) LittleFS.remove(SPOOL_FILE);
+  if (fileSize(OFFSET_FILE, size)) LittleFS.remove(OFFSET_FILE);
   pendingBytes = 0;
 }
 
@@ -84,73 +141,93 @@ void loadConfig() {
   cloudUrl = store.getString("url", "");
   cloudToken = store.getString("token", "");
   store.end();
+  cloudConfigured = cloudUrl.length() && cloudToken.length();
 }
 
-void handleCloudPage(AsyncWebServerRequest *request) {
-  String url;
-  bool hasToken;
-  if (spoolMutex && xSemaphoreTake(spoolMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
-    url = cloudUrl;
-    hasToken = cloudToken.length() > 0;
-    xSemaphoreGive(spoolMutex);
-  } else {
-    request->send(503, "text/plain", "Busy, try again");
-    return;
-  }
-  String html =
-      "<!DOCTYPE html><html><head><meta charset='UTF-8'>"
-      "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-      "<title>Cloud log</title>"
-      "<style>body{font-family:Arial,sans-serif;margin:20px;max-width:640px}"
-      "label{display:block;margin-top:12px;font-weight:bold}"
-      "input{width:100%;padding:8px;box-sizing:border-box}"
-      "button{margin-top:14px;padding:10px 18px}</style></head><body>"
-      "<h1>Cloud log</h1><form method='POST' action='/cloud/update'>"
-      "<label>Ingest URL</label><input name='url' value='";
-  url.replace("'", "&#39;");
-  html += url;
-  html += "' placeholder='https://&lt;app&gt;/api/ingest'>"
-          "<label>SideKick token</label><input name='token' type='password' placeholder='";
-  html += hasToken ? "(kept if empty)" : "(not set)";
-  html += "'><button type='submit'>Save</button></form><p>";
-  char status[900] = "";
-  appendCloudLogStatus(status, sizeof(status));
-  html += status;
-  html += "</p><p><a href='/getstatus'>Status</a></p></body></html>";
-  request->send(200, "text/html", html);
-}
-
-void handleCloudUpdate(AsyncWebServerRequest *request) {
-  if (!spoolMutex) {
-    request->send(503, "text/plain", "Cloud log unavailable");
-    return;
-  }
-  String url = request->hasParam("url", true) ? request->getParam("url", true)->value() : "";
-  String token = request->hasParam("token", true) ? request->getParam("token", true)->value() : "";
-  url.trim();
-  token.trim();
-  if (url.length() && !url.startsWith("https://")) {
-    request->send(400, "text/plain", "The URL must start with https://");
-    return;
-  }
-  Preferences store;
-  bool saved = store.begin(NVS_NAMESPACE, false);
-  if (saved) {
-    saved = store.putString("url", url) == url.length();
-    if (saved && token.length()) saved = store.putString("token", token) == token.length();
+// Connection settings fields (web task). key: "url" or "token".
+bool saveSetting(const char *key, const char *value, String &target) {
+  String text(value);
+  text.trim();
+  if (!strcmp(key, "url") && text.length() && !text.startsWith("https://")) return false;
+  if (!spoolMutex || xSemaphoreTake(spoolMutex, pdMS_TO_TICKS(500)) != pdTRUE) return false;
+  bool saved = true;
+  if (text != target) {
+    Preferences store;
+    saved = store.begin(NVS_NAMESPACE, false) && store.putString(key, text) == text.length();
     store.end();
+    if (saved) {
+      target = text;
+      cloudConfigured = cloudUrl.length() && cloudToken.length();
+      ++cloudConfigGeneration;
+      cloudSite = 0;
+      lastWhoamiMs = 0;
+    }
   }
-  if (!saved) {
-    request->send(500, "text/plain", "Could not save to NVS");
-    return;
-  }
-  if (xSemaphoreTake(spoolMutex, portMAX_DELAY) == pdTRUE) {
-    cloudUrl = url;
-    if (token.length()) cloudToken = token;
-    xSemaphoreGive(spoolMutex);
-  }
-  responseConfirmation(request, "Cloud log settings saved", "/cloud");
+  xSemaphoreGive(spoolMutex);
+  return saved;
 }
+
+void getUrlSetting(char *buf, size_t size) {
+  if (!spoolMutex || xSemaphoreTake(spoolMutex, pdMS_TO_TICKS(500)) != pdTRUE) return;
+  strlcpy(buf, cloudUrl.c_str(), size);
+  xSemaphoreGive(spoolMutex);
+}
+
+// The token itself never leaves the SideKick: the page only learns whether it is set.
+void getTokenSetting(char *buf, size_t size) {
+  if (!spoolMutex || xSemaphoreTake(spoolMutex, pdMS_TO_TICKS(500)) != pdTRUE) return;
+  strlcpy(buf, cloudToken.length() ? "*" : "", size);
+  xSemaphoreGive(spoolMutex);
+}
+
+bool setUrlSetting(const char *value)   { return saveSetting("url", value, cloudUrl); }
+bool setTokenSetting(const char *value) { return saveSetting("token", value, cloudToken); }
+
+// LogSend task: asks the cloud which site the token belongs to, while unknown.
+void refreshCloudSite() {
+  if (cloudSite != 0) return;
+  const unsigned long last = lastWhoamiMs;
+  if (last && millis() - last < WHOAMI_RETRY_MS) return;
+  String url, token;
+  if (xSemaphoreTake(spoolMutex, portMAX_DELAY) != pdTRUE) return;
+  url = cloudUrl;
+  token = cloudToken;
+  const uint32_t generation = cloudConfigGeneration;
+  xSemaphoreGive(spoolMutex);
+  // the whoami route sits next to the ingest one
+  if (!token.length() || !url.endsWith("/api/ingest")) return;
+  lastWhoamiMs = millis() | 1UL;
+  url = url.substring(0, url.length() - strlen("ingest")) + "whoami";
+
+  WiFiClientSecure client;
+  client.setCACert(httpsRootCAs);
+  client.setTimeout(10);          // seconds
+  client.setHandshakeTimeout(10); // seconds
+  HTTPClient http;
+  if (!http.begin(client, url)) return;
+  http.setConnectTimeout(10000);
+  http.setTimeout(10000);
+  http.addHeader("Authorization", "Bearer " + token);
+  const int code = http.GET();
+  const String body = code > 0 ? http.getString() : String();
+  http.end();
+  if (generation != cloudConfigGeneration) return;
+
+  const int sitePos = body.indexOf("\"site\":");
+  if (code == 200 && sitePos >= 0 && body.substring(sitePos + 7).toInt() > 0) {
+    const String name = jsonStringField(body, "name");
+    portENTER_CRITICAL(&cloudSiteNameMux);
+    strlcpy(cloudSiteName, name.c_str(), sizeof(cloudSiteName));
+    portEXIT_CRITICAL(&cloudSiteNameMux);
+    cloudSite = body.substring(sitePos + 7).toInt();
+  }
+  // A Worker without /api/whoami answers 401 too, but with the Access page.
+  else if (code == 401 && body.indexOf("invalid token") >= 0)
+    cloudSite = -1;
+  else
+    Serial.printf("[CLOUD] whoami failed: %d\n", code);
+}
+
 } // namespace
 
 bool initCloudLog() {
@@ -158,7 +235,7 @@ bool initCloudLog() {
   if (!spoolMutex) return false;
   loadConfig();
   // The partition holds only this spool; a blank or old SPIFFS image is formatted.
-  if (!LittleFS.begin(true)) {
+  if (!LittleFS.begin(true, LITTLEFS_MOUNT)) {
     Serial.println("[CLOUD] LittleFS unavailable; cloud log disabled");
     return false;
   }
@@ -200,8 +277,34 @@ void cashCloudLogRecord(const char *record) {
   xSemaphoreGive(spoolMutex);
 }
 
+void cashCloudState(const char *state) {
+  if (!spoolReady || !state) return;
+  const size_t length = strnlen(state, STATE_MAX_BYTES);
+  const char *numKey = strstr(state, "\"p\":");
+  const int num = numKey ? atoi(numKey + 4) : 0;
+  if (length < 2 || length >= STATE_MAX_BYTES || state[0] != '{' || state[length - 1] != '}' ||
+      memchr(state, '\n', length) || num < 1 || num > 99) {
+    Serial.println("[CLOUD] Invalid state ignored");
+    return;
+  }
+  if (xSemaphoreTake(spoolMutex, pdMS_TO_TICKS(200)) != pdTRUE) return;
+  CloudState *slot = nullptr;
+  for (CloudState &candidate : cloudStates) {
+    if (candidate.num == num) { slot = &candidate; break; }
+    if (!slot && candidate.num == 0) slot = &candidate;
+  }
+  if (slot) {
+    slot->num = num;
+    memcpy(slot->json, state, length + 1);
+    ++slot->version;
+  }
+  else Serial.println("[CLOUD] No room for another Povoto state");
+  xSemaphoreGive(spoolMutex);
+}
+
 void sendCloudLog() {
   if (!spoolReady || WiFi.status() != WL_CONNECTED) return;
+  refreshCloudSite();
 
   // Copy the settings and the next records under the lock; post without it.
   String url, token;
@@ -211,7 +314,8 @@ void sendCloudLog() {
   if (xSemaphoreTake(spoolMutex, portMAX_DELAY) != pdTRUE) return;
   url = cloudUrl;
   token = cloudToken;
-  if (url.length() && token.length()) {
+  size_t queued = 0;
+  if (url.length() && token.length() && fileSize(SPOOL_FILE, queued) && queued) {
     File file = LittleFS.open(SPOOL_FILE, "r");
     const size_t offset = readOffset();
     if (file && file.seek(offset)) {
@@ -230,8 +334,22 @@ void sendCloudLog() {
     }
     if (file) file.close();
   }
+  // Batch states newer than the cloud has ride in the same post (one TLS
+  // connection), each with the version that is acknowledged after a 2xx.
+  uint32_t stateVersions[STATE_SLOTS] = {};
+  size_t stateCount = 0;
+  if (url.length() && token.length()) {
+    for (int i = 0; i < STATE_SLOTS; ++i) {
+      const CloudState &state = cloudStates[i];
+      if (!state.num || state.version == state.sentVersion) continue;
+      body += state.json;
+      body += '\n';
+      stateVersions[i] = state.version;
+      ++stateCount;
+    }
+  }
   xSemaphoreGive(spoolMutex);
-  if (!count) return;
+  if (!count && !stateCount) return;
 
   WiFiClientSecure client;
   client.setCACert(httpsRootCAs);
@@ -257,6 +375,9 @@ void sendCloudLog() {
   // the spool forever, so it is skipped. Anything else (network, 401, 5xx)
   // is retried.
   const bool advance = (code >= 200 && code < 300) || code == 400;
+  // the ingest route answers 401 only for a token unknown to the cloud
+  if (code == 401) cloudSite = -1;
+  else if (advance && cloudSite == -1) cloudSite = 0;   // token accepted again: ask the site
   if (!advance) {
     ++postsFailed;
     Serial.printf("[CLOUD] POST failed: %d (heap %u, largest block %u)\n", code,
@@ -270,8 +391,15 @@ void sendCloudLog() {
   }
 
   if (xSemaphoreTake(spoolMutex, portMAX_DELAY) != pdTRUE) return;
-  if (nextOffset >= spoolSize()) clearSpool();
-  else if (writeOffset(nextOffset)) updatePending();
+  if (count) {
+    if (nextOffset >= spoolSize()) clearSpool();
+    else if (writeOffset(nextOffset)) updatePending();
+  }
+  // A state received during the post keeps its newer version pending.
+  for (int i = 0; i < STATE_SLOTS; ++i) {
+    if (stateVersions[i]) cloudStates[i].sentVersion = stateVersions[i];
+  }
+  if (code != 400) statesPosted += stateCount;
   xSemaphoreGive(spoolMutex);
 }
 
@@ -285,10 +413,10 @@ static void appendAgo(char *st, size_t size, const char *label, unsigned long ms
 void appendCloudLogStatus(char *st, size_t size) {
   char line[200];
   snprintf(line, sizeof(line),
-           "<br>Cloud log: %s<br>Spooled: %lu, posted: %lu, dropped: %lu, failed posts: %lu<br>"
+           "<br>Cloud log: %s<br>Spooled: %lu, posted: %lu, dropped: %lu, failed posts: %lu, states posted: %lu<br>"
            "Pending: %u bytes, last HTTP code: %d<br>",
-           !spoolReady ? "LittleFS unavailable" : cloudUrl.length() ? "configured" : "not configured (/cloud)",
-           recordsSpooled.load(), recordsPosted.load(), recordsDropped.load(), postsFailed.load(),
+           !spoolReady ? "LittleFS unavailable" : cloudConfigured ? "configured" : "not configured (Connection settings)",
+           recordsSpooled.load(), recordsPosted.load(), recordsDropped.load(), postsFailed.load(), statesPosted.load(),
            (unsigned)pendingBytes.load(), lastHttpCode.load());
   strncat(st, line, size - strlen(st) - 1);
   // TLS needs ~40 KB, partly contiguous: watch the largest block.
@@ -299,8 +427,31 @@ void appendCloudLogStatus(char *st, size_t size) {
   appendAgo(st, size, "Last cloud post OK:", lastPostOkMs.load());
 }
 
-void registerCloudLogRoutes() {
-  // Child path first: the async server matches by prefix.
-  server.on("/cloud/update", HTTP_POST, handleCloudUpdate);
-  server.on("/cloud", HTTP_GET, handleCloudPage);
+void appendCloudSiteStatus(char *st, size_t size) {
+  const int site = cloudSite;
+  char line[160];
+  if (!cloudConfigured) snprintf(line, sizeof(line), "&nbsp;&nbsp;Site: cloud not configured<br>");
+  else if (site == 0)   snprintf(line, sizeof(line), "&nbsp;&nbsp;Site: unknown (asking the cloud)<br>");
+  else if (site < 0)    snprintf(line, sizeof(line), "&nbsp;&nbsp;Site: invalid cloud token<br>");
+  else {
+    char name[sizeof(cloudSiteName)];
+    portENTER_CRITICAL(&cloudSiteNameMux);
+    strlcpy(name, cloudSiteName, sizeof(name));
+    portEXIT_CRITICAL(&cloudSiteNameMux);
+    String escaped;
+    for (const char *c = name; *c; ++c) {
+      if (*c == '<') escaped += "&lt;";
+      else if (*c == '>') escaped += "&gt;";
+      else if (*c == '&') escaped += "&amp;";
+      else escaped += *c;
+    }
+    if (escaped.length()) snprintf(line, sizeof(line), "&nbsp;&nbsp;Site: %d (%s)<br>", site, escaped.c_str());
+    else                  snprintf(line, sizeof(line), "&nbsp;&nbsp;Site: %d<br>", site);
+  }
+  strlcat(st, line, size);
+}
+
+void registerCloudLogSettings() {
+  gambainoWiFiAddSettingsField({"cloudurl", "Cloud ingest URL", 200, getUrlSetting, setUrlSetting});
+  gambainoWiFiAddSettingsField({"cloudtoken", "Cloud token (SideKick site)", 100, getTokenSetting, setTokenSetting, true});
 }

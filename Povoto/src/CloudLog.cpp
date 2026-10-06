@@ -21,6 +21,7 @@ constexpr float SYNTHETIC_PROFILE_DAYS = 14.0f;
 bool syntheticStored = false;
 uint32_t syntheticStart = 0;
 uint32_t lastSentSlot = 0;
+uint32_t lastStateSlot = 0;
 uint32_t lastSentEpoch = 0;
 unsigned long sentCount = 0;
 unsigned long sendErrors = 0;
@@ -101,15 +102,14 @@ uint32_t slotSeconds() {
   return CLOUD_SLOT_SECONDS;
 }
 
+// History record: spooled by the SideKick, one row per slot in the cloud.
 bool buildRecord(uint32_t epoch, char *out, size_t size) {
   const bool synthetic = cloudSyntheticLogActive();
   GraphHistoryPoint point;
-  float og = BatchData.batchOG;
   if (synthetic) {
     const float day = epoch > syntheticStart ? float(epoch - syntheticStart) / 86400.0f : 0.0f;
     graphSyntheticPoint(fmodf(day, SYNTHETIC_PROFILE_DAYS), point);
     point.epoch = epoch;
-    og = GRAPH_SYNTHETIC_OG;
   } else {
     point = graphCapturePoint(epoch);
   }
@@ -121,9 +121,6 @@ bool buildRecord(uint32_t epoch, char *out, size_t size) {
   json.integer("e", (long)epoch);
   json.integer("m", SetPointData.mode);
   json.integer("b", BatchData.batchNumber);
-  json.string("bn", BatchData.batchName);
-  json.string("bd", BatchData.batchDate);
-  json.number("og", isfinite(og) && og > 0.0f ? og : NAN, 5);
   json.number("t", point.temperature, 2);
   json.number("ts", point.temperatureSetpoint, 2);
   json.number("tsl", setpointOrNan(SetPointData.setPointSlowTemp), 2);
@@ -139,6 +136,31 @@ bool buildRecord(uint32_t epoch, char *out, size_t size) {
   json.number("rph", getReliefsPerHourValue(), 1);
   // Day 0 of the profile, so the cloud check can recompute every value.
   if (synthetic) json.integer("ss", (long)syntheticStart);
+  json.raw("}");
+  return json.ok;
+}
+
+// Batch state: only its latest version is kept, by the SideKick (RAM) and by
+// the cloud (one row per batch), so it never takes space in the spool.
+bool buildState(uint32_t epoch, char *out, size_t size) {
+  const float og = cloudSyntheticLogActive() ? GRAPH_SYNTHETIC_OG : BatchData.batchOG;
+  JsonOut json(out, size);
+  json.raw("{");
+  json.integer("v", 1);
+  json.raw(",\"k\":\"s\"");
+  json.integer("p", FMTData.PovotoNum);
+  json.integer("e", (long)epoch);
+  json.integer("b", BatchData.batchNumber);
+  json.string("bn", BatchData.batchName);
+  json.string("bd", BatchData.batchDate);
+  json.number("og", isfinite(og) && og > 0.0f ? og : NAN, 5);
+  json.integer("ct", CountersData.totalChillTime);
+  json.integer("ht", CountersData.totalHeatTime);
+  json.number("mh", headSpaceCO2Mols, 3);
+  json.number("md", (float)CountersData.CO2InSolution, 3);
+  json.number("me", (float)CountersData.totalMolsEjected, 3);
+  json.integer("nx", (long)CountersData.totalReliefCount);
+  json.number("dv", CountersData.dumpedVolume, 2);
   json.raw("}");
   return json.ok;
 }
@@ -190,26 +212,46 @@ void maybeSendCloudLog() {
   if (now < MIN_VALID_EPOCH) return;
   const uint32_t seconds = slotSeconds();
   const uint32_t slot = now / seconds;
-  if (slot == lastSentSlot) return;
+  if (slot == lastSentSlot && slot == lastStateSlot) return;
 
   // The record time is the start of the slot: one record per slot, and a
   // second one after a reboot is ignored by the cloud.
   const uint32_t epoch = slot * seconds;
   char payload[640];
   lastAttempt = millis();
-  if (!buildRecord(epoch, payload, sizeof(payload))) {
-    Serial.println("[CLOUD] Record does not fit the buffer");
-    lastSentSlot = slot;
-    ++sendErrors;
-    return;
+  if (slot != lastSentSlot) {
+    if (!buildRecord(epoch, payload, sizeof(payload))) {
+      Serial.println("[CLOUD] Record does not fit the buffer");
+      lastSentSlot = slot;
+      ++sendErrors;
+    }
+    else {
+      const esp_err_t err = sendEspNow(peerSideKick.mac, 0, false, (uint8_t)CLOUDLOGPACKET, payload);
+      if (err != ESP_OK) {
+        Serial.printf("[CLOUD] ESP-NOW send failed: %d\n", (int)err);
+        ++sendErrors;
+        return; // retried in RETRY_MS, same slot
+      }
+      lastSentSlot = slot;
+      lastSentEpoch = epoch;
+      ++sentCount;
+    }
   }
-  const esp_err_t err = sendEspNow(peerSideKick.mac, 0, false, (uint8_t)CLOUDLOGPACKET, payload);
-  if (err != ESP_OK) {
-    Serial.printf("[CLOUD] ESP-NOW send failed: %d\n", (int)err);
-    ++sendErrors;
-    return; // retried in RETRY_MS, same slot
+
+  // Batch state, same slot: a lost one is replaced by the next slot's.
+  if (slot != lastStateSlot) {
+    if (!buildState(epoch, payload, sizeof(payload))) {
+      Serial.println("[CLOUD] State does not fit the buffer");
+      lastStateSlot = slot;
+      ++sendErrors;
+      return;
+    }
+    const esp_err_t err = sendEspNow(peerSideKick.mac, 0, false, (uint8_t)CLOUDSTATEPACKET, payload);
+    if (err != ESP_OK) {
+      Serial.printf("[CLOUD] ESP-NOW state send failed: %d\n", (int)err);
+      ++sendErrors;
+      return; // retried in RETRY_MS, same slot
+    }
+    lastStateSlot = slot;
   }
-  lastSentSlot = slot;
-  lastSentEpoch = epoch;
-  ++sentCount;
 }

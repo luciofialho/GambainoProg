@@ -20,7 +20,19 @@ Caminho: Povoto → ESP-NOW → SideKick → HTTPS → Worker na Cloudflare
 - Os valores seguem as regras do histórico dos gráficos (`graphCapturePoint`,
   a mesma do `/graphs`): inválido = `null`, e gCO2/L/d só fora de transição.
 
-Formato (uma linha JSON, até ~450 bytes):
+Dois tipos de linha por janela:
+
+- **Histórico** (`CLOUDLOGPACKET`, 'G'): vai para a fila do SideKick e vira
+  uma linha por janela na nuvem (tabela `logs`).
+- **Estado do batch** (`CLOUDSTATEPACKET`, 'H'): dados sem histórico (nome do
+  batch e contadores). O SideKick guarda só a última versão de cada Povoto, em
+  RAM, fora da fila; a nuvem guarda só a última de cada batch (colunas de
+  `batches`, migration 0002), para apresentação. O estado mais novo vence
+  (`e`); um estado perdido é substituído pelo da janela seguinte. Se o SideKick
+  reiniciar sem internet, o estado de um batch que já terminou pode não chegar
+  (risco aceito).
+
+Histórico (uma linha JSON, até ~400 bytes):
 
 | Chave | Conteúdo |
 |---|---|
@@ -28,12 +40,24 @@ Formato (uma linha JSON, até ~450 bytes):
 | `p` | PovotoNum |
 | `e` | epoch local do início da janela |
 | `m` | modo (0 Off, 1 transferência, 2 Fermenting, 3 Conditioning) |
-| `b`, `bn`, `bd`, `og` | número, nome, data e OG do batch |
+| `b` | número do batch (nome, data e OG vão no estado; firmware antigo ainda os manda aqui em `bn`, `bd`, `og`, e a nuvem aceita) |
 | `t`, `ts`, `tsl` | temperatura, setpoint, slow target |
 | `pr`, `ps`, `psl` | pressão, setpoint, slow target |
 | `sg`, `abv`, `r`, `f` | SG, ABV, gCO2/L/d e flags dos gráficos (1 retido, 2 transição, 4 sintético) |
 | `vol`, `co2`, `rph` | volume (L), g de CO2, reliefs por hora |
 | `ss` | só no log sintético: dia 0 do perfil (epoch local) |
+
+Estado do batch (uma linha JSON, até ~260 bytes):
+
+| Chave | Conteúdo |
+|---|---|
+| `v`, `k` | versão (1) e `"s"` (marca a linha como estado) |
+| `p`, `e`, `b` | PovotoNum, epoch local da janela, número do batch |
+| `bn`, `bd`, `og` | nome, data e OG do batch |
+| `ct`, `ht` | tempo de chiller e de heater ligados (s, acumulado) |
+| `mh`, `md`, `me` | mol de CO2 no headspace, dissolvido e expelido (acumulado) |
+| `nx` | expansões (`totalReliefCount`) |
+| `dv` | volume descartado por tarefas Dump (L) |
 
 ## Log sintético (modo debug)
 
@@ -66,9 +90,13 @@ Formato (uma linha JSON, até ~450 bytes):
   ~16,7 KB, e o heap do SideKick é curto. Com a fila RAM do Google Sheets em
   20 posições de 2 KB, os handshakes falhavam por falta de memória e o
   próprio Wi-Fi caía durante eles. A fila foi reduzida para 8 posições, e os
-  POSTs da nuvem são pequenos. `/cloud` mostra o heap livre, o maior bloco e
-  o mínimo desde o boot.
-- Configuração em `/cloud` (URL e token, na NVS `sk_cloud`); contadores em
-  `/cloud` e `/getstatus`.
+  POSTs da nuvem são pequenos. `/getstatus` mostra o heap livre, o maior
+  bloco e o mínimo desde o boot.
+- Estado do batch: até 10 Povotos em RAM (320 bytes cada). Os estados mais
+  novos que o último aceito vão no mesmo POST do histórico (uma conexão TLS
+  só); um 2xx ou 400 os marca como enviados.
+- Configuração na página "Connection settings" (link no `/getstatus`; URL e
+  token, na NVS `sk_cloud`); contadores e o site do token (`/api/whoami`) em
+  `/getstatus`.
 - O LittleFS é montado com formatação se não montar: a partição do SideKick
   não guardava nada antes disso.

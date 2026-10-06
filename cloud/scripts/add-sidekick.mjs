@@ -1,7 +1,7 @@
 // Creates (or replaces) the token of one SideKick site and prints it once.
 //   node scripts/add-sidekick.mjs <site> [name] [--local]
 // The database keeps only the token's SHA-256; type the token on the
-// SideKick's /cloud page.
+// SideKick's Connection settings page (link on /getstatus).
 import { createHash, randomBytes } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';

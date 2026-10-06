@@ -51,6 +51,9 @@ std::atomic<bool> reqScan{false};
 char pendingSsid[33];
 char pendingPassword[65];
 
+GambainoSettingsField settingsFields[GAMBAINOWIFI_MAX_SETTINGS_FIELDS];
+int settingsFieldCount = 0;
+
 // scan cache, filled by the loop and read by web handlers (fixed buffers: no reallocation races)
 char scannedSsids[MAX_SCANNED_NETWORKS][33];
 int8_t scannedRssi[MAX_SCANNED_NETWORKS];
@@ -138,7 +141,7 @@ void startAccessPoint(unsigned long now, bool forced) {
   uint8_t channel = staWasUp ? WiFi.channel() : lastChannel;
   if (channel < 1 || channel > 13) channel = 1;
   WiFi.mode(WIFI_AP_STA);
-  WiFi.softAP(apSsid, apPassword, channel);
+  WiFi.softAP(apSsid, apPassword[0] ? apPassword : nullptr, channel);
   dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
   dnsServer.start(53, "*", WiFi.softAPIP());
   state = State::AccessPoint;
@@ -293,7 +296,7 @@ void handleWiFiPage(AsyncWebServerRequest *request) {
   String html;
   html.reserve(4096);
   html += "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-          "<meta name='viewport' content='width=device-width,initial-scale=1'><title>WiFi - ";
+          "<meta name='viewport' content='width=device-width,initial-scale=1'><title>Connection settings - ";
   html += htmlEscape(ESP_AppName);
   html += "</title><style>body{font-family:Arial,sans-serif;margin:16px;background:#eee;color:#222}"
           ".box{max-width:520px;margin:auto;background:#fff;padding:16px;border-radius:8px}"
@@ -301,10 +304,12 @@ void handleWiFiPage(AsyncWebServerRequest *request) {
           "input[type=text],input[type=password]{width:100%;box-sizing:border-box;padding:9px;font-size:16px}"
           "button,.btn{display:inline-block;margin-top:14px;padding:10px 16px;border:0;border-radius:4px;"
           "background:#2e7d32;color:#fff;font-size:16px;text-decoration:none}"
+          ".pw{position:relative}.pw input{padding-right:46px}"
+          ".eye{position:absolute;right:2px;top:2px;margin:0;padding:6px 9px;background:transparent;color:#333;font-size:20px}"
           ".st{background:#f4f4f4;padding:8px;border-radius:4px}#nets a{display:block;padding:4px 0}"
-          "small{color:#555}</style></head><body><div class='box'><h2>";
+          "small{color:#555}h3{margin:22px 0 0}</style></head><body><div class='box'><h2>";
   html += htmlEscape(ESP_AppName);
-  html += " - WiFi</h2><p class='st'>";
+  html += " - Connection settings</h2><p><a href='/getstatus'>&larr; Status</a></p><p class='st'>";
   html += statusText();
   html += "</p>";
   if (uiPath) {
@@ -318,14 +323,40 @@ void handleWiFiPage(AsyncWebServerRequest *request) {
     }
     html += "</p>";
   }
-  html += "<form method='POST' action='/wifi/save'><label for='ssid'>Network</label>"
+  html += "<form method='POST' action='/wifi/save'><h3>WiFi</h3><label for='ssid'>SSID</label>"
           "<input type='text' id='ssid' name='ssid' maxlength='32' required value='";
   html += htmlEscape(ssid);
   html += "'><div id='nets'><small>Scanning...</small></div>"
-          "<label for='pw'>Password</label><input type='password' id='pw' name='password' maxlength='63'>"
-          "<small><input type='checkbox' onclick=\"pw.type=this.checked?'text':'password'\"> show"
-          " &nbsp;(blank keeps the saved password of this network)</small><br>"
-          "<button type='submit'>Save and connect</button></form>"
+          "<label for='pw'>Password</label><div class='pw'>"
+          "<input type='password' id='pw' name='password' maxlength='63' autocomplete='current-password'>"
+          "<button class='eye' type='button' aria-label='Show password' onclick=\"var p=document.getElementById('pw');"
+          "p.type=p.type==='password'?'text':'password'\">&#128065;</button></div>"
+          "<small>Blank keeps the saved password of this network.</small>";
+  if (settingsFieldCount) html += "<h3>Other settings</h3>";
+  for (int i = 0; i < settingsFieldCount; ++i) {
+    const GambainoSettingsField &field = settingsFields[i];
+    char value[256] = "";
+    field.getValue(value, sizeof(value));
+    html += "<label for='";
+    html += field.name;
+    html += "'>";
+    html += htmlEscape(field.label);
+    html += field.secret ? "</label><input type='password' autocomplete='off' id='" : "</label><input type='text' id='";
+    html += field.name;
+    html += "' name='";
+    html += field.name;
+    html += "' maxlength='";
+    html += (int)field.maxLen;
+    if (field.secret) {
+      // never sent to the browser: only whether it is set
+      html += value[0] ? "' placeholder='(set - blank keeps it)'>" : "' placeholder='(not set)'>";
+      continue;
+    }
+    html += "' value='";
+    html += htmlEscape(value);
+    html += "'>";
+  }
+  html += "<br><button type='submit'>Save</button></form>"
           "<p><a href='#' onclick='poll(1);return false'>Rescan</a> &middot; "
           "<a href='/wifi/reconnect'>Retry connection now</a> &middot; "
           "<a href='/wifi/ap'>Open setup access point</a></p></div>"
@@ -365,18 +396,36 @@ void handleSave(AsyncWebServerRequest *request) {
     request->send(400, "text/plain", "Invalid network name or password (WPA passwords have 8 to 63 characters).");
     return;
   }
-  if (reqCredentials) {
+  // same network with a blank password: Wi-Fi untouched, only the other settings are saved
+  const bool wifiChanged = newSsid != ssid || !newPassword.isEmpty();
+  if (wifiChanged && reqCredentials) {
     request->send(409, "text/plain", "Previous request still being applied, try again.");
     return;
   }
-  strlcpy(pendingSsid, newSsid.c_str(), sizeof(pendingSsid));
-  strlcpy(pendingPassword, newPassword.c_str(), sizeof(pendingPassword));
-  reqCredentials = true;
+
+  for (int i = 0; i < settingsFieldCount; ++i) {
+    const GambainoSettingsField &field = settingsFields[i];
+    if (!request->hasParam(field.name, true)) continue;
+    const String value = request->getParam(field.name, true)->value();
+    if (field.secret && value.isEmpty()) continue;   // blank keeps the saved secret
+    if (value.length() > field.maxLen || !field.setValue(value.c_str())) {
+      request->send(400, "text/plain", String("Invalid value for ") + field.label + "; WiFi settings were not changed.");
+      return;
+    }
+  }
+
   String html = "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
-                "<meta http-equiv='refresh' content='8;url=/wifi'></head><body style='font-family:Arial,sans-serif'>"
-                "<h3>Saved. Connecting to '";
-  html += htmlEscape(newSsid.c_str());
-  html += "'...</h3><p>The setup access point stays active until the connection is confirmed.</p></body></html>";
+                "<meta http-equiv='refresh' content='";
+  if (wifiChanged) {
+    strlcpy(pendingSsid, newSsid.c_str(), sizeof(pendingSsid));
+    strlcpy(pendingPassword, newPassword.c_str(), sizeof(pendingPassword));
+    reqCredentials = true;
+    html += "8;url=/wifi'></head><body style='font-family:Arial,sans-serif'><h3>Saved. Connecting to '";
+    html += htmlEscape(newSsid.c_str());
+    html += "'...</h3><p>The setup access point stays active until the connection is confirmed.</p></body></html>";
+  }
+  else
+    html += "2;url=/wifi'></head><body style='font-family:Arial,sans-serif'><h3>Settings saved.</h3></body></html>";
   request->send(200, "text/html; charset=utf-8", html);
 }
 
@@ -420,7 +469,7 @@ void gambainoWiFiBegin(const char *apName, const char *apPasswordArg, const char
   started = true;
 
   uiPath = uiPathArg;
-  strlcpy(apPassword, apPasswordArg, sizeof(apPassword));
+  strlcpy(apPassword, apPasswordArg ? apPasswordArg : "", sizeof(apPassword));
   loadSettings();
 
   WiFi.persistent(false);       // credentials live in our NVS namespace; avoids flash writes per attempt
@@ -491,9 +540,13 @@ bool gambainoWiFiApActive()  { return state == State::AccessPoint; }
 
 void gambainoWiFiStatus(char *st, size_t maxLen) {
   if (!st || maxLen == 0) return;
-  String block = "<br><b>WiFi</b> (<a href='/wifi'>configure</a>)<br>&nbsp;&nbsp;";
+  String block = "<br><a href='/wifi'>Connection settings</a><br>&nbsp;&nbsp;";
   block += statusText();
   block += "<br>";
   const size_t used = strnlen(st, maxLen);
   if (used + 1 < maxLen) strncat(st, block.c_str(), maxLen - used - 1);
+}
+
+void gambainoWiFiAddSettingsField(const GambainoSettingsField &field) {
+  if (settingsFieldCount < GAMBAINOWIFI_MAX_SETTINGS_FIELDS) settingsFields[settingsFieldCount++] = field;
 }

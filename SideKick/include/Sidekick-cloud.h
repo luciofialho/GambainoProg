@@ -10,11 +10,15 @@
 bool initCloudLog();
 // Receive path (loop task): appends one record to the spool.
 void cashCloudLogRecord(const char *record);
+// Receive path (loop task): keeps only the latest batch state of each Povoto.
+void cashCloudState(const char *state);
 // Only the LogSend task may call this.
 void sendCloudLog();
 // Appends the cloud status lines (HTML) to st.
 void appendCloudLogStatus(char *st, size_t size);
-// GET /cloud and POST /cloud/update: Worker URL and SideKick token.
-void registerCloudLogRoutes();
+// Worker URL and SideKick token as fields of the Connection settings page.
+void registerCloudLogSettings();
+// Appends the "Site: <number> (<name>)" line of the token (the cloud defines it).
+void appendCloudSiteStatus(char *st, size_t size);
 
 #endif

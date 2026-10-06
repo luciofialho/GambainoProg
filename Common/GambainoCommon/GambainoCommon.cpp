@@ -15,7 +15,7 @@
 
 bool debugging = true;
 
-const char *SSIDs[NUMSSID] = {"Gambaino", "secretoca",  "goiaba"};//{"S23+ de Lucio", "secretoca",  "goiaba"};
+const char *SSIDs[NUMSSID] = {"Gambaino", "secretoca",  "goioaba"};//{"S23+ de Lucio", "secretoca",  "goiaba"};
 const char *pwds [NUMSSID] = {"87654321","Goiaba5090", "heptA2019"}; ;//{"hotSpt100","Goiaba5090", "heptA2019"}; //{"87654321","Goiaba5090", "heptA2019"}; // {"87654321", };//
 
 unsigned long numCycles=0;

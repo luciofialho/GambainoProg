@@ -177,8 +177,8 @@ void screenData() {
   if (isBatchInfoActive())
     return;
 
-  char reliefsPerHourCompact[24];
-  getReliefsPerHourCompactText(reliefsPerHourCompact, sizeof(reliefsPerHourCompact));
+  char co2RateLabel[32];
+  getCO2RateLabel(co2RateLabel, sizeof(co2RateLabel));
   char staticSignature[sizeof(lastScreenStaticSignature)];
   snprintf(staticSignature, sizeof(staticSignature), "%d|%s|%d|%s|%.3f",
     (int)BatchData.batchNumber, BatchData.batchDate, (int)FMTData.PovotoNum,
@@ -194,7 +194,7 @@ void screenData() {
   snprintf(screenSignature, sizeof(screenSignature),
     "%.1f|%.1f|%.1f|%.1f|%.2f|%s|%.0f|%.0f|%.3f|%.2f",
     ControlData.temperature, SetPointData.setPointTemp, SetPointData.setPointSlowTemp,
-    ControlData.pressure, SetPointData.setPointPressure, reliefsPerHourCompact,
+    ControlData.pressure, SetPointData.setPointPressure, co2RateLabel,
     CO2Mass(), beerVolume, beerSG, beerABV);
   const bool drawDynamic = screenDataInvalidated ||
     strcmp(screenSignature, lastScreenDataSignature) != 0;
@@ -289,7 +289,7 @@ void screenData() {
 
   // CO2 MASS COUNT
   tft.setTextColor(0, tft.color565(185,208,170));
-  textOut(LEFT,&Swiss_911_Extra_Compressed_Regular12pt7b,320,273, "g CO2%s ", reliefsPerHourCompact);
+  textOut(LEFT,&Swiss_911_Extra_Compressed_Regular12pt7b,320,273, "%s ", co2RateLabel);
   tft.setTextColor(TFT_YELLOW,0);
   textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,273, " %.0f", CO2Mass()); 
 
