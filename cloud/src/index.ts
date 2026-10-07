@@ -164,11 +164,19 @@ app.use('*', async (c, next) => {
   const email = local && c.env.DEV_USER_EMAIL ? c.env.DEV_USER_EMAIL.toLowerCase()
     : await accessEmail(c.req.raw, c.env.ACCESS_TEAM_DOMAIN, c.env.ACCESS_AUD);
   if (!email) return c.html(messagePage('Access denied', 'Sign in through Cloudflare Access.'), 401);
+  // povoto_id 0: every Povoto; site * 100 (100, 200...): every Povoto of that
+  // site, including ones that appear later; otherwise one Povoto.
   const roles = new Map<number, db.Role>();
+  const stronger = (id: number, role: db.Role) => { if (roles.get(id) !== 'edit') roles.set(id, role); };
   let all: db.Role | null = null;
+  const siteRoles = new Map<number, db.Role>();
   for (const { povoto_id, role } of await db.permissionsFor(c.env.DB, email)) {
     if (povoto_id === 0) all = all === 'edit' ? all : role;
-    else roles.set(povoto_id, role);
+    else if (povoto_id % 100 === 0) siteRoles.set(povoto_id / 100, siteRoles.get(povoto_id / 100) === 'edit' ? 'edit' : role);
+    else stronger(povoto_id, role);
+  }
+  if (siteRoles.size) {
+    for (const { id, site } of await db.povotosOfSites(c.env.DB, [...siteRoles.keys()])) stronger(id, siteRoles.get(site)!);
   }
   c.set('email', email);
   c.set('access', new Access(roles, all));
@@ -187,10 +195,20 @@ function rememberPage(c: Ctx, path: string): void {
   setCookie(c, LAST_COOKIE, path, { path: '/', maxAge: 365 * 86400, sameSite: 'Lax', secure: true, httpOnly: true });
 }
 
+// Site filter of the list (?site=N or ?site=all), kept per browser.
+const SITE_COOKIE = 'povoto_site';
+
 async function listPage(c: Ctx): Promise<Response> {
   rememberPage(c, '/povotos');
-  const povotos = await db.listPovotos(c.env.DB, c.get('access').viewableIds());
-  return c.html(homePage(c.get('email'), povotos, nowLocal(c.env)));
+  const asked = c.req.query('site');
+  const choice = asked ?? getCookie(c, SITE_COOKIE) ?? 'all';
+  if (asked !== undefined && /^(all|\d{1,4})$/.test(asked)) {
+    setCookie(c, SITE_COOKIE, asked, { path: '/', maxAge: 365 * 86400, sameSite: 'Lax', secure: true, httpOnly: true });
+  }
+  const selected = /^\d{1,4}$/.test(choice) ? Number(choice) : null;
+  const [povotos, names] = await Promise.all([db.listPovotos(c.env.DB, c.get('access').viewableIds()),
+    db.siteNames(c.env.DB)]);
+  return c.html(homePage(c.get('email'), povotos, nowLocal(c.env), names, selected));
 }
 
 app.get('/', async c => {
@@ -204,8 +222,11 @@ app.get('/search', async c => {
   const query = (c.req.query('q') ?? '').trim().slice(0, 64);
   const access = c.get('access');
   const results = query ? await db.searchBatches(c.env.DB, query, access.viewableIds()) : [];
-  const names = new Map((await db.listPovotos(c.env.DB, access.viewableIds()))
-    .map(p => [p.id, povotoName(p)]));
+  const [povotos, sites] = await Promise.all([db.listPovotos(c.env.DB, access.viewableIds()),
+    db.siteNames(c.env.DB)]);
+  const manySites = new Set(povotos.map(p => p.site)).size > 1;
+  const names = new Map(povotos.map(p => [p.id,
+    manySites ? `${povotoName(p)} · ${sites.get(p.site) || `site ${p.site}`}` : povotoName(p)]));
   return c.html(searchPage(query, results, names));
 });
 

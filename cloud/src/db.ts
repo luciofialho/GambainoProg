@@ -212,6 +212,19 @@ export async function permissionsFor(db: D1Database, email: string): Promise<{ p
   return results;
 }
 
+export async function povotosOfSites(db: D1Database, sites: number[]): Promise<{ id: number; site: number }[]> {
+  const { results } = await db.prepare(
+    `SELECT id, site FROM povotos WHERE site IN (${sites.map(() => '?').join(',')})`)
+    .bind(...sites).all<{ id: number; site: number }>();
+  return results;
+}
+
+// Site numbers and names (sidekicks table), for the site filter.
+export async function siteNames(db: D1Database): Promise<Map<number, string>> {
+  const { results } = await db.prepare('SELECT site, name FROM sidekicks').all<{ site: number; name: string }>();
+  return new Map(results.map(r => [r.site, r.name]));
+}
+
 export async function createShare(db: D1Database, share: ShareRow): Promise<void> {
   await db.prepare(
     'INSERT INTO shares (token, povoto_id, batch, created_by, created_at) VALUES (?, ?, ?, ?, ?)')

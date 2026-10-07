@@ -33,6 +33,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 form.inline { display: inline; margin: 0; }
 input[type=search] { min-width: 0; flex: 1; }
 .share { font-size: 13px; word-break: break-all; }
+.sites { margin-bottom: 14px; }
+.button.selected { background: #435e9a; border-color: #6e91dd; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px 14px; margin: 10px 0; }
 label.field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: #aeb9c6; }
 label.check { font-size: 14px; color: #e8edf3; }
@@ -80,19 +82,34 @@ export function currentBatch(latest: { epoch: number; mode: number; batch: numbe
   return nowLocal - latest.epoch <= ACTIVE_SECONDS ? latest.batch : null;
 }
 
-export function homePage(email: string, povotos: PovotoRow[], nowLocal: number): string {
-  const cards = povotos.map(p => {
+// With Povotos of more than one site: a site filter at the top (selected =
+// null shows all), and each card names its site.
+export function homePage(email: string, povotos: PovotoRow[], nowLocal: number,
+                         siteNames: Map<number, string>, selected: number | null): string {
+  const sites = [...new Set(povotos.map(p => p.site))].sort((a, b) => a - b);
+  const siteName = (site: number) => siteNames.get(site) || `Site ${site}`;
+  const filter = sites.length < 2 ? '' : `<nav class="row sites" aria-label="Site">
+${[null, ...sites].map(site => {
+    const href = site === null ? '/povotos?site=all' : `/povotos?site=${site}`;
+    const label = site === null ? 'All sites' : siteName(site);
+    const current = site === selected;
+    return `<a class="button${current ? ' selected' : ''}" href="${href}"${current ? ' aria-current="page"' : ''}>${escapeHtml(label)}</a>`;
+  }).join('')}</nav>`;
+  const shown = selected === null || !sites.includes(selected) ? povotos : povotos.filter(p => p.site === selected);
+  const showSite = sites.length > 1 && (selected === null || !sites.includes(selected));
+  const cards = shown.map(p => {
     const latest = p.last_epoch === null || p.mode === null || p.batch === null ? null
       : { epoch: p.last_epoch, mode: p.mode, batch: p.batch };
     const batch = currentBatch(latest, nowLocal) === null ? ''
       : `<div>Batch ${p.batch} · ${escapeHtml(p.batch_name || 'no name')}</div>
 <div class="muted">${MODE_NAMES[p.mode!]} · updated ${ageText(Math.max(0, nowLocal - p.last_epoch!))}</div>`;
-    return `<div class="card row"><div class="grow"><div class="name">${escapeHtml(povotoName(p))}</div>
+    const site = showSite ? ` <span class="muted">${escapeHtml(siteName(p.site))}</span>` : '';
+    return `<div class="card row"><div class="grow"><div class="name">${escapeHtml(povotoName(p))}${site}</div>
 ${batch}</div>
 <a class="button" href="/p/${p.id}/dashboard/">Dashboard</a>
 <a class="button" href="/p/${p.id}/">All batches</a></div>`;
   }).join('');
-  return layout('Povoto', `${brandTitle('Povoto')}${searchForm()}<h2>Fermenters</h2>
+  return layout('Povoto', `${brandTitle('Povoto')}${filter}${searchForm()}<h2>Fermenters</h2>
 ${cards || '<p class="muted">No Povoto is shared with this e-mail.</p>'}
 <p class="muted">${escapeHtml(email)}</p>`);
 }

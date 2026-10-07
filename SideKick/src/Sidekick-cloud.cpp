@@ -399,7 +399,8 @@ void sendCloudLog() {
     const String line = answer.substring(start, end);
     start = end + 1;
     if (line.indexOf("\"k\":\"cmd\"") < 0) continue;
-    CloudCommand command;
+    // Static: 1.1 KB more on the LogSend stack, which TLS already fills.
+    static CloudCommand command;
     if (line.length() >= sizeof(command.json) || !commandQueue) continue;
     strlcpy(command.json, line.c_str(), sizeof(command.json));
     ++commandsReceived;
@@ -493,7 +494,7 @@ void appendCloudSiteStatus(char *st, size_t size) {
 // loop(): each request goes to its Povoto ("p", the first key after "k").
 void forwardCloudCommands() {
   if (!commandQueue) return;
-  CloudCommand command;
+  static CloudCommand command; // loop task only
   if (xQueueReceive(commandQueue, &command, 0) != pdTRUE) return;
   const char *numKey = strstr(command.json, "\"p\":");
   const int num = numKey ? atoi(numKey + 4) : 0;

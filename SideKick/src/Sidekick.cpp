@@ -234,6 +234,13 @@ char *getSideKickStatus(char *st) {
   strcat(st, buf2);
 
   appendCloudLogStatus(st, MAXSTATUSLEN);
+  if (logSendTaskHandle) {
+    // Least free stack ever of the task that runs the three TLS clients.
+    char stackLine[80];
+    snprintf(stackLine, sizeof(stackLine), "LogSend stack free (minimum): %u bytes<br>",
+             (unsigned)uxTaskGetStackHighWaterMark(logSendTaskHandle));
+    strlcat(st, stackLine, MAXSTATUSLEN);
+  }
   gambainoWiFiStatus(st, MAXSTATUSLEN);
   char gsURL[SHEETS_URL_MAXLEN + 1];
   getSheetsScriptURL(gsURL, sizeof(gsURL));
