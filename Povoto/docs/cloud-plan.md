@@ -151,7 +151,17 @@ batches gravados por engano. Desde 05/10/2026 a página não mostra o botão
 (a rota `POST /p/<id>/batches/<n>/delete` continua no Worker). Registros que ainda chegarem daquele batch
 (fila do SideKick, bancada ligada) o recriam: desligar o log antes.
 
-## Fase 2: setpoints e ações automáticas pela nuvem (desenho decidido)
+## Fase 2: setpoints e ações automáticas pela nuvem (implementada)
+
+Implementada em 06/10/2026, antes de terminar o teste da Fase 1, por decisão
+do usuário: não é usada em lotes em andamento e cada Povoto tem a chave
+"Accept cloud edits" (Settings, ligada por padrão). Protocolo e detalhes em
+`docs/cloud-log.md`. Diferenças do desenho abaixo: os snapshots e as
+respostas vão pela fila do SideKick como linhas comuns (`k` = `sp`, `r`,
+`ack`); a consulta de 60 s é o próprio POST do log (os pedidos vêm na
+resposta); a nuvem não recalcula hashes, compara o hash que o Povoto manda.
+
+Desenho original:
 
 Princípio: o Povoto é o dono do estado. A nuvem guarda uma cópia, atualizada
 somente por snapshots do Povoto, e uma edição feita na nuvem é um pedido que

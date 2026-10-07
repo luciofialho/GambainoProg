@@ -15,8 +15,6 @@
 
 bool debugging = true;
 
-const char *SSIDs[NUMSSID] = {"Gambaino", "secretoca",  "goioaba"};//{"S23+ de Lucio", "secretoca",  "goiaba"};
-const char *pwds [NUMSSID] = {"87654321","Goiaba5090", "heptA2019"}; ;//{"hotSpt100","Goiaba5090", "heptA2019"}; //{"87654321","Goiaba5090", "heptA2019"}; // {"87654321", };//
 
 unsigned long numCycles=0;
 unsigned long longestCycle      =0;
@@ -431,6 +429,10 @@ static EspNowPacketHandler extraEspNowHandler_ = nullptr;
 void setExtraEspNowHandler(EspNowPacketHandler handler) {
   extraEspNowHandler_ = handler;
 }
+
+const uint8_t *espNowSenderMac() {
+  return peerRecvSenderMac_;
+}
 static void gambainoEspNowRecvCb(const uint8_t *mac, const uint8_t *data, int len) {
   if (!data || len < 7) return;
   if (mac) memcpy(peerRecvSenderMac_, mac, 6);
@@ -474,12 +476,6 @@ static const char kTagLogPk[] = "\nLogPk";
 static const char kTagCmdPk[] = "\nCmdPk";
 static const char kTagInstb[] = "\nInstb";
 static const uint8_t kTagLen = 6;
-
-void setupWiFi() {
-  WiFi.disconnect();
-
-  ESPSetup(NUMSSID,SSIDs,pwds);
-}
 
 void updateDebugModeFromWiFi() {
   if (WiFi.status() != WL_CONNECTED) return;

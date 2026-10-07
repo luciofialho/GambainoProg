@@ -72,57 +72,69 @@ bool initLogQueues() {
   return true;
 }
 
-const char* dataLogScriptURL = "https://script.google.com/macros/s/AKfycbyBmwFQoiJUpesd4LlS1Bf908ZcU5m0HmAG3s7Ushouiz10uHpkXKjV8ZOOkGI2nQuyyQ/exec";
-
-#ifndef BREWFATHER_STREAM_URL
-#define BREWFATHER_STREAM_URL "http://log.brewfather.net/stream?id=JQ3NcxkNWbcDdD"
-#endif
-
-// Brewfather stream URL: NVS, written from the Connection settings page and read by
-// the LogSend task (copied under the lock). Without an NVS value the code default applies.
+// Brewfather stream URL and Google Sheets script URL: NVS only (no default in
+// the code), written from the Connection settings page and read by the LogSend
+// task (copied under the lock). Empty disables that destination.
 #define SIDEKICK_NVS_NAMESPACE "sidekick"
 #define BREWFATHER_URL_KEY     "bf_url"
+#define SHEETS_URL_KEY         "gs_url"
 static bool startsWithIgnoreCase(const char *value, const char *prefix);
-static char brewfatherStreamURL[BREWFATHER_URL_MAXLEN + 1] = BREWFATHER_STREAM_URL;
-static portMUX_TYPE brewfatherURLMux = portMUX_INITIALIZER_UNLOCKED;
+static char brewfatherStreamURL[BREWFATHER_URL_MAXLEN + 1] = "";
+static char sheetsScriptURL[SHEETS_URL_MAXLEN + 1] = "";
+static portMUX_TYPE logURLMux = portMUX_INITIALIZER_UNLOCKED;
 
-void loadBrewfatherSettings() {
+void loadLogSettings() {
   Preferences store;
-  if (!store.begin(SIDEKICK_NVS_NAMESPACE, true)) return;  // namespace absent: keep the default
-  if (store.isKey(BREWFATHER_URL_KEY)) {
-    char url[sizeof(brewfatherStreamURL)];
-    store.getString(BREWFATHER_URL_KEY, url, sizeof(url));
-    portENTER_CRITICAL(&brewfatherURLMux);
-    strlcpy(brewfatherStreamURL, url, sizeof(brewfatherStreamURL));
-    portEXIT_CRITICAL(&brewfatherURLMux);
-  }
+  if (!store.begin(SIDEKICK_NVS_NAMESPACE, true)) return;  // namespace absent: both disabled
+  char url[SHEETS_URL_MAXLEN + 1] = "";
+  // isKey first: getString() of a missing key logs an error
+  if (store.isKey(BREWFATHER_URL_KEY)) store.getString(BREWFATHER_URL_KEY, url, sizeof(brewfatherStreamURL));
+  portENTER_CRITICAL(&logURLMux);
+  strlcpy(brewfatherStreamURL, url, sizeof(brewfatherStreamURL));
+  portEXIT_CRITICAL(&logURLMux);
+  url[0] = '\0';
+  if (store.isKey(SHEETS_URL_KEY)) store.getString(SHEETS_URL_KEY, url, sizeof(url));
+  portENTER_CRITICAL(&logURLMux);
+  strlcpy(sheetsScriptURL, url, sizeof(sheetsScriptURL));
+  portEXIT_CRITICAL(&logURLMux);
   store.end();
 }
 
-void getBrewfatherStreamURL(char *buf, size_t size) {
-  portENTER_CRITICAL(&brewfatherURLMux);
-  strlcpy(buf, brewfatherStreamURL, size);
-  portEXIT_CRITICAL(&brewfatherURLMux);
+static void getURL(const char *source, char *buf, size_t size) {
+  portENTER_CRITICAL(&logURLMux);
+  strlcpy(buf, source, size);
+  portEXIT_CRITICAL(&logURLMux);
 }
 
-bool setBrewfatherStreamURL(const char *url) {
-  // empty disables the Brewfather send
-  if (strlen(url) > BREWFATHER_URL_MAXLEN) return false;
-  if (url[0] && !startsWithIgnoreCase(url, "http://") && !startsWithIgnoreCase(url, "https://")) return false;
-  char current[sizeof(brewfatherStreamURL)];
-  getBrewfatherStreamURL(current, sizeof(current));
+// Saves a non-empty URL only when it starts with one of the prefixes.
+static bool setURL(const char *key, char *target, size_t targetSize, const char *url,
+                   const char *prefix1, const char *prefix2) {
+  if (strlen(url) >= targetSize) return false;
+  if (url[0] && !startsWithIgnoreCase(url, prefix1) && !(prefix2 && startsWithIgnoreCase(url, prefix2)))
+    return false;
+  char current[SHEETS_URL_MAXLEN + 1];
+  getURL(target, current, sizeof(current));
   if (!strcmp(current, url)) return true;
 
   Preferences store;
   if (!store.begin(SIDEKICK_NVS_NAMESPACE, false)) return false;
-  const bool saved = store.putString(BREWFATHER_URL_KEY, url) == strlen(url);
+  const bool saved = store.putString(key, url) == strlen(url);
   store.end();
   if (!saved) return false;
-  portENTER_CRITICAL(&brewfatherURLMux);
-  strlcpy(brewfatherStreamURL, url, sizeof(brewfatherStreamURL));
-  portEXIT_CRITICAL(&brewfatherURLMux);
-  Serial.printf("[BREWFATHER] stream URL changed to '%s'\n", url);
+  portENTER_CRITICAL(&logURLMux);
+  strlcpy(target, url, targetSize);
+  portEXIT_CRITICAL(&logURLMux);
+  Serial.printf("[LOG] %s changed to '%s'\n", key, url);
   return true;
+}
+
+void getBrewfatherStreamURL(char *buf, size_t size) { getURL(brewfatherStreamURL, buf, size); }
+bool setBrewfatherStreamURL(const char *url) {
+  return setURL(BREWFATHER_URL_KEY, brewfatherStreamURL, sizeof(brewfatherStreamURL), url, "http://", "https://");
+}
+void getSheetsScriptURL(char *buf, size_t size) { getURL(sheetsScriptURL, buf, size); }
+bool setSheetsScriptURL(const char *url) {
+  return setURL(SHEETS_URL_KEY, sheetsScriptURL, sizeof(sheetsScriptURL), url, "https://", nullptr);
 }
 
 static bool startsWithIgnoreCase(const char *value, const char *prefix) {
@@ -196,7 +208,28 @@ static bool readGoogleSuccess(WiFiClientSecure &client) {
 }
 
 void sendLogToGoogleSheets() {
-  if (!readyLogQueue || WiFi.status() != WL_CONNECTED) return;
+  if (!readyLogQueue) return;
+  char scriptURL[SHEETS_URL_MAXLEN + 1];
+  getSheetsScriptURL(scriptURL, sizeof(scriptURL));
+  if (!scriptURL[0]) {
+    // Not configured: drop what arrives, so the pool stays free.
+    LogRecord *record;
+    while (xQueueReceive(readyLogQueue, &record, 0) == pdTRUE) xQueueSend(freeLogQueue, &record, 0);
+    for (size_t i = 0; i < googleBatchCount; ++i) xQueueSend(freeLogQueue, &googleBatch[i], 0);
+    googleBatchCount = 0;
+    retainedGoogleLogs = 0;
+    return;
+  }
+  if (WiFi.status() != WL_CONNECTED) return;
+  // "https://host/path": the host for the connection, the path for the request.
+  const char *hostStart = scriptURL + strlen("https://");
+  const char *path = strchr(hostStart, '/');
+  char host[64];
+  const size_t hostLength = path ? (size_t)(path - hostStart) : strlen(hostStart);
+  if (hostLength == 0 || hostLength >= sizeof(host)) return;
+  memcpy(host, hostStart, hostLength);
+  host[hostLength] = '\0';
+  if (!path) path = "/";
   // Retain a failed batch locally; incoming logs only use the other pool slots.
   if (googleBatchCount == 0) {
     while (googleBatchCount < LOGCACHESIZE &&
@@ -215,7 +248,7 @@ void sendLogToGoogleSheets() {
   numSendAttempts++;
 
   bool sent = false;
-  if (client.connect("script.google.com", 443)) {
+  if (client.connect(host, 443)) {
     lastSendConnectedMs = millis();
     numSendConnected++;
     int totalLen = 0;
@@ -227,13 +260,12 @@ void sendLogToGoogleSheets() {
     const char wrapper2[] = "]}";
     totalLen += strlen(wrapper1) + strlen(wrapper2);
 
-    const char *path = strchr(dataLogScriptURL + 8, '/');
     char header[512];
     snprintf(header, sizeof(header),
-             "POST %s HTTP/1.1\r\nHost: script.google.com\r\n"
+             "POST %s HTTP/1.1\r\nHost: %s\r\n"
              "Content-Type: application/json\r\nContent-Length: %d\r\n"
              "Connection: close\r\n\r\n",
-             path ? path : dataLogScriptURL, totalLen);
+             path, host, totalLen);
     bool writeOk = writeGoogleString(client, header) && writeGoogleString(client, wrapper1);
     for (size_t idx = 0; writeOk && idx < googleBatchCount; ++idx) {
       writeOk = writeGoogleString(client, googleBatch[idx]->payload);

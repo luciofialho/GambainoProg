@@ -4207,7 +4207,7 @@ static void processSpeedCalibration() {
 }
 
 static void speedFloatCsv(char *out, size_t size, float value, uint8_t decimals) {
-  if (!isfinite(value)) { out[0] = ' '; return; }
+  if (!isfinite(value)) { out[0] = '\0'; return; }
   formatFloatCsv(out, size, value, decimals);
 }
 

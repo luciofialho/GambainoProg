@@ -9,8 +9,8 @@
 //   configured network in the background and the AP closes once it connects.
 // - The same AsyncWebServer serves the AP, so the device UI stays reachable at
 //   http://192.168.4.1/ while the AP is up (contingency operation).
-// - While NVS has no credentials, the legacy SSIDs[] list is tried and the first
-//   network that connects is migrated to NVS.
+// - No network is built into the code: while NVS has no credentials the setup AP
+//   opens right away.
 
 #include <Arduino.h>
 
@@ -48,7 +48,7 @@ struct GambainoSettingsField {
   bool (*setValue)(const char *value);           // validates and stores; false rejects the value
   bool secret;   // password input, value never shown (getValue only tells if it is set); blank keeps it
 };
-#define GAMBAINOWIFI_MAX_SETTINGS_FIELDS 4
+#define GAMBAINOWIFI_MAX_SETTINGS_FIELDS 6
 void gambainoWiFiAddSettingsField(const GambainoSettingsField &field);
 
 #endif

@@ -124,6 +124,12 @@
     ctx.restore();
   }
 
+  // X axis tick steps (seconds); epochs are local wall clock, so multiples of
+  // an hour or a day fall on round local times.
+  const TICK_SPACE = 80;
+  const TICK_STEPS = [300, 900, 1800, 3600, 7200, 10800, 21600, 43200,
+    86400, 2 * 86400, 7 * 86400, 14 * 86400];
+
   function axis(scale, side, color, decimals) {
     return {
       scale, side, stroke: color, size: 50,
@@ -153,6 +159,20 @@
     showRange(allMin, allMax);
   }
 
+  // The chart takes the width of its panel and the window height left below
+  // its top, after the legend and the time navigation (CHART_BELOW). Narrow
+  // screens keep 850 px and scroll sideways; short ones keep 470 px.
+  const CHART_MIN_WIDTH = 850;
+  const CHART_MIN_HEIGHT = 470;
+  const CHART_BELOW = 150;
+  function chartSize() {
+    const top = chartScroll.getBoundingClientRect().top + window.scrollY;
+    return {
+      width: Math.max(CHART_MIN_WIDTH, chartScroll.clientWidth - 2),
+      height: Math.max(CHART_MIN_HEIGHT, Math.round(window.innerHeight - top - CHART_BELOW)),
+    };
+  }
+
   function draw(mode) {
     const previousRange = chart ? {min: chart.scales.x.min, max: chart.scales.x.max} : null;
     if (chart) {
@@ -173,8 +193,15 @@
           ? [historyData[0], historyData[1],
               historyData[0].map(() => originalGravity), historyData[7]]
           : [historyData[0], historyData[1], historyData[2], historyData[4], historyData[6]];
+    // Ticks only at round times, at least TICK_SPACE px apart; time over date
+    // (date alone for steps of a day or more), so labels never overlap.
     const xAxis = {stroke: '#aeb9c6', grid: {stroke: '#39414b'},
-      values: (_u, ticks) => ticks.map(value => dateLabel(value))};
+      space: TICK_SPACE, incrs: TICK_STEPS, size: 48,
+      values: (_u, ticks, _space, _dim, step) => ticks.map(value => {
+        const iso = new Date(value * 1000).toISOString();
+        const date = iso.slice(5, 10);
+        return step >= 86400 ? date : `${iso.slice(11, 16)}\n${date}`;
+      })};
     const dateSeries = {label: ' ',
       value: (_u, value) => value == null ? '' : dateLabel(value, true)};
     const measuredTemp = {label: 'Temperature (°C)', scale: 'temp',
@@ -219,9 +246,8 @@
             {label: 'CO2 evolution (gCO2/L/d)', scale: 'rate', stroke: '#88c779',
               width: 2, spanGaps: true,
               value: (_u, value) => value == null ? '—' : value.toFixed(3).replace('.', ',')}];
-    const width = Math.max(850, chartScroll.clientWidth - 2);
     chart = new uPlot({
-      width, height: 470,
+      ...chartSize(),
       legend: {show: true, live: true},
       cursor: {drag: {x: true, y: false}},
       scales: {x: {time: false}},
@@ -289,7 +315,7 @@
     showRange(start, start + span);
   });
   window.addEventListener('resize', () => {
-    if (chart) chart.setSize({width: Math.max(850, chartScroll.clientWidth - 2), height: 470});
+    if (chart) chart.setSize(chartSize());
   });
 
   if (typeof uPlot !== 'function') {
@@ -377,4 +403,37 @@
       status.classList.add('error');
       status.hidden = false;
     });
+
+  // New points while the page stays open: the CSV is reloaded every
+  // REFRESH_MS with the tab visible (and on return to the tab). The zoom is
+  // kept; a view showing everything or the end follows the new points.
+  const REFRESH_MS = 5 * 60 * 1000;
+  let lastLoadAt = Date.now();
+  function reloadData() {
+    if (document.hidden || !historyData) return;
+    lastLoadAt = Date.now();
+    fetch(url, {cache: 'no-store', mode: 'cors'})
+      .then(response => {
+        if (!response.ok) throw new Error(`CSV request failed (${response.status}).`);
+        return response.text();
+      })
+      .then(csv => {
+        const result = readCsv(csv);
+        if (result.unique < 2) return;
+        const x = chart ? chart.scales.x : null;
+        const span = x ? x.max - x.min : 0;
+        const showedAll = !x || (x.min <= allMin && x.max >= allMax);
+        const followedEnd = x && x.max >= allMax;
+        historyData = result.data;
+        transitionBands = result.bands;
+        draw(activeGraph);
+        if (showedAll) showAll();
+        else if (followedEnd) showRange(Math.max(allMin, allMax - span), allMax);
+      })
+      .catch(() => {}); // keep the chart shown; the next reload tries again
+  }
+  setInterval(reloadData, REFRESH_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && Date.now() - lastLoadAt >= REFRESH_MS) reloadData();
+  });
 })();

@@ -11,6 +11,7 @@
 #include <freertos/semphr.h>
 #include <sys/stat.h>
 #include "Sidekick-cloud.h"
+#include "GambainoCommon.h"
 #include "GambainoWiFi.h"
 #include "HttpsRootCAs.h"
 
@@ -31,10 +32,26 @@ constexpr size_t POST_MAX_BYTES = 3072;
 SemaphoreHandle_t spoolMutex = nullptr;
 bool spoolReady = false;
 
+// Phase 2: with nothing to send, the SideKick still posts every POLL_MS, and
+// the cloud answers each post with the pending requests of this site (one
+// TLS connection per minute at most). LogSend queues them; loop() sends them
+// to the Povotos (the ESP-NOW sends stay in one task).
+constexpr unsigned long POLL_MS = 60000;
+constexpr size_t COMMAND_MAX_BYTES = 1100;
+struct CloudCommand {
+  char json[COMMAND_MAX_BYTES];
+};
+CloudCommand commandStorage[3];
+StaticQueue_t commandQueueControl;
+QueueHandle_t commandQueue = nullptr;
+std::atomic<unsigned long> commandsReceived{0};
+std::atomic<unsigned long> commandsForwarded{0};
+std::atomic<unsigned long> commandsUndeliverable{0};
+
 // Batch state: only the latest version of each Povoto, in RAM (not spooled);
 // posted with the history while newer than the last one the cloud accepted.
 // A reboot loses it, but the Povoto sends a new one every slot.
-constexpr size_t STATE_MAX_BYTES = 320;
+constexpr size_t STATE_MAX_BYTES = 400;
 constexpr int STATE_SLOTS = 10;
 struct CloudState {
   uint8_t num;            // PovotoNum, 0 = free slot
@@ -233,6 +250,8 @@ void refreshCloudSite() {
 bool initCloudLog() {
   spoolMutex = xSemaphoreCreateMutex();
   if (!spoolMutex) return false;
+  commandQueue = xQueueCreateStatic(3, sizeof(CloudCommand), reinterpret_cast<uint8_t *>(commandStorage),
+                                    &commandQueueControl);
   loadConfig();
   // The partition holds only this spool; a blank or old SPIFFS image is formatted.
   if (!LittleFS.begin(true, LITTLEFS_MOUNT)) {
@@ -315,6 +334,8 @@ void sendCloudLog() {
   url = cloudUrl;
   token = cloudToken;
   size_t queued = 0;
+  const unsigned long lastAttempt = lastPostAttemptMs;
+  const bool pollDue = !lastAttempt || millis() - lastAttempt >= POLL_MS;
   if (url.length() && token.length() && fileSize(SPOOL_FILE, queued) && queued) {
     File file = LittleFS.open(SPOOL_FILE, "r");
     const size_t offset = readOffset();
@@ -349,7 +370,7 @@ void sendCloudLog() {
     }
   }
   xSemaphoreGive(spoolMutex);
-  if (!count && !stateCount) return;
+  if (!count && !stateCount && !(pollDue && url.length() && token.length())) return;
 
   WiFiClientSecure client;
   client.setCACert(httpsRootCAs);
@@ -367,8 +388,23 @@ void sendCloudLog() {
   http.addHeader("Content-Type", "application/x-ndjson");
   http.addHeader("Authorization", "Bearer " + token);
   const int code = http.POST(body);
+  // NDJSON answer: a summary line, then one line per request for a Povoto.
+  const String answer = code >= 200 && code < 300 ? http.getString() : String();
   http.end();
   lastHttpCode = code;
+  for (int start = 0; start < (int)answer.length();) {
+    int end = answer.indexOf('\n', start);
+    if (end < 0) end = answer.length();
+    if (answer.indexOf("\"k\":\"cmd\"", start) == -1) break;
+    const String line = answer.substring(start, end);
+    start = end + 1;
+    if (line.indexOf("\"k\":\"cmd\"") < 0) continue;
+    CloudCommand command;
+    if (line.length() >= sizeof(command.json) || !commandQueue) continue;
+    strlcpy(command.json, line.c_str(), sizeof(command.json));
+    ++commandsReceived;
+    if (xQueueSend(commandQueue, &command, 0) != pdTRUE) ++commandsUndeliverable;
+  }
 
   // 2xx: stored (the cloud ignores records it already has and counts bad
   // lines as rejected). 400: the request itself was refused and would block
@@ -423,6 +459,9 @@ void appendCloudLogStatus(char *st, size_t size) {
   snprintf(line, sizeof(line), "Heap free: %u, largest block: %u, minimum ever: %u<br>",
            (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap(), (unsigned)ESP.getMinFreeHeap());
   strncat(st, line, size - strlen(st) - 1);
+  snprintf(line, sizeof(line), "Cloud requests: received %lu, forwarded %lu, not delivered %lu<br>",
+           commandsReceived.load(), commandsForwarded.load(), commandsUndeliverable.load());
+  strncat(st, line, size - strlen(st) - 1);
   appendAgo(st, size, "Last cloud post attempt:", lastPostAttemptMs.load());
   appendAgo(st, size, "Last cloud post OK:", lastPostOkMs.load());
 }
@@ -449,6 +488,24 @@ void appendCloudSiteStatus(char *st, size_t size) {
     else                  snprintf(line, sizeof(line), "&nbsp;&nbsp;Site: %d<br>", site);
   }
   strlcat(st, line, size);
+}
+
+// loop(): each request goes to its Povoto ("p", the first key after "k").
+void forwardCloudCommands() {
+  if (!commandQueue) return;
+  CloudCommand command;
+  if (xQueueReceive(commandQueue, &command, 0) != pdTRUE) return;
+  const char *numKey = strstr(command.json, "\"p\":");
+  const int num = numKey ? atoi(numKey + 4) : 0;
+  const uint8_t *mac = num >= 1 && num <= MAXFMTS ? peerPovotos[num - 1].mac : nullptr;
+  bool known = false;
+  for (int i = 0; mac && i < 6; ++i) known = known || mac[i];
+  if (!known || sendEspNow(mac, 0, false, (uint8_t)CLOUDCMDPACKET, command.json) != ESP_OK) {
+    ++commandsUndeliverable;
+    Serial.printf("[CLOUD] request for Povoto %d not delivered\n", num);
+    return;
+  }
+  ++commandsForwarded;
 }
 
 void registerCloudLogSettings() {

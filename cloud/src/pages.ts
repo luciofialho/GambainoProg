@@ -33,11 +33,22 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 form.inline { display: inline; margin: 0; }
 input[type=search] { min-width: 0; flex: 1; }
 .share { font-size: 13px; word-break: break-all; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px 14px; margin: 10px 0; }
+label.field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: #aeb9c6; }
+label.check { font-size: 14px; color: #e8edf3; }
+label.check input { margin-right: 6px; }
+.grid input, .wide input { width: 100%; box-sizing: border-box; }
+input:disabled { opacity: .6; }
+.note { padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; background: #2a3140; }
+.note.warn { background: #3a2f1e; }
+.note.ok { background: #1f3326; }
+fieldset { border: 1px solid #343d48; border-radius: 12px; padding: 12px 16px; margin: 0 0 12px; background: #22272e; }
+legend { font-weight: bold; padding: 0 6px; }
 .signature { display: flex; justify-content: center; margin-top: 34px; }
 .signature img { width: 160px; max-width: 45%; height: auto; filter: invert(1); opacity: .7; }
 `;
 
-function layout(title: string, body: string): string {
+export function layout(title: string, body: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)}</title><link rel="icon" href="/assets/povoto.svg">
@@ -46,7 +57,7 @@ function layout(title: string, body: string): string {
 <footer class="signature"><img src="/assets/brewtal.svg" alt="Brewtal"></footer></main></body></html>`;
 }
 
-function brandTitle(text: string): string {
+export function brandTitle(text: string): string {
   return `<h1 class="brand"><img src="/assets/povoto.svg" alt="">${escapeHtml(text)}</h1>`;
 }
 

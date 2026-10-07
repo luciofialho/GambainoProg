@@ -63,6 +63,7 @@ export function dashboardStatus(log: LogRow, batch: BatchRow | null, num: number
     calibration: ['', '', ''],
     readOnly: true,
     back: { href: '/povotos', label: 'Back' },
+    setpointLink: true,   // the set point touch zones open /p/<id>/setpoint
   };
 }
 

@@ -72,6 +72,11 @@ decisions: `Povoto/docs/cloud-plan.md`; record format and the device side:
   Povotos. The Worker keeps accepting the older record formats, so a site
   can run old firmware for a while. Batch state lines (`"k":"s"`,
   migration 0002) need the new SideKick to reach the cloud at all.
+  Phase 2 (set points and rules, migration 0003): the ingest answer became
+  NDJSON (summary line, then requests); old SideKicks ignore it.
+- Set points page: `/p/<id>/setpoint` (also the set point touch zones of the
+  dashboard). Edits need the `edit` role, "Accept cloud edits" on at the
+  Povoto and an up-to-date copy (Povoto/docs/cloud-log.md, "Fase 2").
 - The site root opens where the browser last was: the Povoto list
   (`/povotos`) or the dashboard of the last Povoto seen (cookie
   `povoto_last`, set by the list, dashboard and graphs pages).

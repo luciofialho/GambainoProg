@@ -346,7 +346,7 @@ void povotoWiFiDrawStatusIndicator() {
 }
 
 int povotoWiFiStatusIndicator(char *text, size_t size) {
-  if (size) text[0] = ' ';
+  if (size) text[0] = '\0';
   if (wifiState == WiFiState::Unconfigured) {
     snprintf(text, size, "No WiFi configured");
     return 0;

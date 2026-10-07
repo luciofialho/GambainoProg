@@ -42,6 +42,30 @@ export interface StateRecord {
   molEjected: number | null;
   expansions: number | null;
   dumpedVolume: number | null;
+  // Phase 2: versions of the set point and rule snapshots, edits accepted.
+  // null: firmware without phase 2.
+  setpointHash: string | null;
+  rulesHash: string | null;
+  editsAccepted: boolean | null;
+}
+
+// Phase 2 snapshot of the set points ("sp") or of one rule ("r"): the data is
+// kept as the Povoto sent it; hash = version on the Povoto.
+export interface SnapshotRecord {
+  num: number;
+  epoch: number;
+  kind: 'sp' | 'r';
+  hash: string;
+  index: number;      // rule 0..7; 0 for the set points
+  data: string;       // JSON object
+}
+
+// Phase 2 answer to a request.
+export interface AckRecord {
+  num: number;
+  id: number;
+  ok: boolean;
+  message: string;
 }
 
 const MIN_EPOCH = 1577836800; // 2020-01-01
@@ -126,8 +150,38 @@ function stateFrom(raw: Record<string, unknown>, nowUtc: number): StateRecord | 
     molEjected: num(raw.me),
     expansions: optionalInt(raw.nx, 0, 0xffffffff),
     dumpedVolume: num(raw.dv),
+    setpointHash: hash(raw.hs),
+    rulesHash: hash(raw.hr),
+    editsAccepted: raw.ae === undefined ? null : raw.ae === 1,
   };
   return Object.values(state).some(value => value === undefined) ? null : state as StateRecord;
+}
+
+// 8 hex digits, or null when absent; anything else is invalid.
+function hash(value: unknown): string | null | undefined {
+  if (value === undefined) return null;
+  return typeof value === 'string' && /^[0-9a-f]{8}$/.test(value) ? value : undefined;
+}
+
+function snapshotFrom(raw: Record<string, unknown>, nowUtc: number): SnapshotRecord | null {
+  if (raw.v !== 1 || (raw.k !== 'sp' && raw.k !== 'r')) return null;
+  const num = int(raw.p, 1, 99);
+  const epoch = int(raw.e, MIN_EPOCH, nowUtc + 86400);
+  const snapshotHash = hash(raw.h);
+  const index = raw.k === 'r' ? int(raw.i, 0, 7) : 0;
+  const data = raw.d;
+  if (num === undefined || epoch === undefined || !snapshotHash || index === undefined ||
+      !data || typeof data !== 'object' || Array.isArray(data)) return null;
+  return { num, epoch, kind: raw.k, hash: snapshotHash, index, data: JSON.stringify(data) };
+}
+
+function ackFrom(raw: Record<string, unknown>): AckRecord | null {
+  if (raw.v !== 1 || raw.k !== 'ack') return null;
+  const num = int(raw.p, 1, 99);
+  const id = int(raw.id, 1, Number.MAX_SAFE_INTEGER);
+  const message = text(raw.m, 120);
+  if (num === undefined || id === undefined || message === undefined) return null;
+  return { num, id, ok: raw.ok === 1, message };
 }
 
 // Returns null when the line is not a valid history record.
@@ -137,20 +191,38 @@ export function parseRecord(line: string, nowUtc: number): LogRecord | null {
 }
 
 // Splits an NDJSON body; blank lines are skipped.
-export function parseBody(body: string, nowUtc: number):
-    { records: LogRecord[]; states: StateRecord[]; rejected: number } {
-  const records: LogRecord[] = [];
-  const states: StateRecord[] = [];
-  let rejected = 0;
+export interface Body {
+  records: LogRecord[];
+  states: StateRecord[];
+  snapshots: SnapshotRecord[];
+  acks: AckRecord[];
+  rejected: number;
+}
+
+export function parseBody(body: string, nowUtc: number): Body {
+  const parsed: Body = { records: [], states: [], snapshots: [], acks: [], rejected: 0 };
   for (const line of body.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     const raw = parseObject(trimmed);
-    const state = raw?.k === 's' ? stateFrom(raw, nowUtc) : null;
-    const record = raw && raw.k === undefined ? recordFrom(raw, nowUtc) : null;
-    if (state) states.push(state);
-    else if (record) records.push(record);
-    else rejected++;
+    if (!raw) { parsed.rejected++; continue; }
+    if (raw.k === undefined) {
+      const record = recordFrom(raw, nowUtc);
+      if (record) parsed.records.push(record); else parsed.rejected++;
+    }
+    else if (raw.k === 's') {
+      const state = stateFrom(raw, nowUtc);
+      if (state) parsed.states.push(state); else parsed.rejected++;
+    }
+    else if (raw.k === 'sp' || raw.k === 'r') {
+      const snapshot = snapshotFrom(raw, nowUtc);
+      if (snapshot) parsed.snapshots.push(snapshot); else parsed.rejected++;
+    }
+    else if (raw.k === 'ack') {
+      const ack = ackFrom(raw);
+      if (ack) parsed.acks.push(ack); else parsed.rejected++;
+    }
+    else parsed.rejected++;
   }
-  return { records, states, rejected };
+  return parsed;
 }

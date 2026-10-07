@@ -37,7 +37,10 @@ for (let i = 0; i < lines.length; i += 24) {
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/x-ndjson' },
     body: lines.slice(i, i + 24).join('\n') + '\n',
   });
-  const result = await response.json().catch(() => ({}));
+  // NDJSON answer: the first line is the summary (then requests, phase 2).
+  const text = await response.text();
+  let result = {};
+  try { result = JSON.parse(text.split('\n')[0]); } catch { /* not JSON */ }
   if (!response.ok) {
     console.error(`HTTP ${response.status}`, result);
     process.exit(1);

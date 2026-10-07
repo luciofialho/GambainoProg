@@ -26,12 +26,11 @@
 #define BREWFATHERLOGPACKET  'W'   // Povoto→SideKick: full Brewfather JSON payload
 #define CLOUDLOGPACKET       'G'   // Povoto→SideKick: one cloud log record (JSON, Povoto/docs/cloud-log.md)
 #define CLOUDSTATEPACKET     'H'   // Povoto→SideKick: latest batch state for the cloud (JSON, not spooled)
+#define CLOUDCMDPACKET       'Q'   // SideKick→Povoto: one request from the cloud (JSON, Povoto/docs/cloud-log.md)
 
 #define SERIAL2_SPEED 1000000
 #define SERIAL2TIMEOUT 100
 
-#define NUMSSID 3
-#define DEFAULTSISID 0
 
 #define STRBUFFERSIZE 180
 
@@ -88,8 +87,6 @@ void peerAutoDetect();
 typedef void (*PeersSavedCallback)();
 void setPeersSavedCallback(PeersSavedCallback cb);
 
-extern const char *SSIDs[NUMSSID];
-extern const char *pwds [NUMSSID];
 
 extern unsigned long longestCycle,
                      averageCycle,
@@ -104,7 +101,6 @@ extern bool safeMode;
 extern char datalogFolderNameInUse[20];
 
 
-void setupWiFi();
 void checkDebugMode();
 // Call after a project-specific Wi-Fi manager establishes a station connection.
 void updateDebugModeFromWiFi();
@@ -119,6 +115,8 @@ typedef void (*EspNowPacketHandler)(char packetType, const char *payload);
 // Called with (packetType, payload) for any packet type that is not
 // PEERBROADCASTPACKET or PEERREPLYPACKET.
 void setExtraEspNowHandler(EspNowPacketHandler handler);
+// Sender of the packet being handled; valid only inside that handler.
+const uint8_t *espNowSenderMac();
 esp_err_t sendEspNow(const uint8_t *mac, uint8_t channel, bool encrypt, uint8_t packetType, const char *payload);
 bool     processEspNowData(const uint8_t *data, int len, EspNowPacketHandler handler);
 bool     processEspNowData(const uint8_t *data, int len, const uint8_t *senderMac, EspNowPacketHandler handler);

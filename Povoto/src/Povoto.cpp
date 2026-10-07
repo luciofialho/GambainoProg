@@ -29,6 +29,7 @@
 #include "AutoSetpoints.h"
 #include "GraphHistory.h"
 #include "CloudLog.h"
+#include "CloudSync.h"
 #include "PovotoFilesystem.h"
 #include "PovotoGraphScreen.h"
 #include "PovotoLogos.h"
@@ -189,6 +190,9 @@ static void handlePovotoEspNow(char type, const char *payload) {
     resetCountersForNewBatch();
     Serial.println("TransferEnd: mode set to fermenting");
   }
+  else if (type == CLOUDCMDPACKET) {
+    cloudSyncReceive(payload, espNowSenderMac()); // applied in loop(), SideKick only
+  }
   else if (type == ENVTEMPPACKET) {
     setEnvironmentTemperatureFromPacket(payload);
   }
@@ -202,6 +206,7 @@ void setup() {
 
   povotoDataInit();
   cloudLogBegin();
+  cloudSyncBegin();
   ElegantOTA.onStart([]() {
     writeCountersDataToNIV();
     saveCO2Buffers(); // the CO2 windows continue after the update (docs/gco2-rate.md)
@@ -448,6 +453,7 @@ void loop() {
   evaluateAutoSetpoints();
   maybeSendBrewfatherLog();
   maybeSendCloudLog();
+  cloudSyncProcess();
   maybePersistCountersData();
 
   static unsigned long lastDataLog = 0;

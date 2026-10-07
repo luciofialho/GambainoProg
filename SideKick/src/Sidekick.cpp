@@ -235,6 +235,10 @@ char *getSideKickStatus(char *st) {
 
   appendCloudLogStatus(st, MAXSTATUSLEN);
   gambainoWiFiStatus(st, MAXSTATUSLEN);
+  char gsURL[SHEETS_URL_MAXLEN + 1];
+  getSheetsScriptURL(gsURL, sizeof(gsURL));
+  strlcat(st, gsURL[0] ? "&nbsp;&nbsp;Google Sheets: configured<br>"
+                       : "&nbsp;&nbsp;Google Sheets: not configured (sending disabled)<br>", MAXSTATUSLEN);
   char bfURL[BREWFATHER_URL_MAXLEN + 1];
   getBrewfatherStreamURL(bfURL, sizeof(bfURL));
   strlcat(st, bfURL[0] ? "&nbsp;&nbsp;Brewfather key: configured<br>"
@@ -261,7 +265,9 @@ void setup() {
 
   // WiFi Setup (never restarts on Wi-Fi failure: keeps the in-RAM log cache)
   gambainoWiFiBegin("SideKick", nullptr);   // open AP
-  loadBrewfatherSettings();
+  loadLogSettings();
+  gambainoWiFiAddSettingsField({"gsurl", "Google Sheets script URL (blank disables)", SHEETS_URL_MAXLEN,
+                                getSheetsScriptURL, setSheetsScriptURL});
   gambainoWiFiAddSettingsField({"bfurl", "Brewfather stream URL (blank disables)", BREWFATHER_URL_MAXLEN,
                                 getBrewfatherStreamURL, setBrewfatherStreamURL});
   loadPeers();
@@ -337,6 +343,7 @@ void loop() {
   }
   gambainoWiFiProcess();
   handle_IOTK();
+  forwardCloudCommands();
 
   // reads Serial2 
   if (MILLISDIFF(lastSerial2Read, 10)) {

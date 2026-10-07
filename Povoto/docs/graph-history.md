@@ -51,7 +51,12 @@ Firmware and LittleFS uploads remain separate operations.
   reads as a bridge and not as a measurement; each band runs to the next point,
   or one sample interval (15 min) past the last flagged point when the next is
   missing or more than two intervals away. Drag-selection zooms; the range selector and bright
-  time slider provide zoom and horizontal navigation. The HTML, JS, CSS, and uPlot assets in
+  time slider provide zoom and horizontal navigation. The time axis puts ticks
+  only at round local times (5 min up to 14 days), at least 80 px apart, with
+  the time over the date (the date alone for daily steps). With the tab
+  visible, the CSV is reloaded every 5 min (and on return to the tab); the
+  zoom is kept, and a view showing everything or the end follows the new
+  points. The HTML, JS, CSS, and uPlot assets in
   `data/www` must be uploaded to LittleFS for the page to load.
   During development the same `data/www/graphs.html` can be opened directly
   from the PC filesystem. Its JS/CSS paths are relative; in `file://` mode the

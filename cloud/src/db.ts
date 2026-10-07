@@ -1,6 +1,6 @@
 // The only module that talks to the database: plain SQLite SQL over D1, so a
 // move to another SQLite host replaces this file alone.
-import type { LogRecord, StateRecord } from './records';
+import type { AckRecord, LogRecord, SnapshotRecord, StateRecord } from './records';
 
 export type Role = 'view' | 'edit';
 
@@ -245,4 +245,164 @@ export async function deleteBatch(db: D1Database, povotoId: number, batch: numbe
     db.prepare('DELETE FROM shares WHERE povoto_id = ? AND batch = ?').bind(povotoId, batch),
     db.prepare('DELETE FROM batches WHERE povoto_id = ? AND batch = ?').bind(povotoId, batch),
   ]);
+}
+
+// ------------------------------------------------------------------ phase 2
+// Copy of the set points and rules (snapshots from the Povoto) and the
+// requests made on the site (Povoto/docs/cloud-log.md).
+
+// A request not given to the SideKick in this time expires; one given and not
+// answered in this time is unconfirmed.
+export const REQUEST_TIMEOUT_SECONDS = 180;
+
+export type RequestKind = 'sp' | 'rule' | 'reset' | 'trigger' | 'snap';
+
+export interface RequestRow {
+  id: number;
+  povoto_id: number;
+  kind: RequestKind;
+  base_hash: string | null;
+  data: string;
+  created_by: string;
+  created_at: number;
+  sent_at: number | null;
+  status: string;
+  message: string | null;
+  done_at: number | null;
+}
+
+export interface SyncRow {
+  povoto_id: number;
+  setpoint_hash: string | null;
+  rules_hash: string | null;
+  edits_accepted: number | null;
+  epoch: number;
+}
+
+export interface SnapshotRow {
+  povoto_id: number;
+  idx: number;
+  hash: string;
+  data: string;
+  epoch: number;
+}
+
+// Snapshots (newest wins), answers and the hashes reported in batch states.
+export async function storePhase2(db: D1Database, site: number, snapshots: SnapshotRecord[],
+                                  acks: AckRecord[], states: StateRecord[], nowUtc: number): Promise<void> {
+  const statements: D1PreparedStatement[] = [];
+  const upsertSetpoints = db.prepare(
+    `INSERT INTO setpoint_snapshots (povoto_id, hash, data, epoch) VALUES (?1, ?2, ?3, ?4)
+     ON CONFLICT (povoto_id) DO UPDATE SET hash = excluded.hash, data = excluded.data, epoch = excluded.epoch
+     WHERE excluded.epoch >= setpoint_snapshots.epoch`);
+  const upsertRule = db.prepare(
+    `INSERT INTO rule_snapshots (povoto_id, idx, hash, data, epoch) VALUES (?1, ?2, ?3, ?4, ?5)
+     ON CONFLICT (povoto_id, idx) DO UPDATE SET hash = excluded.hash, data = excluded.data, epoch = excluded.epoch
+     WHERE excluded.epoch >= rule_snapshots.epoch`);
+  for (const s of snapshots) {
+    const id = site * 100 + s.num;
+    statements.push(s.kind === 'sp' ? upsertSetpoints.bind(id, s.hash, s.data, s.epoch)
+      : upsertRule.bind(id, s.index, s.hash, s.data, s.epoch));
+  }
+  // An answer after the timeout still counts: unconfirmed becomes applied/rejected.
+  const answer = db.prepare(
+    `UPDATE requests SET status = ?1, message = ?2, done_at = ?3
+     WHERE id = ?4 AND povoto_id = ?5 AND status IN ('pending', 'sent', 'unconfirmed')`);
+  for (const a of acks) {
+    statements.push(answer.bind(a.ok ? 'applied' : 'rejected', a.message, nowUtc, a.id, site * 100 + a.num));
+  }
+  const upsertSync = db.prepare(
+    `INSERT INTO povoto_sync (povoto_id, setpoint_hash, rules_hash, edits_accepted, epoch)
+     VALUES (?1, ?2, ?3, ?4, ?5)
+     ON CONFLICT (povoto_id) DO UPDATE SET setpoint_hash = excluded.setpoint_hash,
+       rules_hash = excluded.rules_hash, edits_accepted = excluded.edits_accepted, epoch = excluded.epoch
+     WHERE excluded.epoch >= povoto_sync.epoch`);
+  for (const s of states) {
+    if (s.setpointHash === null && s.rulesHash === null) continue; // firmware without phase 2
+    statements.push(upsertSync.bind(site * 100 + s.num, s.setpointHash, s.rulesHash,
+      s.editsAccepted === null ? null : s.editsAccepted ? 1 : 0, s.epoch));
+  }
+  if (statements.length) await db.batch(statements);
+}
+
+export async function expireRequests(db: D1Database, nowUtc: number): Promise<void> {
+  const limit = nowUtc - REQUEST_TIMEOUT_SECONDS;
+  await db.batch([
+    db.prepare(`UPDATE requests SET status = 'expired', done_at = ?1
+                WHERE status = 'pending' AND created_at < ?2`).bind(nowUtc, limit),
+    db.prepare(`UPDATE requests SET status = 'unconfirmed', done_at = ?1
+                WHERE status = 'sent' AND kind != 'snap' AND sent_at < ?2`).bind(nowUtc, limit),
+  ]);
+}
+
+// When the copy differs from what the Povoto reported, ask for its snapshots
+// (one request per timeout at most).
+export async function askStaleSnapshots(db: D1Database, povotoIds: number[], nowUtc: number): Promise<void> {
+  if (!povotoIds.length) return;
+  const { results } = await db.prepare(
+    `SELECT s.povoto_id,
+       s.setpoint_hash IS NOT NULL AND s.setpoint_hash IS NOT sp.hash AS setpoints_stale,
+       s.rules_hash IS NOT NULL AND (SELECT COUNT(*) FROM rule_snapshots r
+         WHERE r.povoto_id = s.povoto_id AND r.hash = s.rules_hash) < 8 AS rules_stale,
+       EXISTS (SELECT 1 FROM requests q WHERE q.povoto_id = s.povoto_id AND q.kind = 'snap'
+         AND q.created_at >= ?) AS asked
+     FROM povoto_sync s LEFT JOIN setpoint_snapshots sp ON sp.povoto_id = s.povoto_id
+     WHERE s.povoto_id IN (${povotoIds.map(() => '?').join(',')})`)
+    .bind(nowUtc - REQUEST_TIMEOUT_SECONDS, ...povotoIds)
+    .all<{ povoto_id: number; setpoints_stale: number; rules_stale: number; asked: number }>();
+  const insert = db.prepare(
+    `INSERT INTO requests (povoto_id, kind, data, created_by, created_at) VALUES (?, 'snap', '{}', 'cloud', ?)`);
+  const statements = results.filter(r => (r.setpoints_stale || r.rules_stale) && !r.asked)
+    .map(r => insert.bind(r.povoto_id, nowUtc));
+  if (statements.length) await db.batch(statements);
+}
+
+// Pending requests of a site's Povotos, marked as given to its SideKick.
+export async function takePendingRequests(db: D1Database, site: number, nowUtc: number): Promise<RequestRow[]> {
+  const { results } = await db.prepare(
+    `SELECT * FROM requests WHERE povoto_id BETWEEN ? AND ? AND status = 'pending' ORDER BY id LIMIT 10`)
+    .bind(site * 100 + 1, site * 100 + 99).all<RequestRow>();
+  if (results.length) {
+    await db.prepare(`UPDATE requests SET status = 'sent', sent_at = ? WHERE id IN (${results.map(() => '?').join(',')})`)
+      .bind(nowUtc, ...results.map(r => r.id)).run();
+  }
+  return results;
+}
+
+export async function createRequest(db: D1Database, request: {
+  povoto_id: number; kind: RequestKind; base_hash: string; data: string; created_by: string; created_at: number;
+}): Promise<void> {
+  await db.prepare(
+    `INSERT INTO requests (povoto_id, kind, base_hash, data, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+    .bind(request.povoto_id, request.kind, request.base_hash, request.data, request.created_by, request.created_at)
+    .run();
+}
+
+// A user request still waiting for the Povoto (only one at a time).
+export async function openRequest(db: D1Database, povotoId: number): Promise<RequestRow | null> {
+  return db.prepare(
+    `SELECT * FROM requests WHERE povoto_id = ? AND kind != 'snap' AND status IN ('pending', 'sent')
+     ORDER BY id DESC LIMIT 1`).bind(povotoId).first<RequestRow>();
+}
+
+export async function recentRequests(db: D1Database, povotoId: number): Promise<RequestRow[]> {
+  const { results } = await db.prepare(
+    `SELECT * FROM requests WHERE povoto_id = ? AND kind != 'snap' ORDER BY id DESC LIMIT 6`)
+    .bind(povotoId).all<RequestRow>();
+  return results;
+}
+
+export async function getSync(db: D1Database, povotoId: number): Promise<SyncRow | null> {
+  return db.prepare('SELECT * FROM povoto_sync WHERE povoto_id = ?').bind(povotoId).first<SyncRow>();
+}
+
+export async function getSetpointSnapshot(db: D1Database, povotoId: number): Promise<SnapshotRow | null> {
+  return db.prepare('SELECT povoto_id, 0 AS idx, hash, data, epoch FROM setpoint_snapshots WHERE povoto_id = ?')
+    .bind(povotoId).first<SnapshotRow>();
+}
+
+export async function getRuleSnapshots(db: D1Database, povotoId: number): Promise<SnapshotRow[]> {
+  const { results } = await db.prepare('SELECT * FROM rule_snapshots WHERE povoto_id = ? ORDER BY idx')
+    .bind(povotoId).all<SnapshotRow>();
+  return results;
 }

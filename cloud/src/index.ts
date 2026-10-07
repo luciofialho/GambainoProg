@@ -6,6 +6,7 @@ import * as db from './db';
 import { batchLabel, dashboardStatus, graphCsv } from './format';
 import { currentBatch, homePage, messagePage, povotoName, povotoPage, searchPage } from './pages';
 import { parseBody } from './records';
+import { ruleRequest, setpointPage, setpointRequest } from './setpoints';
 
 interface Env {
   DB: D1Database;
@@ -95,10 +96,25 @@ app.post('/api/ingest', async c => {
   const body = await c.req.text();
   // 400 makes the SideKick skip the post instead of retrying it forever.
   if (body.length > MAX_INGEST_BYTES) return c.json({ error: 'body too large' }, 400);
-  const { records, states, rejected } = parseBody(body, nowUtc());
-  const inserted = await db.storeRecords(c.env.DB, site, records, states, nowUtc());
+  const now = nowUtc();
+  const { records, states, snapshots, acks, rejected } = parseBody(body, now);
+  const inserted = await db.storeRecords(c.env.DB, site, records, states, now);
   if (rejected) console.log(`ingest site ${site}: ${rejected} invalid line(s)`);
-  return c.json({ inserted, duplicates: records.length - inserted, states: states.length, rejected });
+  // Phase 2: store the copies and answers, ask for snapshots where the copy
+  // is behind, and answer with the pending requests of this site's Povotos.
+  await db.storePhase2(c.env.DB, site, snapshots, acks, states, now);
+  await db.expireRequests(c.env.DB, now);
+  await db.askStaleSnapshots(c.env.DB, [...new Set(states.map(s => site * 100 + s.num))], now);
+  const requests = await db.takePendingRequests(c.env.DB, site, now);
+  // NDJSON: a summary line, then one line per request. "p" comes right after
+  // "k": the SideKick reads it to pick the Povoto.
+  const lines = [JSON.stringify({ inserted, duplicates: records.length - inserted, states: states.length,
+    snapshots: snapshots.length, acks: acks.length, rejected })];
+  for (const r of requests) {
+    lines.push(`{"k":"cmd","p":${r.povoto_id % 100},"id":${r.id},"t":${JSON.stringify(r.kind)},` +
+      `"h":${JSON.stringify(r.base_hash ?? '')},"d":${r.data}}`);
+  }
+  return c.body(lines.join('\n') + '\n', 200, { 'Content-Type': 'application/x-ndjson' });
 });
 
 // The SideKick shows the site of its token on /getstatus.
@@ -275,6 +291,71 @@ app.get('/p/:id/graphs/meta.json', async c => {
 app.get('/p/:id/graphs/:file', async c => {
   const file = c.req.param('file');
   return GRAPH_FILES.has(file) && (await povotoFor(c)) ? asset(c, file) : notFound(c);
+});
+
+// ---------------------------------------------- set points (phase 2)
+
+app.get('/p/:id/setpoint', async c => {
+  const povoto = await povotoFor(c);
+  if (!povoto) return notFound(c);
+  const now = nowUtc();
+  await db.expireRequests(c.env.DB, now);
+  const [sync, setpoints, rules, latest, requests, open] = await Promise.all([
+    db.getSync(c.env.DB, povoto.id), db.getSetpointSnapshot(c.env.DB, povoto.id),
+    db.getRuleSnapshots(c.env.DB, povoto.id), db.latestLog(c.env.DB, povoto.id),
+    db.recentRequests(c.env.DB, povoto.id), db.openRequest(c.env.DB, povoto.id)]);
+  return noStore(c.html(setpointPage({
+    povoto, sync, setpoints, rules, latest, requests, open,
+    canEdit: c.get('access').canEdit(povoto.id),
+    message: (c.req.query('m') ?? '').slice(0, 200),
+    localOffsetSeconds: nowLocal(c.env) - now,
+  })));
+});
+
+// Every request: edit role, edits on at the Povoto, nothing else waiting, and
+// made on the copy the page showed (base). The Povoto checks the base again.
+async function sendRequest(c: Ctx, kind: db.RequestKind,
+                           build: (form: Record<string, unknown>) => Record<string, unknown> | string): Promise<Response> {
+  const povoto = await povotoFor(c, true);
+  if (!povoto) return notFound(c);
+  const back = (message: string) => c.redirect(`/p/${povoto.id}/setpoint?m=${encodeURIComponent(message)}`, 303);
+  const form = await c.req.parseBody();
+  const now = nowUtc();
+  await db.expireRequests(c.env.DB, now);
+  const [sync, setpoints, rules, open] = await Promise.all([db.getSync(c.env.DB, povoto.id),
+    db.getSetpointSnapshot(c.env.DB, povoto.id), db.getRuleSnapshots(c.env.DB, povoto.id),
+    db.openRequest(c.env.DB, povoto.id)]);
+  if (!sync || sync.edits_accepted !== 1) return back('Cloud edits are off on this Povoto.');
+  if (open) return back('Another request is still waiting for the Povoto.');
+  const current = kind === 'sp' ? setpoints?.hash
+    : rules.length === 8 && rules.every(r => r.hash === sync.rules_hash) ? sync.rules_hash : null;
+  if (!current || form.base !== current || (kind === 'sp' && current !== sync.setpoint_hash)) {
+    return back('The Povoto changed since this page was loaded: check the values and try again.');
+  }
+  const data = build(form);
+  if (typeof data === 'string') return back(data);
+  await db.createRequest(c.env.DB, { povoto_id: povoto.id, kind, base_hash: current, data: JSON.stringify(data),
+    created_by: c.get('email'), created_at: now });
+  return back('Sent. The Povoto applies it within about a minute; reload to see the result.');
+}
+
+function ruleIndex(c: Ctx): number | null {
+  const index = intParam(c.req.param('i'));
+  return index !== null && index < 8 ? index : null;
+}
+
+app.post('/p/:id/setpoint', c => sendRequest(c, 'sp', setpointRequest));
+app.post('/p/:id/setpoint/rule/:i', c => {
+  const index = ruleIndex(c);
+  return index === null ? notFound(c) : sendRequest(c, 'rule', form => ruleRequest(form, index));
+});
+app.post('/p/:id/setpoint/reset/:i', c => {
+  const index = ruleIndex(c);
+  return index === null ? notFound(c) : sendRequest(c, 'reset', () => ({ i: index }));
+});
+app.post('/p/:id/setpoint/trigger/:i', c => {
+  const index = ruleIndex(c);
+  return index === null ? notFound(c) : sendRequest(c, 'trigger', () => ({ i: index }));
 });
 
 // Editing: links and deletion ("edit" role).

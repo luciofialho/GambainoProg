@@ -192,7 +192,9 @@
     if (x >= 235 && x <= 470 && y <= 55) return () => go('../graphs/#evolution');
     if (x >= 125 && x <= 220 && y >= 162 && y <= 219) return () => go('../graphs/#attenuation');
     if (x >= 125 && x <= 220 && y >= 235 && y <= 301) return () => go('../graphs/#pressure');
-    if (editable && x >= 260 && x <= 430 && ((y >= 85 && y <= 165) || (y >= 230 && y <= 262)))
+    // The cloud has its own set point page (status.setpointLink).
+    const setpoints = editable || (status && status.setpointLink);
+    if (setpoints && x >= 260 && x <= 430 && ((y >= 85 && y <= 165) || (y >= 230 && y <= 262)))
       return () => go('../setpoint');
     return null;
   }

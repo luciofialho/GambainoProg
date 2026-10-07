@@ -19,6 +19,7 @@
 #include <memory>
 #include <esp_heap_caps.h>
 #include "CloudLog.h"
+#include "CloudSync.h"
 #include "GraphHistory.h"
 #include "Povoto_UI.h"
 
@@ -575,7 +576,7 @@ void handleDebugParamsUpdate(AsyncWebServerRequest *request) {
 // ========== FMT DATA HANDLERS ==========
 
 void handleFMTDataPage(AsyncWebServerRequest *request) {
-  const size_t BUFFER_SIZE = 8500;
+  const size_t BUFFER_SIZE = 9000;
   char* html = (char*)malloc(BUFFER_SIZE);
   if (!html) {
     request->send(500, "text/plain", "Out of memory");
@@ -628,6 +629,14 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
     strncat(html, buffer, BUFFER_SIZE - strlen(html) - 1);
   }
   strncat(html, "</select></div>", BUFFER_SIZE - strlen(html) - 1);
+  // The hidden field tells the update that the checkbox was on the form
+  // (an unchecked checkbox is not posted).
+  snprintf(buffer, sizeof(buffer),
+           "<div class='form-group'><input type='hidden' name='cloudEditsField' value='1'>"
+           "<label><input type='checkbox' name='cloudEdits' value='1'%s> Accept cloud edits</label>"
+           "<small>Set points and automatic rules changed on the cloud site.</small></div>",
+           cloudEditsAccepted() ? " checked" : "");
+  strncat(html, buffer, BUFFER_SIZE - strlen(html) - 1);
   
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='form-group'>"
@@ -808,6 +817,11 @@ void handleFMTDataUpdate(AsyncWebServerRequest *request) {
       return;
     }
     FMTData.dataLogIntervalSeconds = interval;
+  }
+  if (request->hasParam("cloudEditsField", true) &&
+      !setCloudEditsAccepted(request->hasParam("cloudEdits", true))) {
+    request->send(500, "text/plain", "Could not save Accept cloud edits.");
+    return;
   }
   if (request->hasParam("FMTEffectiveVentingExponent", true)) {
     const float exponent = request->getParam("FMTEffectiveVentingExponent", true)->value().toFloat();

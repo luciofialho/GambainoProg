@@ -92,11 +92,73 @@ Estado do batch (uma linha JSON, até ~260 bytes):
   próprio Wi-Fi caía durante eles. A fila foi reduzida para 8 posições, e os
   POSTs da nuvem são pequenos. `/getstatus` mostra o heap livre, o maior
   bloco e o mínimo desde o boot.
-- Estado do batch: até 10 Povotos em RAM (320 bytes cada). Os estados mais
+- Estado do batch: até 10 Povotos em RAM (400 bytes cada). Os estados mais
   novos que o último aceito vão no mesmo POST do histórico (uma conexão TLS
   só); um 2xx ou 400 os marca como enviados.
 - Configuração na página "Connection settings" (link no `/getstatus`; URL e
   token, na NVS `sk_cloud`); contadores e o site do token (`/api/whoami`) em
-  `/getstatus`.
+  `/getstatus`. Apagar a URL desliga a nuvem (o token fica guardado).
+- Nenhum destino vem no código: a URL do Google Sheets (Apps Script) e a do
+  Brewfather também são campos dessa página (NVS `sidekick`: `gs_url`,
+  `bf_url`); vazias, o envio para aquele destino fica desligado. Ao atualizar
+  um SideKick de antes de outubro de 2026, preencha as duas.
 - O LittleFS é montado com formatação se não montar: a partição do SideKick
   não guardava nada antes disso.
+
+## Fase 2: set points e regras pela nuvem
+
+O Povoto é o dono dos dados. A nuvem guarda uma cópia feita só de
+snapshots enviados por ele e manda pedidos, que o Povoto aplica apenas se
+foram feitos sobre a versão (hash) que ele ainda tem. Em caso de race, o
+pedido da nuvem perde.
+
+### Povoto (`src/CloudSync.cpp`)
+
+- **Snapshots**, pela fila do SideKick (pacote `CLOUDLOGPACKET`, como o
+  histórico): `{"v":1,"k":"sp","p","e","h","d":{t,ts,tv,p,ps,pv}}` para os
+  set points e `{"v":1,"k":"r","p","e","h","i","d":{i,n,sh,ph,sg,co,t,tsl,p,psl,rq,mo,at}}`
+  para cada regra (`at`: horário do disparo, 0 = não disparou). `h` é o CRC32
+  (8 hex) do texto de `d` (set points) ou dos 8 textos de regra em ordem,
+  cada um seguido de `\n` (regras). Enquanto uma rampa corre, o valor direto
+  daquela grandeza fica fora (`null`): ele anda a cada passo.
+- O hash é recalculado a cada 2 s; mudou (página local, TFT, regra
+  automática, pedido da nuvem), o snapshot sai, uma linha a cada 300 ms (a
+  fila ESP-NOW do SideKick tem 16 quadros).
+- A linha de estado (5 min) leva `hs` e `hr` (hashes) e `ae` (aceita
+  edições). Com a cópia diferente, a nuvem pede `snap` e o Povoto reenvia
+  tudo.
+- **Pedidos** (pacote `CLOUDCMDPACKET` 'Q', do SideKick):
+  `{"k":"cmd","p","id","t","h","d"}`, com `t` = `sp`, `rule`, `reset`,
+  `trigger` ou `snap`. Aceitos só do MAC do `peerSideKick` (os demais são
+  descartados e contados); enfileirados no callback do rádio e aplicados no
+  `loop()`.
+- Aplicação: chave ligada, `h` igual ao hash atual e as mesmas validações
+  da página e das regras (temperatura 0-42 °C, pressão 0-2 bar, rampas 1-8
+  °C/dia e 0,1-2 bar/dia; regra disparada só aceita Reset). Set points com
+  a semântica da página de set points.
+- Resposta `{"v":1,"k":"ack","p","id","ok","m"}` pela fila, repetida uma vez;
+  um pedido repetido (mesmo `id`) recebe a mesma resposta, sem reaplicar.
+- **Accept cloud edits**: página Settings, abaixo do Log interval (NVS
+  `pvt_cloud`: `edits`, ligada por padrão). Desligada, todo pedido que não
+  seja `snap` é recusado.
+
+### SideKick
+
+- Sem nada a enviar, posta mesmo assim a cada 60 s (POLL_MS): a resposta do
+  `/api/ingest` traz, depois da linha de resumo, uma linha por pedido
+  pendente do site. Uma conexão TLS por minuto, no máximo.
+- A task LogSend enfileira os pedidos (3 posições); o `loop()` manda cada um
+  ao Povoto do `"p"` (logo depois de `"k"`), pelo MAC de `peerPovotos`.
+  Contadores em `/getstatus` (recebidos, repassados, não entregues).
+
+### Nuvem (`cloud/`, migração 0003)
+
+- Tabelas: `setpoint_snapshots`, `rule_snapshots` (a mais nova vence),
+  `povoto_sync` (hashes e chave da última linha de estado) e `requests`.
+- Página `/p/<id>/setpoint` (também pelo toque nos targets do dashboard):
+  cópia dos set points e das regras, formulários (papel `edit`), últimos
+  pedidos. Só edita com a chave ligada no Povoto, a cópia em dia e nenhum
+  outro pedido esperando; o formulário leva o hash da cópia mostrada.
+- Prazos (`REQUEST_TIMEOUT_SECONDS`, 180 s): pedido não buscado pelo
+  SideKick expira; buscado e sem resposta fica "unconfirmed" (uma resposta
+  tardia ainda atualiza).

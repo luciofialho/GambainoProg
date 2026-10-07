@@ -12,8 +12,11 @@ bool initCloudLog();
 void cashCloudLogRecord(const char *record);
 // Receive path (loop task): keeps only the latest batch state of each Povoto.
 void cashCloudState(const char *state);
-// Only the LogSend task may call this.
+// Only the LogSend task may call this. It also polls the cloud every minute
+// for requests to the Povotos (phase 2).
 void sendCloudLog();
+// loop(): sends one queued cloud request to its Povoto.
+void forwardCloudCommands();
 // Appends the cloud status lines (HTML) to st.
 void appendCloudLogStatus(char *st, size_t size);
 // Worker URL and SideKick token as fields of the Connection settings page.

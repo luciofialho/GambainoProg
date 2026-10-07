@@ -1,4 +1,6 @@
 #include "CloudLog.h"
+#include "CloudJson.h"
+#include "CloudSync.h"
 
 #include <Preferences.h>
 #include <WiFi.h>
@@ -32,64 +34,6 @@ bool isZeroMac(const uint8_t *mac) {
   }
   return true;
 }
-
-// Appends to a fixed buffer; `ok` turns false once anything was cut.
-struct JsonOut {
-  char *buf;
-  size_t size;
-  size_t used;
-  bool ok;
-
-  JsonOut(char *buffer, size_t capacity) : buf(buffer), size(capacity), used(0), ok(capacity > 0) {
-    if (ok) buf[0] = '\0';
-  }
-
-  void raw(const char *text) {
-    const size_t length = strlen(text);
-    if (!ok || used + length >= size) {
-      ok = false;
-      return;
-    }
-    memcpy(buf + used, text, length + 1);
-    used += length;
-  }
-  void key(const char *name) {
-    raw(used > 1 ? ",\"" : "\"");
-    raw(name);
-    raw("\":");
-  }
-  void number(const char *name, float value, int decimals) {
-    key(name);
-    if (!isfinite(value)) {
-      raw("null");
-      return;
-    }
-    char text[24];
-    snprintf(text, sizeof(text), "%.*f", decimals, value);
-    raw(text);
-  }
-  void integer(const char *name, long value) {
-    key(name);
-    char text[16];
-    snprintf(text, sizeof(text), "%ld", value);
-    raw(text);
-  }
-  void string(const char *name, const char *value) {
-    key(name);
-    raw("\"");
-    char one[2] = {0, 0};
-    for (const char *c = value; *c; ++c) {
-      if (*c == '"' || *c == '\\') {
-        raw("\\");
-      } else if ((unsigned char)*c < 0x20) {
-        continue; // control characters never belong in a batch name
-      }
-      one[0] = *c;
-      raw(one);
-    }
-    raw("\"");
-  }
-};
 
 float setpointOrNan(float value) {
   return isfinite(value) && value != NOTaTEMP ? value : NAN;
@@ -161,6 +105,14 @@ bool buildState(uint32_t epoch, char *out, size_t size) {
   json.number("me", (float)CountersData.totalMolsEjected, 3);
   json.integer("nx", (long)CountersData.totalReliefCount);
   json.number("dv", CountersData.dumpedVolume, 2);
+  // Phase 2: versions of the set point and rule snapshots, and whether the
+  // Povoto accepts edits; the cloud asks for snapshots when its copy differs.
+  char hash[9];
+  cloudSetpointHash(hash, sizeof(hash));
+  json.string("hs", hash);
+  cloudRulesHash(hash, sizeof(hash));
+  json.string("hr", hash);
+  json.integer("ae", cloudEditsAccepted() ? 1 : 0);
   json.raw("}");
   return json.ok;
 }

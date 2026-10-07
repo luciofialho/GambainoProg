@@ -1,7 +1,7 @@
 :root { color-scheme: dark; font-family: Arial, sans-serif; background: #16191e; color: #e8edf3; }
 * { box-sizing: border-box; }
 body { margin: 0; }
-.page { max-width: 1500px; margin: auto; padding: 22px; }
+.page { margin: auto; padding: 22px; }
 .heading, .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .heading { margin-bottom: 18px; }
 h2 { margin: 0 0 5px; font-size: 22px; }
@@ -21,7 +21,7 @@ select { min-width: 120px; }
 #status { margin: 12px 0; min-height: 18px; }
 #status.error { color: #ff8f8f; }
 #chart-scroll { max-width: 100%; overflow-x: auto; }
-#chart { min-height: 440px; }
+#chart { min-height: 470px; }
 .navigation { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
 .navigation label { white-space: nowrap; font-size: 13px; }
 .navigation input { flex: 1; min-width: 100px; height: 18px; appearance: none; -webkit-appearance: none; background: transparent; cursor: pointer; }

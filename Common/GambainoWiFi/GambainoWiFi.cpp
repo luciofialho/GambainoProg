@@ -25,11 +25,11 @@ char apSsid[33] = "";
 char apPassword[65] = "";
 const char *uiPath = nullptr;
 
-// configured network (NVS); empty ssid: legacy SSIDs[] list is used
+// configured network (NVS); empty ssid: nothing to try, only the setup AP
+// (no network is built into the code)
 char ssid[33] = "";
 char password[65] = "";
 uint8_t lastChannel = 0;   // channel of the last connection, hint for attempts and for the AP
-int legacyIndex = -1;      // SSIDs[] candidate of the current attempt, -1 when using NVS
 char attemptSsid[33] = "";
 
 bool staWasUp = false;
@@ -109,24 +109,22 @@ bool attemptFailed() {
   return lastFailAt != 0 && (long)(lastFailAt - attemptStart) >= 0;
 }
 
+void startAccessPoint(unsigned long now, bool forced);
+
 void startAttempt(unsigned long now) {
-  const char *pwd;
-  if (ssid[0]) {
-    legacyIndex = -1;
-    strlcpy(attemptSsid, ssid, sizeof(attemptSsid));
-    pwd = password;
+  attemptStart = now;
+  if (!ssid[0]) {
+    // No network configured: the setup AP is the only way to get one.
+    attemptActive = false;
+    if (state != State::AccessPoint) startAccessPoint(now, false);
+    return;
   }
-  else {
-    legacyIndex = (legacyIndex + 1) % NUMSSID;
-    strlcpy(attemptSsid, SSIDs[legacyIndex], sizeof(attemptSsid));
-    pwd = pwds[legacyIndex];
-  }
+  strlcpy(attemptSsid, ssid, sizeof(attemptSsid));
   // disconnect(false,...) keeps the radio on: ESP-NOW and the AP survive the retry
   WiFi.disconnect(false, false);
-  WiFi.begin(attemptSsid, pwd, lastChannel);
+  WiFi.begin(attemptSsid, password, lastChannel);
   attemptActive = true;
-  attemptStart = now;
-  Serial.printf("WiFi: trying '%s'%s\n", attemptSsid, legacyIndex >= 0 ? " (built-in list)" : "");
+  Serial.printf("WiFi: trying '%s'\n", attemptSsid);
 }
 
 void startAccessPoint(unsigned long now, bool forced) {
@@ -164,12 +162,6 @@ void stopAccessPoint() {
 void onStationUp(unsigned long now) {
   attemptActive = false;
   lastFailReason = 0;
-  if (!ssid[0] && legacyIndex >= 0) {
-    strlcpy(ssid, SSIDs[legacyIndex], sizeof(ssid));
-    strlcpy(password, pwds[legacyIndex], sizeof(password));
-    legacyIndex = -1;
-    Serial.printf("WiFi: '%s' migrated to NVS: %s\n", ssid, saveCredentials() ? "ok" : "FAILED");
-  }
   saveChannel(WiFi.channel());
   Serial.printf("WiFi: connected to '%s', IP %s, channel %d\n", WiFi.SSID().c_str(),
                 WiFi.localIP().toString().c_str(), WiFi.channel());
@@ -288,7 +280,7 @@ String statusText() {
     text += buf;
     text += reconnectedAt ? " - closing once clients leave" : " - network retried every 30s";
   }
-  if (!ssid[0]) text += "<br>No network saved: trying the built-in list";
+  if (!ssid[0]) text += "<br>No network saved: choose one on this page";
   return text;
 }
 
