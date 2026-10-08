@@ -4,7 +4,7 @@ compatibility_date = "2026-09-01"
 workers_dev = false
 # Preview URLs would be other hostnames, outside the Access application.
 preview_urls = false
-# Custom domain (zone brewtal.one in this account); workers.dev stays on.
+# Custom domain (zone brewtal.one in this account); no workers.dev address.
 routes = [{ pattern = "povoto.brewtal.one", custom_domain = true }]
 
 # The Povoto web pages (Povoto/data/www + LCars.bmp), copied by
@@ -26,18 +26,20 @@ migrations_dir = "migrations"
 [vars]
 # Cloudflare Access (cloud/README.md): team domain and the application AUD tag.
 ACCESS_TEAM_DOMAIN = "https://brewtal.cloudflareaccess.com"
-ACCESS_AUD = "9c65f46383702bbcd460690c95aea7c067362300899cd8665e3e952b7703785d,92059c6250e2442457575dcda045564e1af87d9e46b57f3360136790472b01cb"
+ACCESS_AUD = "92059c6250e2442457575dcda045564e1af87d9e46b57f3360136790472b01cb"
 # The Povotos' local time (NTPBegin(-3)), used for "updated N min ago".
 LOCAL_UTC_OFFSET_MINUTES = "-180"
-# Origin of the public links (/s/...): the site itself, where an Access
-# Bypass application covers /s/* and /assets/* (cloud/README.md). The second
-# Worker (env.public, no Access) serves the SideKicks.
+# Origin of the public links (/s/...): the site itself, outside the paths
+# Access covers (cloud/README.md). The second Worker (env.public) serves the
+# SideKicks of production.
 PUBLIC_ORIGIN = "https://povoto.brewtal.one"
 # Users page: who may sign in is the Access policy below, kept equal to the
 # e-mails with an access (src/accessGroup.ts). The API token is a secret
 # (CF_API_TOKEN), set on the dashboard, never here.
 CF_ACCOUNT_ID = "732983eafca74b461f8aec4465e10109"
 ACCESS_POLICY_NAME = "Povoto users"
+# Hostnames whose site pages Access protects (Users page, Set up Access).
+ACCESS_HOSTS = "povoto.brewtal.one,dev.brewtal.one"
 
 [env.public]
 name = "povoto-public"
@@ -64,8 +66,42 @@ migrations_dir = "migrations"
 
 [env.public.vars]
 ACCESS_TEAM_DOMAIN = "https://brewtal.cloudflareaccess.com"
-ACCESS_AUD = "9c65f46383702bbcd460690c95aea7c067362300899cd8665e3e952b7703785d,92059c6250e2442457575dcda045564e1af87d9e46b57f3360136790472b01cb"
+ACCESS_AUD = "92059c6250e2442457575dcda045564e1af87d9e46b57f3360136790472b01cb"
 LOCAL_UTC_OFFSET_MINUTES = "-180"
 PUBLIC_ORIGIN = "https://public.brewtal.one"
 WELCOME_HOST = "brewtal.one"
 SITE_ORIGIN = "https://povoto.brewtal.one"
+
+# Development cloud (Povoto/docs/cloud-plan.md, "Ambientes e versões"): the
+# same database; reads every site, writes only to sites with env = 'dev'
+# (ingest, set point requests, batch deletion). Pages show "DEV".
+# Deploy: npm run deploy:dev. One Worker serves the pages, the SideKick
+# ingest of dev sites and the public links: Access covers only the site paths.
+[env.dev]
+name = "povoto-dev"
+workers_dev = false
+preview_urls = false
+routes = [{ pattern = "dev.brewtal.one", custom_domain = true }]
+
+[env.dev.assets]
+directory = ".build/assets"
+binding = "ASSETS"
+run_worker_first = true
+html_handling = "none"
+not_found_handling = "none"
+
+[[env.dev.d1_databases]]
+binding = "DB"
+database_name = "povoto"
+database_id = "bc593d01-012a-4f19-8b31-23111dc0b3b4"
+migrations_dir = "migrations"
+
+[env.dev.vars]
+CLOUD_ENV = "dev"
+ACCESS_TEAM_DOMAIN = "https://brewtal.cloudflareaccess.com"
+ACCESS_AUD = "92059c6250e2442457575dcda045564e1af87d9e46b57f3360136790472b01cb"
+LOCAL_UTC_OFFSET_MINUTES = "-180"
+PUBLIC_ORIGIN = "https://dev.brewtal.one"
+CF_ACCOUNT_ID = "732983eafca74b461f8aec4465e10109"
+ACCESS_POLICY_NAME = "Povoto users"
+ACCESS_HOSTS = "povoto.brewtal.one,dev.brewtal.one"

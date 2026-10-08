@@ -1,7 +1,8 @@
 // Creates (or replaces) the token of one SideKick site and prints it once.
-//   node scripts/add-sidekick.mjs <site> [name] [--local]
+//   node scripts/add-sidekick.mjs <site> [name] [--dev | --prod] [--local]
 // The database keeps only the token's SHA-256; type the token on the
-// SideKick's Connection settings page (link on /getstatus).
+// SideKick's Connection settings page (link on /getstatus). --dev / --prod
+// set the site's environment (new sites: prod; existing ones keep theirs).
 import { createHash, randomBytes } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -10,16 +11,17 @@ import { join } from 'node:path';
 
 const args = process.argv.slice(2);
 const local = args.includes('--local');
-const [siteText, name = ''] = args.filter(arg => arg !== '--local');
+const env = args.includes('--dev') ? 'dev' : args.includes('--prod') ? 'prod' : null;
+const [siteText, name = ''] = args.filter(arg => !arg.startsWith('--'));
 const site = Number(siteText);
 if (!Number.isInteger(site) || site < 1 || site > 9999) {
-  console.error('Usage: node scripts/add-sidekick.mjs <site> [name] [--local]');
+  console.error('Usage: node scripts/add-sidekick.mjs <site> [name] [--dev | --prod] [--local]');
   process.exit(1);
 }
 const token = randomBytes(24).toString('base64url');
 const hash = createHash('sha256').update(token).digest('hex');
-const sql = `INSERT INTO sidekicks (site, name, token_hash) VALUES (${site}, '${name.replace(/'/g, "''")}', '${hash}')
-  ON CONFLICT (site) DO UPDATE SET name = excluded.name, token_hash = excluded.token_hash;`;
+const sql = `INSERT INTO sidekicks (site, name, token_hash, env) VALUES (${site}, '${name.replace(/'/g, "''")}', '${hash}', '${env ?? 'prod'}')
+  ON CONFLICT (site) DO UPDATE SET name = excluded.name, token_hash = excluded.token_hash${env ? ', env = excluded.env' : ''};`;
 // Through a file: the shell would split a --command argument.
 const dir = mkdtempSync(join(tmpdir(), 'povoto-'));
 const file = join(dir, 'sidekick.sql');

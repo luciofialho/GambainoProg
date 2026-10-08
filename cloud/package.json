@@ -6,6 +6,8 @@
     "assets": "node scripts/copy-assets.mjs",
     "dev": "node scripts/copy-assets.mjs && wrangler dev --local-upstream localhost",
     "deploy": "node scripts/copy-assets.mjs && wrangler deploy && wrangler deploy --env public",
+    "deploy:dev": "node scripts/copy-assets.mjs && wrangler deploy --env dev",
+    "test": "node --test \"test/*.test.mjs\"",
     "migrate:local": "wrangler d1 migrations apply povoto --local",
     "migrate:remote": "wrangler d1 migrations apply povoto --remote",
     "typecheck": "tsc --noEmit",

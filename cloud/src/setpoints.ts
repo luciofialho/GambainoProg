@@ -125,6 +125,9 @@ export interface SetpointPageInput {
   requests: RequestRow[];
   open: RequestRow | null;
   canEdit: boolean;
+  // Set when this cloud may not send requests to the Povoto (a production
+  // site seen from the development cloud): the values show, the forms don't.
+  writeBlocked: string | null;
   message: string;
   localOffsetSeconds: number; // request times are UTC
 }
@@ -138,6 +141,7 @@ export function setpointPage(input: SetpointPageInput): string {
 
   const notes: string[] = [];
   if (input.message) notes.push(`<div class="note">${escapeHtml(input.message)}</div>`);
+  if (input.writeBlocked) notes.push(`<div class="note warn">${escapeHtml(input.writeBlocked)}</div>`);
   if (!sync) {
     notes.push('<div class="note warn">This Povoto has not reported its set points yet: it needs the cloud edits firmware and a batch running.</div>');
   } else {
@@ -151,7 +155,7 @@ export function setpointPage(input: SetpointPageInput): string {
     notes.push('<script>setTimeout(() => location.replace(location.pathname), 5000);</script>');
   }
 
-  const editable = canEdit && sync?.edits_accepted === 1 && !open;
+  const editable = canEdit && !input.writeBlocked && sync?.edits_accepted === 1 && !open;
   const spEditable = editable && setpointsInSync;
   const rulesEditable = editable && rulesInSync;
 

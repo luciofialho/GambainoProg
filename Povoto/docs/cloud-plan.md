@@ -231,6 +231,44 @@ também é aberta). Para isso o handler do Povoto precisa receber o MAC
 
 Mexe no controle: só depois do envio do log rodar bem.
 
+## Ambientes e versões (decidido em 07/10/2026)
+
+Sites e Povotos rodam versões diferentes ao mesmo tempo; a nuvem é uma só por
+ambiente, sempre a mais nova, e é ela que convive com todas as versões de
+firmware em uso. A bancada não cobre todas as combinações: a defesa contra
+incompatibilidade são as regras abaixo, não um banco de ensaio.
+
+- **Um banco só** (D1 `povoto`) para produção e desenvolvimento. Cada site tem
+  `env` (`prod`/`dev`) em `sidekicks` (migration 0004): Lucida (1) e Aimbere
+  (3) produção, Bancada (2) dev. `scripts/add-sidekick.mjs --dev|--prod`.
+- **Duas nuvens**: produção `povoto.brewtal.one` (+ `public.brewtal.one`
+  para os SideKicks) e desenvolvimento `dev.brewtal.one` (Worker
+  `povoto-dev`, `npm run deploy:dev`, páginas marcadas "DEV").
+- **A nuvem dev lê tudo e escreve só em sites dev.** Em site de produção ela
+  mostra dashboards, gráficos, lotes e set points, mas bloqueia no código o
+  que mexe no Povoto ou apaga dados: pedidos de set point e regras
+  (reset/trigger incluídos), apagar lote, e o ingest (403; o SideKick guarda
+  e reenvia). O único risco para a cerveja é a alteração de set points; o
+  resto é visualização, cuja falha não causa dano. Links públicos e a
+  página Users ficam liberados. A produção aceita tudo, inclusive sites dev.
+- **Banco só cresce**: migrations só adicionam tabelas e colunas com padrão.
+  Remover ou renomear só depois que nenhuma versão em uso dependa disso.
+  Antes de cada migration remota, anotar o bookmark do Time Travel
+  (`wrangler d1 time-travel info povoto`). Migration que transforma dados é
+  ensaiada antes numa cópia local (`wrangler d1 export` → `--local`).
+- **Leitor tolerante**: a nuvem ignora campos que não conhece e trata campo
+  ausente como "não informado". `cloud/test/fixtures/` tem linhas reais de
+  cada geração de firmware; `npm test` precisa passar antes de publicar, e
+  nenhum arquivo sai de lá enquanto um Povoto puder rodar aquela versão.
+- **SideKick neutro**: guarda e repassa linhas sem interpretar. Hoje ainda olha
+  o tipo (`ack`, `sp`, `r`) para acordar o envio; a próxima versão do
+  protocolo troca isso por um campo genérico de urgência.
+- **Próximo**: número de protocolo na linha de estado (`"pv"`), para a nuvem
+  oferecer a cada Povoto só o que ele entende (hoje deduz pela presença dos
+  hashes da fase 2); mostrar a versão de firmware de cada Povoto e SideKick;
+  conferir se o modo do dispositivo (DEBUG/Operational) bate com o `env`
+  do site.
+
 ## Próximos passos
 1. Feito: D1, deploy, Access, token do SideKick 1 e permissão do Lucio.
    Para outras pessoas: regra por e-mail no Access e linha em `permissions`.

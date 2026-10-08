@@ -135,8 +135,9 @@ const SITE_PATHS = ['/povotos', '/search', '/p/*', '/admin'];
 // One step for the whole Access setup (Users page): the "Povoto users" policy
 // with these e-mails, that policy as the only one of the site's application
 // (the one that answers on `hostname`), and the public links exception.
-export async function setupAccess(env: AccessGroupEnv, hostname: string, emails: string[],
+export async function setupAccess(env: AccessGroupEnv, hostnames: string[], emails: string[],
                                   siteAuds: string[]): Promise<string[]> {
+  const hostname = hostnames[0];
   if (!env.CF_API_TOKEN || !env.CF_ACCOUNT_ID || !env.ACCESS_POLICY_NAME) {
     return ['CF_API_TOKEN / CF_ACCOUNT_ID / ACCESS_POLICY_NAME not configured.'];
   }
@@ -186,7 +187,7 @@ export async function setupAccess(env: AccessGroupEnv, hostname: string, emails:
     // Only the site's pages: the root stays open for the welcome page (Access
     // cannot leave just "/" out, a path always covers its subpaths). Paths
     // outside these still get no identity from the Worker.
-    const protectedPaths = SITE_PATHS.map(path => `${hostname}${path}`);
+    const protectedPaths = hostnames.flatMap(host => SITE_PATHS.map(path => `${host}${path}`));
     const siteApp = {
       name: SITE_APP_NAME,
       type: 'self_hosted',
@@ -203,7 +204,7 @@ export async function setupAccess(env: AccessGroupEnv, hostname: string, emails:
       { method: existing ? 'PUT' : 'POST', body: JSON.stringify(siteApp) });
     if (!saved.success || !saved.result) return [...done, `Application: ${apiError(saved)}`];
     const aud = typeof saved.result.aud === 'string' ? saved.result.aud : '';
-    done.push(`Application "${SITE_APP_NAME}" ${existing ? 'updated' : 'created'} for ${hostname}` +
+    done.push(`Application "${SITE_APP_NAME}" ${existing ? 'updated' : 'created'} for ${hostnames.join(', ')}` +
       ` (login by code sent to the e-mail)${siteAuds.includes(aud) ? '' : `; AUD ${aud} still to add to ACCESS_AUD`}.`);
 
     // 4. Public links.

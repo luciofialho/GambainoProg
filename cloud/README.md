@@ -73,7 +73,13 @@ decisions: `Povoto/docs/cloud-plan.md`; record format and the device side:
   as a submodule without `.gitmodules` (the old `Gambaino/` Lovable folder)
   made it fail at "updating repository submodules". Retry rebuilds the same
   commit; a new push to a watched path builds the latest one.
-- By hand, from this folder: `npm run deploy`.
+- By hand, from this folder: `npm run deploy` (production) or
+  `npm run deploy:dev` (development, `dev.brewtal.one`, Worker `povoto-dev`,
+  same database: reads every site, writes only to sites with
+  `sidekicks.env = 'dev'`). Rules: Povoto/docs/cloud-plan.md, "Ambientes e
+  versões".
+- Before publishing: `npm test` (ingest of every firmware generation in
+  `test/fixtures/`; add a file when the Povoto's lines change).
 - Order when the database or the record format changes: run
   `npm run migrate:remote` before pushing (the push deploys code that may
   need the new columns), then update the SideKicks and only then the

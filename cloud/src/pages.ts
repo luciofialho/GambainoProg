@@ -50,12 +50,22 @@ legend { font-weight: bold; padding: 0 6px; }
 .signature img { width: 160px; max-width: 45%; height: auto; filter: invert(1); opacity: .7; }
 `;
 
+// "DEV" on the development cloud (CLOUD_ENV): in the tab title and a strip on
+// every page, so it is never taken for production. One value per Worker.
+let environmentLabel = '';
+export function setEnvironmentLabel(label: string): void {
+  environmentLabel = label;
+}
+
 export function layout(title: string, body: string): string {
+  const strip = environmentLabel
+    ? `<div style="background:#b5651d;color:#fff;text-align:center;font-weight:bold;padding:4px">${escapeHtml(environmentLabel)} cloud</div>`
+    : '';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(title)}</title><link rel="icon" href="/assets/povoto.svg">
+<title>${environmentLabel ? `[${escapeHtml(environmentLabel)}] ` : ''}${escapeHtml(title)}</title><link rel="icon" href="/assets/povoto.svg">
 <style>${STYLE}</style></head>
-<body><main>${body}
+<body>${strip}<main>${body}
 <footer class="signature"><img src="/assets/brewtal.svg" alt="Brewtal"></footer></main></body></html>`;
 }
 

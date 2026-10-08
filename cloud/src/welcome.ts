@@ -3,7 +3,7 @@
 // Cloudflare Access asks for the e-mail) and the Brewtal signature.
 import { escapeHtml } from './pages';
 
-export function welcomePage(signInPath: string): string {
+export function welcomePage(signInPath: string, environment = ''): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Povoto · Brewtal</title><link rel="icon" href="/assets/povoto.svg">
@@ -21,7 +21,7 @@ p { margin: 0; color: #aeb9c6; }
 </style></head>
 <body>
 <img class="logo" src="/assets/povoto-login-light.svg" alt="Povoto">
-<h1>Povoto</h1>
+<h1>Povoto</h1>${environment ? `<p style="color:#e09a4f;font-weight:bold">${escapeHtml(environment)}</p>` : ''}
 <a class="button" href="${escapeHtml(signInPath)}">Sign in</a>
 <img class="signature" src="/assets/brewtal-light.svg" alt="Brewtal">
 </body></html>`;

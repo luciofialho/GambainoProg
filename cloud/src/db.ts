@@ -61,9 +61,17 @@ export interface ShareRow {
   created_at: number;
 }
 
-export async function sidekickForTokenHash(db: D1Database, hash: string): Promise<{ site: number; name: string } | null> {
-  return db.prepare('SELECT site, name FROM sidekicks WHERE token_hash = ?')
-    .bind(hash).first<{ site: number; name: string }>();
+export type SiteEnv = 'prod' | 'dev';
+
+export async function sidekickForTokenHash(db: D1Database, hash: string): Promise<{ site: number; name: string; env: SiteEnv } | null> {
+  return db.prepare('SELECT site, name, env FROM sidekicks WHERE token_hash = ?')
+    .bind(hash).first<{ site: number; name: string; env: SiteEnv }>();
+}
+
+// Environment of a site (migration 0004); an unknown site counts as production.
+export async function siteEnv(db: D1Database, site: number): Promise<SiteEnv> {
+  const row = await db.prepare('SELECT env FROM sidekicks WHERE site = ?').bind(site).first<{ env: SiteEnv }>();
+  return row?.env === 'dev' ? 'dev' : 'prod';
 }
 
 // Stores the history records and batch states of one SideKick post. Returns
@@ -365,13 +373,15 @@ export async function storePhase2(db: D1Database, site: number, snapshots: Snaps
   if (statements.length) await db.batch(statements);
 }
 
-export async function expireRequests(db: D1Database, nowUtc: number): Promise<void> {
+// Only the requests of one site: each cloud (production, development) touches
+// only the sites it may write to.
+export async function expireRequests(db: D1Database, site: number, nowUtc: number): Promise<void> {
   const limit = nowUtc - REQUEST_TIMEOUT_SECONDS;
   await db.batch([
     db.prepare(`UPDATE requests SET status = 'expired', done_at = ?1
-                WHERE status = 'pending' AND created_at < ?2`).bind(nowUtc, limit),
+                WHERE status = 'pending' AND created_at < ?2 AND povoto_id / 100 = ?3`).bind(nowUtc, limit, site),
     db.prepare(`UPDATE requests SET status = 'unconfirmed', done_at = ?1
-                WHERE status = 'sent' AND kind != 'snap' AND sent_at < ?2`).bind(nowUtc, limit),
+                WHERE status = 'sent' AND kind != 'snap' AND sent_at < ?2 AND povoto_id / 100 = ?3`).bind(nowUtc, limit, site),
   ]);
 }
 

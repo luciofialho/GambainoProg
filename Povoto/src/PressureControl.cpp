@@ -2047,7 +2047,7 @@ void getCO2RateLabel(char *out, size_t outSize) {
   if (isfinite(rate) && rate > 0.0f && !co2RateInTransition())
     snprintf(out, outSize, "gCO2 [%.1f/L/d]", rate);
   else
-    snprintf(out, outSize, "gCO2 [stalled]");
+    snprintf(out, outSize, "gCO2 [---]");
 }
 
 float getReliefsPerHourValue() {

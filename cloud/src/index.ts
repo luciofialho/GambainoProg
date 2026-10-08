@@ -4,7 +4,7 @@ import { getCookie, setCookie } from 'hono/cookie';
 import { accessEmail, randomToken, sha256Hex } from './auth';
 import * as db from './db';
 import { batchLabel, dashboardStatus, graphCsv } from './format';
-import { currentBatch, homePage, messagePage, povotoName, povotoPage, searchPage } from './pages';
+import { currentBatch, homePage, messagePage, povotoName, povotoPage, searchPage, setEnvironmentLabel } from './pages';
 import { parseBody } from './records';
 import { ruleRequest, setpointPage, setpointRequest } from './setpoints';
 import { adminPage } from './admin';
@@ -24,6 +24,20 @@ interface Env extends AccessGroupEnv {
   SITE_ORIGIN?: string;
   // Only in .dev.vars, and only honoured on localhost (cloud/README.md).
   DEV_USER_EMAIL?: string;
+  // "dev" on the development Worker: reads every site, writes only to dev
+  // sites (Povoto/docs/cloud-plan.md, "Ambientes e versões").
+  CLOUD_ENV?: string;
+  // Hostnames of the site pages behind Access, comma separated (Set up Access).
+  ACCESS_HOSTS?: string;
+}
+
+const isDevCloud = (env: Env) => env.CLOUD_ENV === 'dev';
+
+// Why this cloud may not write to the site (requests to the Povoto, batch
+// deletion, ingest), or null when it may.
+async function writeBlocked(env: Env, site: number): Promise<string | null> {
+  if (!isDevCloud(env) || (await db.siteEnv(env.DB, site)) === 'dev') return null;
+  return 'Production site: viewing only on the development cloud. Edit on povoto.brewtal.one.';
 }
 
 class Access {
@@ -46,6 +60,7 @@ const app = new Hono<App>();
 
 // The bare domain (WELCOME_HOST) has no page of its own yet: it goes to the site.
 app.use('*', async (c, next) => {
+  setEnvironmentLabel(isDevCloud(c.env) ? 'DEV' : '');
   const url = new URL(c.req.url);
   if (!c.env.WELCOME_HOST || url.hostname !== c.env.WELCOME_HOST || url.pathname.startsWith('/assets/')) {
     return next();
@@ -105,7 +120,7 @@ function intParam(value: string | undefined): number | null {
 // ---------------------------------------------------------------- SideKick
 
 // The bearer token defines the site (scripts/add-sidekick.mjs).
-async function tokenSidekick(c: Ctx): Promise<{ site: number; name: string } | null> {
+async function tokenSidekick(c: Ctx): Promise<{ site: number; name: string; env: db.SiteEnv } | null> {
   const match = /^Bearer\s+(\S+)$/.exec(c.req.header('Authorization') ?? '');
   return match ? db.sidekickForTokenHash(c.env.DB, await sha256Hex(match[1])) : null;
 }
@@ -114,6 +129,10 @@ app.post('/api/ingest', async c => {
   const sidekick = await tokenSidekick(c);
   if (sidekick === null) return c.json({ error: 'invalid token' }, 401);
   const site = sidekick.site;
+  // 403: the SideKick keeps the lines and retries, nothing is lost.
+  if (isDevCloud(c.env) && sidekick.env !== 'dev') {
+    return c.json({ error: 'production site: post to the production cloud' }, 403);
+  }
   const body = await c.req.text();
   // 400 makes the SideKick skip the post instead of retrying it forever.
   if (body.length > MAX_INGEST_BYTES) return c.json({ error: 'body too large' }, 400);
@@ -124,7 +143,7 @@ app.post('/api/ingest', async c => {
   // Phase 2: store the copies and answers, ask for snapshots where the copy
   // is behind, and answer with the pending requests of this site's Povotos.
   await db.storePhase2(c.env.DB, site, snapshots, acks, states, now);
-  await db.expireRequests(c.env.DB, now);
+  await db.expireRequests(c.env.DB, site, now);
   await db.askStaleSnapshots(c.env.DB, [...new Set(states.map(s => site * 100 + s.num))], now);
   const requests = await db.takePendingRequests(c.env.DB, site, now);
   // NDJSON: a summary line, then one line per request. "p" comes right after
@@ -199,7 +218,7 @@ function lastVisit(c: Ctx): string {
 // behind it): signed in, it goes to the last visit; otherwise the welcome
 // page, whose Sign in leads there through the Access login.
 app.get('/', async c => {
-  if (!(await signedEmail(c))) return c.html(welcomePage(lastVisit(c)));
+  if (!(await signedEmail(c))) return c.html(welcomePage(lastVisit(c), isDevCloud(c.env) ? 'DEV cloud' : ''));
   return c.redirect(lastVisit(c), 302);
 });
 
@@ -319,10 +338,11 @@ app.post('/admin/release', async c => {
 // The whole Access setup in one step (policy, site application, public links).
 app.post('/admin/setup', async c => {
   if (!c.get('access').isAdmin) return notFound(c);
-  const hostname = new URL(c.env.PUBLIC_ORIGIN || c.req.url).hostname;
+  // Every cloud's hostname (production and development) in one application.
+  const hostnames = (c.env.ACCESS_HOSTS || new URL(c.req.url).hostname).split(',').map(h => h.trim()).filter(Boolean);
   const emails = (await db.listPermissions(c.env.DB)).map(p => p.email);
   const auds = c.env.ACCESS_AUD.split(',').map(tag => tag.trim()).filter(Boolean);
-  const steps = await setupAccess(c.env, hostname, emails, auds);
+  const steps = await setupAccess(c.env, hostnames, emails, auds);
   return adminBack(c, steps.join(' '));
 });
 
@@ -388,7 +408,9 @@ app.get('/p/:id/dashboard/status.json', async c => {
   const log = await db.latestLog(c.env.DB, povoto.id);
   if (!log) return c.json({}, 404);
   const batch = await db.getBatch(c.env.DB, povoto.id, log.batch);
-  return noStore(c.json(dashboardStatus(log, batch, povoto.num, nowLocal(c.env))));
+  const status = dashboardStatus(log, batch, povoto.num, nowLocal(c.env));
+  if (isDevCloud(c.env)) status.back.label = 'Back · DEV cloud';
+  return noStore(c.json(status));
 });
 app.get('/p/:id/dashboard/:file', async c => {
   const file = c.req.param('file');
@@ -441,7 +463,8 @@ app.get('/p/:id/setpoint', async c => {
   const povoto = await povotoFor(c);
   if (!povoto) return notFound(c);
   const now = nowUtc();
-  await db.expireRequests(c.env.DB, now);
+  const blocked = await writeBlocked(c.env, povoto.site);
+  if (!blocked) await db.expireRequests(c.env.DB, povoto.site, now);
   const [sync, setpoints, rules, latest, requests, open] = await Promise.all([
     db.getSync(c.env.DB, povoto.id), db.getSetpointSnapshot(c.env.DB, povoto.id),
     db.getRuleSnapshots(c.env.DB, povoto.id), db.latestLog(c.env.DB, povoto.id),
@@ -449,6 +472,7 @@ app.get('/p/:id/setpoint', async c => {
   return noStore(c.html(setpointPage({
     povoto, sync, setpoints, rules, latest, requests, open,
     canEdit: c.get('access').canEdit(povoto.id),
+    writeBlocked: blocked,
     message: (c.req.query('m') ?? '').slice(0, 200),
     localOffsetSeconds: nowLocal(c.env) - now,
   })));
@@ -461,9 +485,11 @@ async function sendRequest(c: Ctx, kind: db.RequestKind,
   const povoto = await povotoFor(c, true);
   if (!povoto) return notFound(c);
   const back = (message: string) => c.redirect(`/p/${povoto.id}/setpoint?m=${encodeURIComponent(message)}`, 303);
+  const blocked = await writeBlocked(c.env, povoto.site);
+  if (blocked) return back(blocked);
   const form = await c.req.parseBody();
   const now = nowUtc();
-  await db.expireRequests(c.env.DB, now);
+  await db.expireRequests(c.env.DB, povoto.site, now);
   const [sync, setpoints, rules, open] = await Promise.all([db.getSync(c.env.DB, povoto.id),
     db.getSetpointSnapshot(c.env.DB, povoto.id), db.getRuleSnapshots(c.env.DB, povoto.id),
     db.openRequest(c.env.DB, povoto.id)]);
@@ -519,6 +545,8 @@ app.post('/p/:id/batches/:batch/delete', async c => {
   const povoto = await povotoFor(c, true);
   const batch = intParam(c.req.param('batch'));
   if (!povoto || batch === null) return notFound(c);
+  const blocked = await writeBlocked(c.env, povoto.site);
+  if (blocked) return c.html(messagePage('Not deleted', blocked), 403);
   const form = await c.req.parseBody();
   if (form.confirm !== String(batch)) return c.text('Confirmation missing', 400);
   await db.deleteBatch(c.env.DB, povoto.id, batch);
