@@ -310,6 +310,26 @@ static void dashboardJsonString(String &json, const char *key, const char *value
   json += ',';
 }
 
+// hh:mm:ss, hours without limit.
+static void dashboardDuration(char *out, size_t size, long seconds) {
+  if (seconds < 0) seconds = 0;
+  snprintf(out, size, "%ld:%02ld:%02ld", seconds / 3600, (seconds / 60) % 60, seconds % 60);
+}
+
+// "key":["mol","g"], (CO2, 44.01 g/mol).
+static void dashboardMolsAndGrams(String &json, const char *key, double mols) {
+  char mol[24], grams[24];
+  snprintf(mol, sizeof(mol), "%.3f", mols);
+  snprintf(grams, sizeof(grams), "%.1f", mols * 44.01);
+  json += '"';
+  json += key;
+  json += "\":[";
+  dashboardJsonText(json, mol);
+  json += ',';
+  dashboardJsonText(json, grams);
+  json += "],";
+}
+
 // Texts are formatted exactly as screenData() draws them on the TFT, so the
 // page shows the same digits; the page only positions them.
 void handleDashboardStatus(AsyncWebServerRequest *request) {
@@ -361,6 +381,26 @@ void handleDashboardStatus(AsyncWebServerRequest *request) {
   dashboardJsonString(json, "sg", text);
   snprintf(text, sizeof(text), "%.2f", beerABV);
   dashboardJsonString(json, "abv", text);
+
+  // Statistics view of the dashboard (statistics icon): texts as shown.
+  json += "\"stats\":{";
+  dashboardJsonString(json, "tempMode",
+      ChillHeatMode == FMTCHILL ? "Chill" : ChillHeatMode == FMTHEAT ? "Heat" : "Idle");
+  dashboardDuration(text, sizeof(text), CountersData.totalChillTime);
+  dashboardJsonString(json, "chillTime", text);
+  dashboardDuration(text, sizeof(text), CountersData.totalHeatTime);
+  dashboardJsonString(json, "heatTime", text);
+  snprintf(text, sizeof(text), "%.2f", CountersData.headSpaceVolume);
+  dashboardJsonString(json, "headspaceVolume", text);
+  snprintf(text, sizeof(text), "%.2f", CountersData.dumpedVolume);
+  dashboardJsonString(json, "dumpedVolume", text);
+  snprintf(text, sizeof(text), "%lu", (unsigned long)CountersData.totalReliefCount);
+  dashboardJsonString(json, "reliefCount", text);
+  dashboardMolsAndGrams(json, "co2Headspace", headSpaceCO2Mols);
+  dashboardMolsAndGrams(json, "co2Solution", CountersData.CO2InSolution);
+  dashboardMolsAndGrams(json, "co2Vented", CountersData.totalMolsEjected);
+  json.remove(json.length() - 1);  // last comma
+  json += "},";
 
   const int wifiBars = povotoWiFiStatusIndicator(text, sizeof(text));
   dashboardJsonString(json, "wifiText", text);

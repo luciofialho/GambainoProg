@@ -224,7 +224,10 @@ void setup() {
   initPeerEspNowReceive();  // must be after GLogEspNowInit (which calls esp_now_init)
   setExtraEspNowHandler(handlePovotoEspNow);
 
-  server.on("/", HTTP_GET, handleMainMenu);
+  // The browser opens on the dashboard; its menu icon leads to /config.
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->redirect(povotoWiFiConfigurationActive() ? "/wifi" : "/dashboard/");
+  });
   server.on("/config", HTTP_GET, handleMainMenu);
   server.on("/assets/povoto.svg", HTTP_GET, [](AsyncWebServerRequest *request) {
     request->send_P(200, "image/svg+xml", POVOTO_LOGO_SVG);

@@ -12,6 +12,8 @@
   const canvas = document.getElementById('screen');
   const page = document.getElementById('page');
   const back = document.getElementById('back');
+  const menu = document.getElementById('menu');
+  const statsButton = document.getElementById('stats');
   const updated = document.getElementById('updated');
   const ctx = canvas.getContext('2d');
 
@@ -118,6 +120,9 @@
 
   let status = null;
   let online = false;
+  // Statistics view (icon at the top right), remembered per browser.
+  let showStats = false;
+  try { showStats = localStorage.getItem('povotoDashboardStats') === '1'; } catch (error) { /* none */ }
 
   // ----------------------------------------------------------- main screen
   function drawWifi() {
@@ -175,9 +180,76 @@
       textOut(RIGHT, 12, 304, 176, s.sg, YELLOW);
       textOut(LEFT, 12, 320, 204, '% ABV', BLACK);
       textOut(RIGHT, 12, 304, 204, s.abv, YELLOW);
+      if (statsShown()) drawStats(s.stats);
     }
     drawWifi();
     drawCalibration();
+  }
+
+  // ------------------------------------------------------------ statistics
+  // Replaces everything to the right of the value blocks (icons, targets,
+  // labels and the dividers between the blocks) with one panel of batch
+  // counters: same font and spacing on every row, numbers aligned right.
+  const LABEL = rgb(238, 214, 157);
+  const UNIT = LIGHTGREY;
+  // The purple bar on the left, x = 208..217 with its anti-aliased edges
+  // (sampled from LCars.bmp), redrawn unbroken over the orange dividers.
+  const PURPLE_BAR = [[208, rgb(31, 31, 55)], [209, rgb(134, 134, 223)], [210, rgb(153, 153, 255)],
+                      [216, rgb(144, 144, 238)], [217, rgb(60, 60, 101)]];
+  const STATS_LEFT = 226;
+  const STATS_RIGHT = 470;
+  const MOL_RIGHT = 405;     // CO2 rows: moles, then grams at STATS_RIGHT
+  const PANEL_TOP = 84;      // below the yellow curve
+  const PANEL_BOTTOM = 292;  // the purple bar at the bottom
+
+  function statsShown() {
+    return showStats && !!(status && status.stats);
+  }
+
+  function statText(value) {
+    return typeof value === 'string' && value ? value : '-';
+  }
+
+  function drawStats(st) {
+    const pair = (value) => (Array.isArray(value) ? value : []);
+    // null label: the units line of the CO2 rows.
+    const rows = [
+      ['Temperature mode', st.tempMode],
+      ['Total chilling time', st.chillTime],
+      ['Total heating time', st.heatTime],
+      ['Headspace volume (L)', st.headspaceVolume],
+      ['Dumped volume (L)', st.dumpedVolume],
+      ['Relief count', st.reliefCount],
+      [null],
+      ['CO2 headspace', ...pair(st.co2Headspace)],
+      ['CO2 solution', ...pair(st.co2Solution)],
+      ['CO2 vented', ...pair(st.co2Vented)],
+    ];
+    for (let i = 0; i < PURPLE_BAR.length; ++i) {
+      const x = PURPLE_BAR[i][0];
+      const width = (i + 1 < PURPLE_BAR.length ? PURPLE_BAR[i + 1][0] : x + 1) - x;
+      fillRect(x, 95, width, 289 - 95, PURPLE_BAR[i][1]);  // above the rounded corner
+    }
+    fillRect(218, PANEL_TOP, W - 218, 289 - PANEL_TOP, BLACK);
+    fillRect(221, 289, W - 221, PANEL_BOTTOM - 289, BLACK);  // keeps the inner curve
+    // Half a row of extra space between the temperature rows and the rest.
+    const GAP_AFTER = 3;
+    const pitch = (PANEL_BOTTOM - PANEL_TOP) / (rows.length + 0.5);
+    rows.forEach(([label, value, grams], i) => {
+      const y = Math.round(PANEL_TOP + pitch * (i + 0.5 + (i >= GAP_AFTER ? 0.5 : 0)));
+      if (label === null) {
+        textOut(RIGHT, 12, MOL_RIGHT, y, 'mol', UNIT);
+        textOut(RIGHT, 12, STATS_RIGHT, y, 'g', UNIT);
+        return;
+      }
+      textOut(LEFT, 12, STATS_LEFT, y, label, LABEL);
+      if (grams === undefined) {
+        textOut(RIGHT, 12, STATS_RIGHT, y, statText(value), YELLOW);
+      } else {
+        textOut(RIGHT, 12, MOL_RIGHT, y, statText(value), YELLOW);
+        textOut(RIGHT, 12, STATS_RIGHT, y, statText(grams), YELLOW);
+      }
+    });
   }
 
   // Touch zones in displayUtils.cpp processTouch(). The TFT graph, keyboard,
@@ -193,7 +265,7 @@
     if (x >= 125 && x <= 220 && y >= 162 && y <= 219) return () => go('../graphs/#attenuation');
     if (x >= 125 && x <= 220 && y >= 235 && y <= 301) return () => go('../graphs/#pressure');
     // The cloud has its own set point page (status.setpointLink).
-    const setpoints = editable || (status && status.setpointLink);
+    const setpoints = (editable || (status && status.setpointLink)) && !statsShown();
     if (setpoints && x >= 260 && x <= 430 && ((y >= 85 && y <= 165) || (y >= 230 && y <= 262)))
       return () => go('../setpoint');
     return null;
@@ -214,17 +286,31 @@
     else drawLoading();
   }
 
-  // Cloud only: the data age below the screen and the link back to the list.
+  // Top line: on the cloud the link back to the list (status.back), on the
+  // Povoto the menu icon (/config); the statistics icon when there are stats.
+  // Cloud only: the data age below the screen.
   function applyPageTexts() {
     const text = status && typeof status.updated === 'string' ? status.updated : '';
     const lineChanged = !text !== !updated.textContent;
     updated.textContent = text;
-    if (status && status.back && typeof status.back.href === 'string') {
+    const cloud = !!(status && status.back && typeof status.back.href === 'string');
+    if (cloud) {
       back.href = status.back.href;
       back.textContent = `← ${status.back.label}`;
     }
+    back.hidden = !cloud;
+    menu.hidden = cloud;
+    statsButton.hidden = !(status && status.stats);
+    statsButton.setAttribute('aria-pressed', String(statsShown()));
     if (lineChanged) resize(); // the line below the screen appeared or vanished
   }
+
+  statsButton.addEventListener('click', () => {
+    showStats = !showStats;
+    try { localStorage.setItem('povotoDashboardStats', showStats ? '1' : '0'); } catch (error) { /* none */ }
+    statsButton.setAttribute('aria-pressed', String(statsShown()));
+    render();
+  });
 
   // The screen takes what the link, frame and signature leave of the window.
   function resize() {

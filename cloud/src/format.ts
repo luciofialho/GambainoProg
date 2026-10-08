@@ -64,6 +64,31 @@ export function dashboardStatus(log: LogRow, batch: BatchRow | null, num: number
     readOnly: true,
     back: { href: '/povotos', label: 'Back' },
     setpointLink: true,   // the set point touch zones open /p/<id>/setpoint
+    stats: batchStats(batch),
+  };
+}
+
+// Statistics view of the dashboard, from the batch state line (every 5 min).
+// The cloud has no temperature mode nor headspace volume: the page shows "-".
+function batchStats(batch: BatchRow | null) {
+  if (!batch || batch.state_epoch === null) return undefined;
+  const duration = (seconds: number | null) => {
+    if (seconds === null) return '';
+    const s = Math.max(0, Math.trunc(seconds));
+    const two = (n: number) => String(n).padStart(2, '0');
+    return `${Math.trunc(s / 3600)}:${two(Math.trunc(s / 60) % 60)}:${two(s % 60)}`;
+  };
+  const co2 = (mols: number | null) => mols === null ? ['', ''] : [mols.toFixed(3), (mols * 44.01).toFixed(1)];
+  return {
+    tempMode: '',
+    chillTime: duration(batch.chill_seconds),
+    heatTime: duration(batch.heat_seconds),
+    headspaceVolume: '',
+    dumpedVolume: fixed(batch.dumped_volume, 2, ''),
+    reliefCount: batch.expansions === null ? '' : String(batch.expansions),
+    co2Headspace: co2(batch.mol_headspace),
+    co2Solution: co2(batch.mol_dissolved),
+    co2Vented: co2(batch.mol_ejected),
   };
 }
 

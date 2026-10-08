@@ -28,14 +28,36 @@ sync with the selected tab). The batch number opens `/batch`, the left strip
 `/tasks` and the target fields `/setpoint` (the web pages replacing the TFT
 batch info, task and keyboard screens).
 
-The label next to g CO2 shows gCO2/L/d (`gCO2 [8.3/(L.d)]`;
-`gCO2 [N/A/L.d]` without a value; `g CO2` outside Fermenting), with the
+The label next to g CO2 shows gCO2/L/d (`gCO2 [8.3/L/d]`;
+`gCO2 [---]` without a value; `g CO2` outside Fermenting), with the
 graph's rule (Fermenting only, positive, outside a transition), the same
 text as the TFT (`getCO2RateLabel()`). Differences from the TFT: the screen
-sits in a rounded frame like the chart of `/graphs`, with a small link above
-it (`← Back`: to the menu on the device, to the Povoto list in the cloud,
-from `back` in `status.json`) and the Brewtal signature (`/assets/brewtal.svg`, inverted to
-light on the dark page) below. In the cloud only, the data age (`updated` in
+sits in a rounded frame like the chart of `/graphs`, with a line above it
+and the Brewtal signature below. The line above has, on the left, `← Back`
+in the cloud only (to the Povoto list, from `back` in `status.json`); on the
+right, the statistics icon (when `status.json` has `stats`) and, on the
+device only, the menu icon (`/config`, the former home page). The device's
+root `/` opens the dashboard (or `/wifi` while the setup access point is
+on), so pages whose Back/Cancel lead to `/` now return to the dashboard.
+
+The statistics icon toggles a view (remembered per browser) that replaces
+everything to the right of the value blocks (icons, targets, labels and the
+orange dividers; the purple bar on the left is redrawn unbroken) with one
+panel of batch counters (`stats` in `status.json`, texts as shown), same
+font and spacing on every row, numbers aligned right, units in the labels:
+
+- Temperature mode (`ChillHeatMode`: Chill / Heat / Idle), Total chilling
+  time and Total heating time (hh:mm:ss, hours unlimited);
+- Headspace volume and Dumped volume (L);
+- Relief count; CO2 headspace, CO2 solution and CO2 vented in two columns,
+  mol and g (44.01 g/mol), under a units line.
+
+The set point touch zones are off in this view. The cloud fills `stats` from
+the batch state line (every 5 min); it has no temperature mode nor
+headspace volume, shown as "-".
+
+The Brewtal signature (`/assets/brewtal.svg`) is inverted to light on the
+dark page. In the cloud only, the data age (`updated` in
 `status.json`, e.g. "Updated 3 min ago") appears inside the frame, under the
 screen and aligned right, instead of the WiFi indicator. `/graphs` has the same signature, and
 its `← Back` link returns to the dashboard.
