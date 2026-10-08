@@ -37,9 +37,16 @@ async function accessKeys(teamDomain: string, refresh: boolean): Promise<Jwk[]> 
   return keys;
 }
 
+// The same token is also in the CF_Authorization cookie, which reaches paths
+// Access does not cover (the welcome page at the root of the site).
+function cookieToken(request: Request): string | null {
+  const match = /(?:^|;\s*)CF_Authorization=([^;]+)/.exec(request.headers.get('Cookie') ?? '');
+  return match ? match[1] : null;
+}
+
 // Returns the authenticated e-mail, or null.
 export async function accessEmail(request: Request, teamDomain: string, aud: string): Promise<string | null> {
-  const token = request.headers.get('Cf-Access-Jwt-Assertion');
+  const token = request.headers.get('Cf-Access-Jwt-Assertion') ?? cookieToken(request);
   if (!token || !teamDomain || !aud) return null;
   const parts = token.split('.');
   if (parts.length !== 3) return null;
@@ -61,8 +68,11 @@ export async function accessEmail(request: Request, teamDomain: string, aud: str
   if (!valid) return null;
 
   const now = Date.now() / 1000;
+  // aud: the AUD tags of the Access applications in front of the Worker, comma
+  // separated (one per hostname: workers.dev, the custom domain).
+  const accepted = aud.split(',').map(tag => tag.trim()).filter(Boolean);
   const audiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
-  if (!audiences.includes(aud)) return null;
+  if (!audiences.some(tag => accepted.includes(tag))) return null;
   if (typeof payload.exp !== 'number' || payload.exp < now) return null;
   if (typeof payload.nbf === 'number' && payload.nbf > now + 60) return null;
   if (payload.iss !== teamDomain.replace(/\/$/, '')) return null;

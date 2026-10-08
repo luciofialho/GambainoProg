@@ -7,8 +7,11 @@ import { batchLabel, dashboardStatus, graphCsv } from './format';
 import { currentBatch, homePage, messagePage, povotoName, povotoPage, searchPage } from './pages';
 import { parseBody } from './records';
 import { ruleRequest, setpointPage, setpointRequest } from './setpoints';
+import { adminPage } from './admin';
+import { welcomePage } from './welcome';
+import { type AccessGroupEnv, inspectAccess, releaseSeat, setupAccess, syncAccessGroup } from './accessGroup';
 
-interface Env {
+interface Env extends AccessGroupEnv {
   DB: D1Database;
   ASSETS: Fetcher;
   ACCESS_TEAM_DOMAIN: string;
@@ -16,12 +19,16 @@ interface Env {
   LOCAL_UTC_OFFSET_MINUTES: string;
   // Hostname without Access, used in the public links (wrangler.toml).
   PUBLIC_ORIGIN?: string;
+  // Bare domain that shows the welcome page (no Access), and the site it links to.
+  WELCOME_HOST?: string;
+  SITE_ORIGIN?: string;
   // Only in .dev.vars, and only honoured on localhost (cloud/README.md).
   DEV_USER_EMAIL?: string;
 }
 
 class Access {
-  constructor(private readonly roles: Map<number, db.Role>, private readonly all: db.Role | null) {}
+  constructor(private readonly roles: Map<number, db.Role>, private readonly all: db.Role | null,
+              readonly isAdmin: boolean) {}
   role(povotoId: number): db.Role | null {
     const own = this.roles.get(povotoId) ?? null;
     return own === 'edit' || this.all === 'edit' ? 'edit' : own ?? this.all;
@@ -36,6 +43,15 @@ type App = { Bindings: Env; Variables: { email: string; access: Access } };
 type Ctx = Context<App>;
 
 const app = new Hono<App>();
+
+// The bare domain (WELCOME_HOST) has no page of its own yet: it goes to the site.
+app.use('*', async (c, next) => {
+  const url = new URL(c.req.url);
+  if (!c.env.WELCOME_HOST || url.hostname !== c.env.WELCOME_HOST || url.pathname.startsWith('/assets/')) {
+    return next();
+  }
+  return c.redirect(`${c.env.SITE_ORIGIN || url.origin}/`, 302);
+});
 const MAX_INGEST_BYTES = 256 * 1024;
 
 const ASSET_TYPES: Record<string, string> = {
@@ -50,11 +66,16 @@ const ASSET_TYPES: Record<string, string> = {
   'uPlot.min.css': 'text/css',
   'povoto.svg': 'image/svg+xml',
   'brewtal.svg': 'image/svg+xml',
+  'povoto-light.svg': 'image/svg+xml',
+  'brewtal-light.svg': 'image/svg+xml',
+  'povoto-login.svg': 'image/svg+xml',
+  'povoto-login-light.svg': 'image/svg+xml',
 };
 const DASHBOARD_FILES = new Set(['dashboard.js', 'lcars.ttf', 'LCars.bmp']);
 const GRAPH_FILES = new Set(['graphs.js', 'graphs.css', 'uPlot.iife.min.js', 'uPlot.min.css']);
 // Same paths as on the device (/assets/povoto.svg), public like the links.
-const LOGO_FILES = new Set(['povoto.svg', 'brewtal.svg']);
+const LOGO_FILES = new Set(['povoto.svg', 'brewtal.svg', 'povoto-light.svg', 'brewtal-light.svg', 'povoto-login.svg',
+  'povoto-login-light.svg']);
 
 function nowUtc(): number {
   return Math.floor(Date.now() / 1000);
@@ -158,11 +179,32 @@ app.get('/s/:token/:file', async c => {
 
 // --------------------------------------------------- everything else: login
 
-app.use('*', async (c, next) => {
+function signedEmail(c: Ctx): Promise<string | null> {
   const host = new URL(c.req.url).hostname;
   const local = host === 'localhost' || host === '127.0.0.1';
-  const email = local && c.env.DEV_USER_EMAIL ? c.env.DEV_USER_EMAIL.toLowerCase()
-    : await accessEmail(c.req.raw, c.env.ACCESS_TEAM_DOMAIN, c.env.ACCESS_AUD);
+  return local && c.env.DEV_USER_EMAIL ? Promise.resolve(c.env.DEV_USER_EMAIL.toLowerCase())
+    : accessEmail(c.req.raw, c.env.ACCESS_TEAM_DOMAIN, c.env.ACCESS_AUD);
+}
+
+// The site opens where the last visit ended: the list, or the dashboard of
+// the last Povoto seen (its dashboard or graphs). Kept per browser in a cookie.
+const LAST_COOKIE = 'povoto_last';
+
+function lastVisit(c: Ctx): string {
+  const match = /^\/p\/(\d{1,9})\/dashboard\/$/.exec(getCookie(c, LAST_COOKIE) ?? '');
+  return match ? match[0] : '/povotos';
+}
+
+// The root is outside Access (only /povotos, /search, /p and /admin are
+// behind it): signed in, it goes to the last visit; otherwise the welcome
+// page, whose Sign in leads there through the Access login.
+app.get('/', async c => {
+  if (!(await signedEmail(c))) return c.html(welcomePage(lastVisit(c)));
+  return c.redirect(lastVisit(c), 302);
+});
+
+app.use('*', async (c, next) => {
+  const email = await signedEmail(c);
   if (!email) return c.html(messagePage('Access denied', 'Sign in through Cloudflare Access.'), 401);
   // povoto_id 0: every Povoto; site * 100 (100, 200...): every Povoto of that
   // site, including ones that appear later; otherwise one Povoto.
@@ -178,18 +220,18 @@ app.use('*', async (c, next) => {
   if (siteRoles.size) {
     for (const { id, site } of await db.povotosOfSites(c.env.DB, [...siteRoles.keys()])) stronger(id, siteRoles.get(site)!);
   }
+  // Administrator: edit on every site (all sites, or each one); manages the
+  // permissions on /admin.
+  const sites = [...(await db.siteNames(c.env.DB)).keys()];
+  const isAdmin = all === 'edit' || (sites.length > 0 && sites.every(site => siteRoles.get(site) === 'edit'));
   c.set('email', email);
-  c.set('access', new Access(roles, all));
+  c.set('access', new Access(roles, all, isAdmin));
   // Forms post only from these pages (no cross-site requests).
   if (c.req.method === 'POST' && c.req.header('Origin') !== new URL(c.req.url).origin) {
     return c.text('Forbidden', 403);
   }
   await next();
 });
-
-// The site opens where the last visit ended: the list, or the dashboard of
-// the last Povoto seen (its dashboard or graphs). Kept per browser in a cookie.
-const LAST_COOKIE = 'povoto_last';
 
 function rememberPage(c: Ctx, path: string): void {
   setCookie(c, LAST_COOKIE, path, { path: '/', maxAge: 365 * 86400, sameSite: 'Lax', secure: true, httpOnly: true });
@@ -208,15 +250,94 @@ async function listPage(c: Ctx): Promise<Response> {
   const selected = /^\d{1,4}$/.test(choice) ? Number(choice) : null;
   const [povotos, names] = await Promise.all([db.listPovotos(c.env.DB, c.get('access').viewableIds()),
     db.siteNames(c.env.DB)]);
-  return c.html(homePage(c.get('email'), povotos, nowLocal(c.env), names, selected));
+  return c.html(homePage(c.get('email'), povotos, nowLocal(c.env), names, selected, c.get('access').isAdmin));
 }
 
-app.get('/', async c => {
-  const match = /^\/p\/(\d{1,9})\/dashboard\/$/.exec(getCookie(c, LAST_COOKIE) ?? '');
-  if (match && c.get('access').canView(Number(match[1]))) return c.redirect(match[0], 302);
-  return listPage(c);
-});
 app.get('/povotos', listPage);
+
+// --------------------------------------------- users (administrators only)
+
+function adminBack(c: Ctx, message: string): Response {
+  return c.redirect(`/admin?m=${encodeURIComponent(message)}`, 303);
+}
+
+app.get('/admin', async c => {
+  if (!c.get('access').isAdmin) return notFound(c);
+  const [permissions, sites, report] = await Promise.all([db.listPermissions(c.env.DB), db.siteNames(c.env.DB),
+    inspectAccess(c.env)]);
+  return noStore(c.html(adminPage(permissions, sites, c.get('email'), (c.req.query('m') ?? '').slice(0, 200), report)));
+});
+
+app.post('/admin/grant', async c => {
+  if (!c.get('access').isAdmin) return notFound(c);
+  const form = await c.req.parseBody();
+  const email = typeof form.email === 'string' ? form.email.trim().toLowerCase() : '';
+  const scope = intParam(typeof form.scope === 'string' ? form.scope : undefined);
+  const role = form.role === 'edit' ? 'edit' : form.role === 'view' ? 'view' : null;
+  const sites = await db.siteNames(c.env.DB);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 120) return adminBack(c, 'Invalid e-mail.');
+  if (scope === null || (scope !== 0 && (scope % 100 !== 0 || !sites.has(scope / 100))) || !role) {
+    return adminBack(c, 'Choose a site and a role.');
+  }
+  if (email === c.get('email')) return adminBack(c, 'Your own access is not changed here.');
+  await db.grantPermission(c.env.DB, email, scope, role);
+  console.log(`permission ${email} ${scope} ${role} by ${c.get('email')}`);
+  return adminBack(c, `Saved: ${email}.${await syncLogin(c)}`);
+});
+
+app.post('/admin/revoke', async c => {
+  if (!c.get('access').isAdmin) return notFound(c);
+  const form = await c.req.parseBody();
+  const email = typeof form.email === 'string' ? form.email.trim().toLowerCase() : '';
+  const scope = intParam(typeof form.scope === 'string' ? form.scope : undefined);
+  if (!email || scope === null) return adminBack(c, 'Nothing removed.');
+  if (email === c.get('email')) return adminBack(c, 'Your own access is not changed here.');
+  await db.revokePermission(c.env.DB, email, scope);
+  console.log(`permission ${email} ${scope} removed by ${c.get('email')}`);
+  let seat = '';
+  if (!(await db.listPermissions(c.env.DB)).some(p => p.email.toLowerCase() === email)) {
+    // No access left: free the Zero Trust seat the person may hold.
+    const problem = await releaseSeat(c.env, email);
+    if (problem) console.log(`release seat ${email}: ${problem}`);
+    seat = problem ? ` Seat NOT released: ${problem}` : ' Seat released.';
+  }
+  return adminBack(c, `Removed: ${email}.${await syncLogin(c)}${seat}`);
+});
+
+// Frees the seat of someone without access here.
+app.post('/admin/release', async c => {
+  if (!c.get('access').isAdmin) return notFound(c);
+  const form = await c.req.parseBody();
+  const email = typeof form.email === 'string' ? form.email.trim().toLowerCase() : '';
+  if (!email || (await db.listPermissions(c.env.DB)).some(p => p.email.toLowerCase() === email)) {
+    return adminBack(c, 'Only people without any access here can be released.');
+  }
+  const problem = await releaseSeat(c.env, email);
+  return adminBack(c, problem ? `Seat NOT released: ${problem}` : `Seat of ${email} released.`);
+});
+
+// The whole Access setup in one step (policy, site application, public links).
+app.post('/admin/setup', async c => {
+  if (!c.get('access').isAdmin) return notFound(c);
+  const hostname = new URL(c.env.PUBLIC_ORIGIN || c.req.url).hostname;
+  const emails = (await db.listPermissions(c.env.DB)).map(p => p.email);
+  const auds = c.env.ACCESS_AUD.split(',').map(tag => tag.trim()).filter(Boolean);
+  const steps = await setupAccess(c.env, hostname, emails, auds);
+  return adminBack(c, steps.join(' '));
+});
+
+app.post('/admin/sync', async c => {
+  if (!c.get('access').isAdmin) return notFound(c);
+  return adminBack(c, `Access policy checked.${await syncLogin(c)}`);
+});
+
+// Who may sign in (the Access policy) follows the e-mails with an access here.
+async function syncLogin(c: Ctx): Promise<string> {
+  const emails = (await db.listPermissions(c.env.DB)).map(p => p.email);
+  const problem = await syncAccessGroup(c.env, emails);
+  if (problem) console.log(`access policy sync: ${problem}`);
+  return problem ? ` Sign-in list NOT updated: ${problem}` : ' Sign-in list up to date.';
+}
 
 app.get('/search', async c => {
   const query = (c.req.query('q') ?? '').trim().slice(0, 64);

@@ -225,6 +225,33 @@ export async function siteNames(db: D1Database): Promise<Map<number, string>> {
   return new Map(results.map(r => [r.site, r.name]));
 }
 
+export interface PermissionRow {
+  email: string;
+  povoto_id: number;   // 0 every site, site * 100 one site, otherwise one Povoto
+  role: Role;
+}
+
+export async function listPermissions(db: D1Database): Promise<PermissionRow[]> {
+  const { results } = await db.prepare('SELECT email, povoto_id, role FROM permissions ORDER BY email, povoto_id')
+    .all<PermissionRow>();
+  return results;
+}
+
+// One row per e-mail and scope; "every site" replaces the e-mail's other rows.
+export async function grantPermission(db: D1Database, email: string, povotoId: number, role: Role): Promise<void> {
+  const statements = [];
+  if (povotoId === 0) statements.push(db.prepare('DELETE FROM permissions WHERE email = ? COLLATE NOCASE').bind(email));
+  statements.push(db.prepare(
+    `INSERT INTO permissions (email, povoto_id, role) VALUES (?, ?, ?)
+     ON CONFLICT (email, povoto_id) DO UPDATE SET role = excluded.role`).bind(email, povotoId, role));
+  await db.batch(statements);
+}
+
+export async function revokePermission(db: D1Database, email: string, povotoId: number): Promise<void> {
+  await db.prepare('DELETE FROM permissions WHERE email = ? COLLATE NOCASE AND povoto_id = ?')
+    .bind(email, povotoId).run();
+}
+
 export async function createShare(db: D1Database, share: ShareRow): Promise<void> {
   await db.prepare(
     'INSERT INTO shares (token, povoto_id, batch, created_by, created_at) VALUES (?, ?, ?, ?, ?)')

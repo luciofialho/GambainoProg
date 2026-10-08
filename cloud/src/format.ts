@@ -40,7 +40,7 @@ export function dashboardStatus(log: LogRow, batch: BatchRow | null, num: number
   // gCO2/L/d with the graph's rule (null outside Fermenting or in a transition),
   // in the device's format (handleDashboardStatus).
   const co2Label = log.mode !== MODE_FERMENTING ? 'g CO2'
-    : log.rate === null ? 'gCO2 [N/A/L.d]' : `gCO2 [${log.rate.toFixed(1)}/(L.d)]`;
+    : log.rate === null ? 'gCO2 [stalled]' : `gCO2 [${log.rate.toFixed(1)}/L/d]`;
   return {
     batchNumber: String(log.batch).padStart(4, '0'),
     batchDate: batchDateShort(batch?.date ?? ''),

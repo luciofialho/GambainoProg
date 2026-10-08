@@ -1,9 +1,11 @@
 name = "povoto-cloud"
 main = "src/index.ts"
 compatibility_date = "2026-09-01"
-workers_dev = true
+workers_dev = false
 # Preview URLs would be other hostnames, outside the Access application.
 preview_urls = false
+# Custom domain (zone brewtal.one in this account); workers.dev stays on.
+routes = [{ pattern = "povoto.brewtal.one", custom_domain = true }]
 
 # The Povoto web pages (Povoto/data/www + LCars.bmp), copied by
 # scripts/copy-assets.mjs into this ignored folder before dev/deploy.
@@ -24,18 +26,28 @@ migrations_dir = "migrations"
 [vars]
 # Cloudflare Access (cloud/README.md): team domain and the application AUD tag.
 ACCESS_TEAM_DOMAIN = "https://brewtal.cloudflareaccess.com"
-ACCESS_AUD = "9c65f46383702bbcd460690c95aea7c067362300899cd8665e3e952b7703785d"
+ACCESS_AUD = "9c65f46383702bbcd460690c95aea7c067362300899cd8665e3e952b7703785d,92059c6250e2442457575dcda045564e1af87d9e46b57f3360136790472b01cb"
 # The Povotos' local time (NTPBegin(-3)), used for "updated N min ago".
 LOCAL_UTC_OFFSET_MINUTES = "-180"
-# The same Worker, on a second hostname that Access does not protect: only
-# the SideKick ingest (token) and the public links (/s/...) work there; every
-# other page still requires the Access login checked in the code.
-PUBLIC_ORIGIN = "https://povoto-public.povoto-cloud.workers.dev"
+# Origin of the public links (/s/...): the site itself, where an Access
+# Bypass application covers /s/* and /assets/* (cloud/README.md). The second
+# Worker (env.public, no Access) serves the SideKicks.
+PUBLIC_ORIGIN = "https://povoto.brewtal.one"
+# Users page: who may sign in is the Access policy below, kept equal to the
+# e-mails with an access (src/accessGroup.ts). The API token is a secret
+# (CF_API_TOKEN), set on the dashboard, never here.
+CF_ACCOUNT_ID = "732983eafca74b461f8aec4465e10109"
+ACCESS_POLICY_NAME = "Povoto users"
 
 [env.public]
 name = "povoto-public"
 workers_dev = true
 preview_urls = false
+routes = [
+  { pattern = "public.brewtal.one", custom_domain = true },
+  # Welcome page (src/welcome.ts), open to anyone.
+  { pattern = "brewtal.one", custom_domain = true },
+]
 
 [env.public.assets]
 directory = ".build/assets"
@@ -52,6 +64,8 @@ migrations_dir = "migrations"
 
 [env.public.vars]
 ACCESS_TEAM_DOMAIN = "https://brewtal.cloudflareaccess.com"
-ACCESS_AUD = "9c65f46383702bbcd460690c95aea7c067362300899cd8665e3e952b7703785d"
+ACCESS_AUD = "9c65f46383702bbcd460690c95aea7c067362300899cd8665e3e952b7703785d,92059c6250e2442457575dcda045564e1af87d9e46b57f3360136790472b01cb"
 LOCAL_UTC_OFFSET_MINUTES = "-180"
-PUBLIC_ORIGIN = "https://povoto-public.povoto-cloud.workers.dev"
+PUBLIC_ORIGIN = "https://public.brewtal.one"
+WELCOME_HOST = "brewtal.one"
+SITE_ORIGIN = "https://povoto.brewtal.one"

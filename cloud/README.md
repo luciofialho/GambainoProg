@@ -26,27 +26,35 @@ decisions: `Povoto/docs/cloud-plan.md`; record format and the device side:
      Access; only `/api/ingest` (SideKick token) and the public links `/s/...`
      work there, every other page answers 401 because the code itself
      requires the Access login. Public links are built with `PUBLIC_ORIGIN`.
-5. Cloudflare Access, done once in the dashboard: Workers & Pages →
-   povoto-cloud → tab **Access** → "Protect this Worker behind Access", scope
-   **All traffic**, policy **Cloudflare account** (only the account owner).
-   Copy the AUD tag and the team domain (from the JWKS URL,
-   `https://brewtal.cloudflareaccess.com`) into `ACCESS_AUD` and
-   `ACCESS_TEAM_DOMAIN` of both environments in `wrangler.toml`, then deploy.
-   Without them nobody gets in: the Worker verifies the Access token on every
-   request. To let other people in, the Access application needs a policy by
-   e-mail (Zero Trust → Access → Applications → the povoto-cloud app →
-   Policies), besides their row in `permissions`.
+5. Cloudflare Access: the "Set up Access" button on the Users page creates
+   the "Povoto site" application (site paths only, One-time PIN, policy
+   "Povoto users"); its AUD and the team domain
+   (`https://brewtal.cloudflareaccess.com`) go into `ACCESS_AUD` and
+   `ACCESS_TEAM_DOMAIN` of both environments in `wrangler.toml`. Do not use
+   "Protect this Worker behind Access" (Workers & Pages → tab Access): that
+   application covers every hostname of the Worker, root included, and logs
+   in only with the Cloudflare account. povoto-cloud has no workers.dev
+   address (`workers_dev = false`).
 6. One token per SideKick site: `node scripts/add-sidekick.mjs <site> [name]`.
    The token is printed once; type it on the SideKick page "Connection
    settings" (link on `/getstatus`) with the URL
    `https://povoto-public.povoto-cloud.workers.dev/api/ingest`. The SideKick
    then shows its site on `/getstatus` (asked to `/api/whoami`).
-7. Permissions (role `view` or `edit`; Povoto id = site × 100 + PovotoNum;
-   id 0 = every Povoto):
+7. Permissions, on the Users page (`/admin`, link at the right of the site
+   buttons): per site or every site, role `view` or `edit`. Administrators
+   are the users with `edit` on every site. Rows in `permissions`: povoto_id
+   0 = every site, site × 100 = one site (and its future Povotos), site × 100
+   + PovotoNum = one Povoto (still honoured, not offered by the page). The
+   first administrator needs SQL:
 
    ```
-   npx wrangler d1 execute povoto --remote --command "INSERT INTO permissions VALUES ('someone@example.com', 103, 'view')"
+   npx wrangler d1 execute povoto --remote --command "INSERT INTO permissions VALUES ('someone@example.com', 0, 'edit')"
    ```
+
+   Access only proves the e-mail: its policy lets anyone with a verified
+   e-mail in (one-time PIN / Google), and the Worker shows nothing without
+   a row here. Public links (`/s/*`, `/assets/*`) have a Bypass application
+   and count as no user.
 
 ## Day to day
 
@@ -77,9 +85,19 @@ decisions: `Povoto/docs/cloud-plan.md`; record format and the device side:
 - Set points page: `/p/<id>/setpoint` (also the set point touch zones of the
   dashboard). Edits need the `edit` role, "Accept cloud edits" on at the
   Povoto and an up-to-date copy (Povoto/docs/cloud-log.md, "Fase 2").
-- The site root opens where the browser last was: the Povoto list
+- Addresses: `povoto.brewtal.one` (the site), `public.brewtal.one` (ingest
+  and public links) and `brewtal.one` (for now a redirect to the site,
+  `WELCOME_HOST`). A custom domain only attaches when the hostname has no DNS
+  records of its own.
+- Access covers only `/povotos`, `/search`, `/p/*` and `/admin` (the "Set up
+  Access" button on the Users page): the root `/` stays open for the welcome
+  page (`src/welcome.ts`). Access cannot leave just `/` out, since a path
+  always covers its subpaths. The Worker still refuses any page without a
+  valid Access token (header, or the `CF_Authorization` cookie at the root).
+- The site root, signed in, opens where the browser last was: the Povoto list
   (`/povotos`) or the dashboard of the last Povoto seen (cookie
-  `povoto_last`, set by the list, dashboard and graphs pages).
+  `povoto_last`, set by the list, dashboard and graphs pages). Not signed
+  in, it shows the welcome page, whose Sign in goes to that same page.
 - Phase 1 check: `node scripts/check-phase1.mjs <povotoId> [batch]` (rows per
   day, gaps, delay, synthetic values).
 - Without hardware: `node scripts/feed-test.mjs https://povoto-public.povoto-cloud.workers.dev/api/ingest <token> [num] [batch] [days]`

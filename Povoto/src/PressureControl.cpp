@@ -2045,9 +2045,9 @@ void getCO2RateLabel(char *out, size_t outSize) {
   }
   const float rate = getBeerCO2EvolutionGramsPerLiterPerDay();
   if (isfinite(rate) && rate > 0.0f && !co2RateInTransition())
-    snprintf(out, outSize, "gCO2 [%.1f/(L.d)]", rate);
+    snprintf(out, outSize, "gCO2 [%.1f/L/d]", rate);
   else
-    snprintf(out, outSize, "gCO2 [N/A/L.d]");
+    snprintf(out, outSize, "gCO2 [stalled]");
 }
 
 float getReliefsPerHourValue() {

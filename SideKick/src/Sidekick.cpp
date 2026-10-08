@@ -188,11 +188,15 @@ void logSendTask(void *pvParameters) {
     sendLogToBrewfather();
     sendCloudLog();
     
-    vTaskDelay(xDelay); // Suspende a task por 15 segundos
+    // 15 s, or less when woken: an answer of a Povoto to a cloud request goes
+    // out at once (cashCloudLogRecord).
+    ulTaskNotifyTake(pdTRUE, xDelay);
   }
 }
 
 char *getSideKickStatus(char *st) {
+  // Same text as the BrewCore status (debugging comes from the IP).
+  strcat(st, debugging ? "DEBUG mode<BR>" : "Operational mode<BR>");
   char buf1[2048];
   strcat(st, getLogStatus(buf1));
 

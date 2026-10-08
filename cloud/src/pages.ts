@@ -27,19 +27,19 @@ a { color: #a9c4f5; }
 .grow { flex: 1; min-width: 200px; }
 .name { font-size: 18px; font-weight: bold; }
 .muted { color: #aeb9c6; font-size: 13px; }
-.button, button, input { border: 1px solid #454e5e; border-radius: 7px; background: #29313d; color: #f2f5fa; padding: 8px 12px; font: inherit; text-decoration: none; }
+.button, button, input, select { border: 1px solid #454e5e; border-radius: 7px; background: #29313d; color: #f2f5fa; padding: 8px 12px; font: inherit; text-decoration: none; }
 button { cursor: pointer; }
 button:disabled { opacity: .45; cursor: not-allowed; }
 form.inline { display: inline; margin: 0; }
 input[type=search] { min-width: 0; flex: 1; }
 .share { font-size: 13px; word-break: break-all; }
-.sites { margin-bottom: 14px; }
+.sites { margin-bottom: 14px; } .sites .admin { margin-left: auto; }
 .button.selected { background: #435e9a; border-color: #6e91dd; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px 14px; margin: 10px 0; }
 label.field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: #aeb9c6; }
 label.check { font-size: 14px; color: #e8edf3; }
 label.check input { margin-right: 6px; }
-.grid input, .wide input { width: 100%; box-sizing: border-box; }
+.grid input, .grid select, .wide input { width: 100%; box-sizing: border-box; }
 input:disabled { opacity: .6; }
 .note { padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; background: #2a3140; }
 .note.warn { background: #3a2f1e; }
@@ -85,16 +85,18 @@ export function currentBatch(latest: { epoch: number; mode: number; batch: numbe
 // With Povotos of more than one site: a site filter at the top (selected =
 // null shows all), and each card names its site.
 export function homePage(email: string, povotos: PovotoRow[], nowLocal: number,
-                         siteNames: Map<number, string>, selected: number | null): string {
+                         siteNames: Map<number, string>, selected: number | null, isAdmin: boolean): string {
   const sites = [...new Set(povotos.map(p => p.site))].sort((a, b) => a - b);
   const siteName = (site: number) => siteNames.get(site) || `Site ${site}`;
-  const filter = sites.length < 2 ? '' : `<nav class="row sites" aria-label="Site">
-${[null, ...sites].map(site => {
+  const siteButtons = sites.length < 2 ? '' : [null, ...sites].map(site => {
     const href = site === null ? '/povotos?site=all' : `/povotos?site=${site}`;
     const label = site === null ? 'All sites' : siteName(site);
     const current = site === selected;
     return `<a class="button${current ? ' selected' : ''}" href="${href}"${current ? ' aria-current="page"' : ''}>${escapeHtml(label)}</a>`;
-  }).join('')}</nav>`;
+  }).join('');
+  // Administrators: the users page, at the right of the site buttons.
+  const admin = isAdmin ? '<a class="button admin" href="/admin">Users</a>' : '';
+  const filter = siteButtons || admin ? `<nav class="row sites" aria-label="Site">${siteButtons}${admin}</nav>` : '';
   const shown = selected === null || !sites.includes(selected) ? povotos : povotos.filter(p => p.site === selected);
   const showSite = sites.length > 1 && (selected === null || !sites.includes(selected));
   const cards = shown.map(p => {

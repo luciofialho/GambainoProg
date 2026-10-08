@@ -15,6 +15,8 @@
 #include "GambainoWiFi.h"
 #include "HttpsRootCAs.h"
 
+extern TaskHandle_t logSendTaskHandle; // Sidekick.cpp: woken to post an answer at once
+
 namespace {
 constexpr char LITTLEFS_MOUNT[] = "/littlefs";
 constexpr char SPOOL_DIR[] = "/cloud";
@@ -28,6 +30,9 @@ constexpr size_t RECORD_MAX_BYTES = 1024;
 // fragmented; 8 records still drain a day of backlog in ~40 min.
 constexpr size_t POST_MAX_RECORDS = 8;
 constexpr size_t POST_MAX_BYTES = 3072;
+// Debug mode keeps about one post of records; more is dropped (see cashCloudLogRecord).
+constexpr size_t DEBUG_MAX_PENDING_BYTES = 4096;
+std::atomic<unsigned long> backlogsDropped{0};
 
 SemaphoreHandle_t spoolMutex = nullptr;
 bool spoolReady = false;
@@ -279,6 +284,13 @@ void cashCloudLogRecord(const char *record) {
     ++recordsDropped;
     return;
   }
+  // Debug (a bench, by IP): no backlog. A test only needs current data, so
+  // what could not be sent is dropped instead of being replayed in order.
+  if (debugging && pendingBytes > DEBUG_MAX_PENDING_BYTES) {
+    clearSpool();
+    ++backlogsDropped;
+    Serial.println("[CLOUD] Debug mode: unsent backlog dropped");
+  }
   bool ok = false;
   if (spoolSize() + length + 1 <= SPOOL_MAX_BYTES) {
     File file = LittleFS.open(SPOOL_FILE, FILE_APPEND);
@@ -294,6 +306,12 @@ void cashCloudLogRecord(const char *record) {
     ++recordsDropped;
   }
   xSemaphoreGive(spoolMutex);
+  // An answer to a cloud request, or a new set point / rule copy: post now,
+  // the set point page is waiting for them.
+  if (ok && logSendTaskHandle && (strstr(record, "\"k\":\"ack\"") || strstr(record, "\"k\":\"sp\"") ||
+                                  strstr(record, "\"k\":\"r\""))) {
+    xTaskNotifyGive(logSendTaskHandle);
+  }
 }
 
 void cashCloudState(const char *state) {
@@ -456,6 +474,10 @@ void appendCloudLogStatus(char *st, size_t size) {
            recordsSpooled.load(), recordsPosted.load(), recordsDropped.load(), postsFailed.load(), statesPosted.load(),
            (unsigned)pendingBytes.load(), lastHttpCode.load());
   strncat(st, line, size - strlen(st) - 1);
+  if (debugging) {
+    snprintf(line, sizeof(line), "Debug mode: no cloud backlog (dropped %lu times)<br>", backlogsDropped.load());
+    strncat(st, line, size - strlen(st) - 1);
+  }
   // TLS needs ~40 KB, partly contiguous: watch the largest block.
   snprintf(line, sizeof(line), "Heap free: %u, largest block: %u, minimum ever: %u<br>",
            (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap(), (unsigned)ESP.getMinFreeHeap());

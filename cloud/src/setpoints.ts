@@ -92,14 +92,28 @@ const KIND_NAMES: Record<string, string> = {
   sp: 'Set points', rule: 'Rule', reset: 'Reset rule', trigger: 'Trigger rule now',
 };
 
-function requestText(r: RequestRow): string {
+function requestText(r: RequestRow, withAuthor = true): string {
   const data = parse(r.data);
   const what = KIND_NAMES[r.kind] ?? r.kind;
   const rule = r.kind !== 'sp' && typeof data.i === 'number' ? ` ${data.i + 1}` : '';
   const status = r.status === 'unconfirmed' ? 'no answer from the Povoto'
     : r.status === 'expired' ? 'not delivered (SideKick offline?)' : r.status;
   const message = r.message ? `: ${r.message}` : '';
-  return `${escapeHtml(what + rule)} · ${escapeHtml(r.created_by)} · ${escapeHtml(status + message)}`;
+  const author = withAuthor ? ` · ${escapeHtml(r.created_by)}` : '';
+  return `${escapeHtml(what + rule)}${author} · ${escapeHtml(status + message)}`;
+}
+
+// The values a request sent, shown instead of the copy while the Povoto has
+// not answered yet, or has applied them but its new copy has not arrived (the
+// copy still has the version the request was made on). Rejected, no answer or
+// a newer copy: the Povoto's data. requests: newest first.
+function requestedValues(requests: RequestRow[], match: (r: RequestRow) => boolean,
+                         copyHash: string | undefined): Values | null {
+  const request = requests.find(match);
+  if (!request) return null;
+  if (request.status === 'pending' || request.status === 'sent') return parse(request.data);
+  if (request.status === 'applied' && request.base_hash === copyHash) return parse(request.data);
+  return null;
 }
 
 export interface SetpointPageInput {
@@ -130,14 +144,19 @@ export function setpointPage(input: SetpointPageInput): string {
     if (sync.edits_accepted === 0) notes.push('<div class="note warn">Cloud edits are off on this Povoto (Settings page on the Povoto).</div>');
     if (!setpointsInSync || !rulesInSync) notes.push('<div class="note warn">Waiting for the Povoto to send its current copy; editing resumes when it arrives.</div>');
   }
-  if (open) notes.push(`<div class="note">Waiting for the Povoto: ${requestText(open)}.</div>`);
+  if (open) notes.push(`<div class="note">Waiting for the Povoto: ${requestText(open, false)}.</div>`);
+  // While a request or a new copy is awaited the forms are disabled, so
+  // reloading loses nothing.
+  if (open || (sync && (!setpointsInSync || !rulesInSync))) {
+    notes.push('<script>setTimeout(() => location.replace(location.pathname), 5000);</script>');
+  }
 
   const editable = canEdit && sync?.edits_accepted === 1 && !open;
   const spEditable = editable && setpointsInSync;
   const rulesEditable = editable && rulesInSync;
 
   // During a ramp the snapshot leaves the direct value out; the latest log has it.
-  const sp = parse(setpoints?.data);
+  const sp = requestedValues(input.requests, r => r.kind === 'sp', setpoints?.hash) ?? parse(setpoints?.data);
   if (sp.t === null || sp.t === undefined) sp.t = latest?.temp_sp ?? null;
   if (sp.p === null || sp.p === undefined) sp.p = latest?.press_sp ?? null;
   const setpointForm = setpoints ? `<form method="post" action="setpoint">
@@ -148,7 +167,11 @@ ${canEdit ? `<button type="submit"${spEditable ? '' : ' disabled'}>Send set poin
     : '<p class="muted">No copy yet.</p>';
 
   // Rules: rule 1 always; each later rule after the last non-empty one plus one.
-  const ruleValues = Array.from({ length: RULE_COUNT }, (_, i) => parse(rules.get(i)?.data));
+  const ruleValues = Array.from({ length: RULE_COUNT }, (_, i) => {
+    const copy = parse(rules.get(i)?.data);
+    const sent = requestedValues(input.requests, r => r.kind === 'rule' && parse(r.data).i === i, rules.get(i)?.hash);
+    return sent ? { ...sent, at: copy.at ?? 0 } : copy;
+  });
   let shown = 1;
   ruleValues.forEach((rule, i) => { if (!ruleIsEmpty(rule)) shown = Math.min(RULE_COUNT, i + 2); });
   const rulesHash = sync?.rules_hash ?? '';
