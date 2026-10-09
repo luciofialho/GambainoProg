@@ -74,10 +74,12 @@
   }
 
   // Povoto_UI.cpp textOut(): y is the middle of the string's real height.
-  function textOut(align, pt, x, y, text, color) {
+  // With `reference` the height of that text is used instead (rows of texts
+  // that must share one baseline, e.g. '0').
+  function textOut(align, pt, x, y, text, color, reference) {
     ctx.save();
     const { ascent } = useGfx(pt);
-    const m = ctx.measureText(text);
+    const m = ctx.measureText(reference || text);
     const realHeight = Math.round(m.actualBoundingBoxAscent + m.actualBoundingBoxDescent);
     ctx.restore();
     const top = y - Math.trunc(realHeight / 2);
@@ -120,9 +122,8 @@
 
   let status = null;
   let online = false;
-  // Statistics view (icon at the top right), remembered per browser.
+  // Statistics view (icon at the top right); the page always opens without it.
   let showStats = false;
-  try { showStats = localStorage.getItem('povotoDashboardStats') === '1'; } catch (error) { /* none */ }
 
   // ----------------------------------------------------------- main screen
   function drawWifi() {
@@ -219,7 +220,7 @@
       ['Total heating time', st.heatTime],
       ['Headspace volume (L)', st.headspaceVolume],
       ['Dumped volume (L)', st.dumpedVolume],
-      ['Relief count', st.reliefCount],
+      ['Total reliefs', st.reliefCount],
       [null],
       ['CO2 headspace', ...pair(st.co2Headspace)],
       ['CO2 solution', ...pair(st.co2Solution)],
@@ -238,16 +239,17 @@
     rows.forEach(([label, value, grams], i) => {
       const y = Math.round(PANEL_TOP + pitch * (i + 0.5 + (i >= GAP_AFTER ? 0.5 : 0)));
       if (label === null) {
-        textOut(RIGHT, 12, MOL_RIGHT, y, 'mol', UNIT);
-        textOut(RIGHT, 12, STATS_RIGHT, y, 'g', UNIT);
+        // A little higher: the descender of "g" would touch the row below.
+        textOut(RIGHT, 12, MOL_RIGHT, y - 4, 'mol', UNIT, '0');
+        textOut(RIGHT, 12, STATS_RIGHT, y - 4, 'g', UNIT, '0');
         return;
       }
-      textOut(LEFT, 12, STATS_LEFT, y, label, LABEL);
+      textOut(LEFT, 12, STATS_LEFT, y, label, LABEL, '0');
       if (grams === undefined) {
-        textOut(RIGHT, 12, STATS_RIGHT, y, statText(value), YELLOW);
+        textOut(RIGHT, 12, STATS_RIGHT, y, statText(value), YELLOW, '0');
       } else {
-        textOut(RIGHT, 12, MOL_RIGHT, y, statText(value), YELLOW);
-        textOut(RIGHT, 12, STATS_RIGHT, y, statText(grams), YELLOW);
+        textOut(RIGHT, 12, MOL_RIGHT, y, statText(value), YELLOW, '0');
+        textOut(RIGHT, 12, STATS_RIGHT, y, statText(grams), YELLOW, '0');
       }
     });
   }
@@ -257,6 +259,8 @@
   // relative so the page also works under the cloud's /p/<id>/dashboard/;
   // a read-only status (cloud) keeps only the graphs.
   function mainAction(x, y) {
+    // A click anywhere on the statistics panel goes back to the normal view.
+    if (statsShown() && x >= 218 && y >= PANEL_TOP && y < PANEL_BOTTOM) return () => setStats(false);
     const editable = !(status && status.readOnly);
     if (editable && x >= 45 && x <= 160 && y <= 50) return () => go('../batch');
     if (editable && x < 80) return () => go('../tasks');
@@ -305,12 +309,13 @@
     if (lineChanged) resize(); // the line below the screen appeared or vanished
   }
 
-  statsButton.addEventListener('click', () => {
-    showStats = !showStats;
-    try { localStorage.setItem('povotoDashboardStats', showStats ? '1' : '0'); } catch (error) { /* none */ }
+  function setStats(on) {
+    showStats = on;
     statsButton.setAttribute('aria-pressed', String(statsShown()));
     render();
-  });
+  }
+
+  statsButton.addEventListener('click', () => setStats(!showStats));
 
   // The screen takes what the link, frame and signature leave of the window.
   function resize() {

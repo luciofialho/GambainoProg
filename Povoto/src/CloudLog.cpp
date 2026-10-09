@@ -12,6 +12,7 @@
 #include "PovotoCommon.h"
 #include "PovotoData.h"
 #include "PressureControl.h"
+#include "TemperatureControl.h"
 
 namespace {
 constexpr char NVS_NAMESPACE[] = "pvt_cloud";
@@ -105,6 +106,9 @@ bool buildState(uint32_t epoch, char *out, size_t size) {
   json.number("me", (float)CountersData.totalMolsEjected, 3);
   json.integer("nx", (long)CountersData.totalReliefCount);
   json.number("dv", CountersData.dumpedVolume, 2);
+  // Dashboard statistics: temperature mode and headspace volume (L).
+  json.string("tm", ChillHeatMode == FMTCHILL ? "chill" : ChillHeatMode == FMTHEAT ? "heat" : "idle");
+  json.number("hv", CountersData.headSpaceVolume, 2);
   // Phase 2: versions of the set point and rule snapshots, and whether the
   // Povoto accepts edits; the cloud asks for snapshots when its copy differs.
   char hash[9];

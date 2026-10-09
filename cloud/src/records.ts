@@ -42,6 +42,9 @@ export interface StateRecord {
   molEjected: number | null;
   expansions: number | null;
   dumpedVolume: number | null;
+  // Dashboard statistics; null: older firmware.
+  tempMode: 'chill' | 'heat' | 'idle' | null;
+  headspaceVolume: number | null;
   // Phase 2: versions of the set point and rule snapshots, edits accepted.
   // null: firmware without phase 2.
   setpointHash: string | null;
@@ -150,6 +153,9 @@ function stateFrom(raw: Record<string, unknown>, nowUtc: number): StateRecord | 
     molEjected: num(raw.me),
     expansions: optionalInt(raw.nx, 0, 0xffffffff),
     dumpedVolume: num(raw.dv),
+    // An unknown mode (newer firmware) is not an error: it is just not shown.
+    tempMode: raw.tm === 'chill' || raw.tm === 'heat' || raw.tm === 'idle' ? raw.tm : null,
+    headspaceVolume: num(raw.hv),
     setpointHash: hash(raw.hs),
     rulesHash: hash(raw.hr),
     editsAccepted: raw.ae === undefined ? null : raw.ae === 1,

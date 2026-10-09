@@ -31,6 +31,9 @@ export interface BatchRow {
   mol_ejected: number | null;
   expansions: number | null;
   dumped_volume: number | null;
+  // Migration 0005; null until a state line of firmware that sends them.
+  temp_mode: string | null;
+  headspace_volume: number | null;
 }
 
 export interface LogRow {
@@ -125,20 +128,21 @@ export async function storeRecords(db: D1Database, site: number, records: LogRec
   const upsertState = db.prepare(
     `INSERT INTO batches (povoto_id, batch, name, date, og, first_epoch, last_epoch, state_epoch,
        chill_seconds, heat_seconds, mol_headspace, mol_dissolved, mol_ejected, expansions,
-       dumped_volume)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+       dumped_volume, temp_mode, headspace_volume)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
      ON CONFLICT (povoto_id, batch) DO UPDATE SET
        name = excluded.name, date = excluded.date, og = excluded.og,
        state_epoch = excluded.state_epoch,
        chill_seconds = excluded.chill_seconds, heat_seconds = excluded.heat_seconds,
        mol_headspace = excluded.mol_headspace, mol_dissolved = excluded.mol_dissolved,
        mol_ejected = excluded.mol_ejected, expansions = excluded.expansions,
-       dumped_volume = excluded.dumped_volume
+       dumped_volume = excluded.dumped_volume,
+       temp_mode = excluded.temp_mode, headspace_volume = excluded.headspace_volume
      WHERE excluded.state_epoch >= COALESCE(batches.state_epoch, 0)`);
   for (const s of states) {
     statements.push(upsertState.bind(site * 100 + s.num, s.batch, s.batchName, s.batchDate, s.og,
       s.epoch, s.chillSeconds, s.heatSeconds, s.molHeadspace, s.molDissolved, s.molEjected,
-      s.expansions, s.dumpedVolume));
+      s.expansions, s.dumpedVolume, s.tempMode, s.headspaceVolume));
   }
   const results = await db.batch(statements);
   return results.slice(0, records.length).reduce((sum, result) => sum + (result.meta.changes ?? 0), 0);

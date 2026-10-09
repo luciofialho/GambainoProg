@@ -21,15 +21,12 @@ for (const name of readdirSync(out)) {
 }
 for (const name of pages) copyFileSync(join(www, name), join(out, name));
 copyFileSync(join(www, '..', 'LCars.bmp'), join(out, 'LCars.bmp'));
-// The logos live in the firmware (PovotoLogos.h, raw string literals).
-const logos = readFileSync(join(www, '..', '..', 'include', 'PovotoLogos.h'), 'utf8');
-for (const [tag, name] of [['POVOTO', 'povoto.svg'], ['BREWTAL', 'brewtal.svg']]) {
-  const match = new RegExp(`R"${tag}\\(([\\s\\S]*?)\\)${tag}"`).exec(logos);
-  if (!match) throw new Error(`${tag} logo not found in PovotoLogos.h`);
-  writeFileSync(join(out, name), match[1]);
+// The logos, as the Povoto serves them (Povoto/data/www/assets).
+for (const name of ['povoto.svg', 'brewtal.svg']) {
+  const logo = readFileSync(join(www, 'assets', name), 'utf8');
+  writeFileSync(join(out, name), logo);
   // Light version for dark backgrounds (Access login page): the logos are black.
-  writeFileSync(join(out, name.replace('.svg', '-light.svg')),
-    match[1].replace(/#000000/gi, '#e8edf3'));
+  writeFileSync(join(out, name.replace('.svg', '-light.svg')), logo.replace(/#000000/gi, '#e8edf3'));
 }
 // Access login page: the logo box is small and fixed, so the Povoto logo goes
 // cropped to its drawing (measured bounds 407,239 629x639 of the 1200 frame).

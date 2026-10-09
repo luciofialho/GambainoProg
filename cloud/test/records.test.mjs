@@ -48,6 +48,15 @@ test('phase 2 lines', () => {
   assert.deepEqual(acks[0], { num: 3, id: 42, ok: true, message: '' });
 });
 
+test('dashboard statistics in the state line', () => {
+  const { states } = parseBody(fixture('2026-10-dashboard-stats.ndjson'), NOW);
+  assert.equal(states[0].tempMode, 'chill');
+  assert.equal(states[0].headspaceVolume, 3.2);
+  const older = parseBody(fixture('2026-10-phase2.ndjson'), NOW).states[0];
+  assert.equal(older.tempMode, null);
+  assert.equal(older.headspaceVolume, null);
+});
+
 test('a newer firmware: unknown fields are ignored, unknown kinds rejected alone', () => {
   const lines = fixture('2026-10-phase2.ndjson').trim().split('\n');
   const newer = [

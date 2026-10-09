@@ -47,7 +47,7 @@ Histórico (uma linha JSON, até ~400 bytes):
 | `vol`, `co2`, `rph` | volume (L), g de CO2, reliefs por hora |
 | `ss` | só no log sintético: dia 0 do perfil (epoch local) |
 
-Estado do batch (uma linha JSON, até ~260 bytes):
+Estado do batch (uma linha JSON, até ~330 bytes; o SideKick aceita até 400):
 
 | Chave | Conteúdo |
 |---|---|
@@ -58,6 +58,8 @@ Estado do batch (uma linha JSON, até ~260 bytes):
 | `mh`, `md`, `me` | mol de CO2 no headspace, dissolvido e expelido (acumulado) |
 | `nx` | expansões (`totalReliefCount`) |
 | `dv` | volume descartado por tarefas Dump (L) |
+| `tm`, `hv` | modo de temperatura (`"chill"`, `"heat"`, `"idle"`; `ChillHeatMode`) e volume do headspace (L), para as estatísticas do dashboard (desde 10/2026; ausentes = firmware anterior) |
+| `hs`, `hr`, `ae` | fase 2: versões dos snapshots de set points e regras, edições aceitas |
 
 ## Log sintético (modo debug)
 

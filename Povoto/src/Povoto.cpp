@@ -32,7 +32,6 @@
 #include "CloudSync.h"
 #include "PovotoFilesystem.h"
 #include "PovotoGraphScreen.h"
-#include "PovotoLogos.h"
 #include <esp_system.h>
 #include <esp_heap_caps.h>
 
@@ -229,11 +228,13 @@ void setup() {
     request->redirect(povotoWiFiConfigurationActive() ? "/wifi" : "/dashboard/");
   });
   server.on("/config", HTTP_GET, handleMainMenu);
+  // Logos, with the web pages in LittleFS (data/www/assets); the cloud copies
+  // the same files.
   server.on("/assets/povoto.svg", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send_P(200, "image/svg+xml", POVOTO_LOGO_SVG);
+    sendWebPageFile(request, "/www/assets/povoto.svg", "image/svg+xml");
   });
   server.on("/assets/brewtal.svg", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send_P(200, "image/svg+xml", BREWTAL_LOGO_SVG);
+    sendWebPageFile(request, "/www/assets/brewtal.svg", "image/svg+xml");
   });
   
   server.on("/fmtdata/save", HTTP_GET, handleFMTDataSave);

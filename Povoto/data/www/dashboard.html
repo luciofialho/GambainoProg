@@ -30,8 +30,12 @@
     canvas { display: block; }
     #updated { margin-top: 8px; font-size: 12px; color: #9aa3ad; text-align: right; }
     #updated:empty { display: none; }
-    .signature { display: flex; justify-content: center; margin-top: 14px; }
-    .signature img { width: 160px; max-width: 45%; height: auto; display: block; filter: invert(1); opacity: .7; }
+    /* Povoto logo on the left, Brewtal on the right (both black: inverted). */
+    .signature { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; }
+    .signature img { height: 64px; width: auto; max-width: 40%; display: block; filter: invert(1); opacity: .7; }
+    /* povoto.svg draws in 392,228 660x660 of its 1200 frame: show only that. */
+    .povoto-logo { width: 64px; height: 64px; overflow: hidden; }
+    .povoto-logo img { height: 116.4px; max-width: none; margin: -22.1px 0 0 -38px; }
   </style>
 </head>
 <body>
@@ -55,7 +59,10 @@
       <canvas id="screen" width="480" height="320" aria-label="Povoto screen"></canvas>
       <div id="updated"></div>
     </section>
-    <footer class="signature"><img src="/assets/brewtal.svg" alt="Brewtal" onerror="this.hidden = true"></footer>
+    <footer class="signature">
+      <div class="povoto-logo"><img src="/assets/povoto.svg" alt="Povoto" onerror="this.style.visibility = 'hidden'"></div>
+      <img src="/assets/brewtal.svg" alt="Brewtal" onerror="this.style.visibility = 'hidden'">
+    </footer>
   </div>
   <script src="dashboard.js"></script>
 </body>

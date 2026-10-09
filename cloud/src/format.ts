@@ -69,7 +69,9 @@ export function dashboardStatus(log: LogRow, batch: BatchRow | null, num: number
 }
 
 // Statistics view of the dashboard, from the batch state line (every 5 min).
-// The cloud has no temperature mode nor headspace volume: the page shows "-".
+// Temperature mode and headspace volume only from firmware that sends them
+// (otherwise "" and the page shows "-").
+const TEMP_MODES: Record<string, string> = { chill: 'Chill', heat: 'Heat', idle: 'Idle' };
 function batchStats(batch: BatchRow | null) {
   if (!batch || batch.state_epoch === null) return undefined;
   const duration = (seconds: number | null) => {
@@ -80,10 +82,10 @@ function batchStats(batch: BatchRow | null) {
   };
   const co2 = (mols: number | null) => mols === null ? ['', ''] : [mols.toFixed(3), (mols * 44.01).toFixed(1)];
   return {
-    tempMode: '',
+    tempMode: TEMP_MODES[batch.temp_mode ?? ''] ?? '',
     chillTime: duration(batch.chill_seconds),
     heatTime: duration(batch.heat_seconds),
-    headspaceVolume: '',
+    headspaceVolume: fixed(batch.headspace_volume, 2, ''),
     dumpedVolume: fixed(batch.dumped_volume, 2, ''),
     reliefCount: batch.expansions === null ? '' : String(batch.expansions),
     co2Headspace: co2(batch.mol_headspace),

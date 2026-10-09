@@ -59,8 +59,8 @@ decisions: `Povoto/docs/cloud-plan.md`; record format and the device side:
 ## Day to day
 
 - Automatic deploy (Cloudflare Workers Builds, connected to GitHub on
-  2026-10-05): a push to `master` that touches `cloud/`, `Povoto/data/` or
-  `Povoto/include/PovotoLogos.h` runs `npm run assets` in `cloud/` and then
+  2026-10-05): a push to `master` that touches `cloud/` or `Povoto/data/`
+  (pages and logos) runs `npm run assets` in `cloud/` and then
   one deploy per Worker, each from its own connected build: povoto-cloud
   runs `npx wrangler deploy`, povoto-public runs
   `npx wrangler deploy --env public`. A connected build deploys only its own
