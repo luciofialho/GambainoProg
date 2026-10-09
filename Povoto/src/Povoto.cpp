@@ -414,6 +414,7 @@ void loop() {
   ElegantOTA.loop(); // required to actually reboot after a successful update
   povotoWiFiProcess();
   checkTaskExpiration();
+  collectTaskLogSamples();
   updateTaskUIIfActive();
   handle_IOTK();
   { // controla sinalização de conexão do wifi

@@ -4,7 +4,10 @@
 #include "PovotoTasks.h"
 #include "PovotoData.h"
 #include "PressureControl.h"
+#include "PovotoCommon.h"
+#include "datalog.h"
 #include "IOTK.h"
+#include <IOTK_NTP.h>
 
 byte taskWindowType = 0;
 unsigned long taskWindowEndTime = 0;
@@ -12,15 +15,87 @@ unsigned long lastTaskMillis = 0;
 static float dumpStartPressureBar = 0.0f;
 static float dumpStartHeadspaceL = 0.0f;
 static float dumpStartBeerVolumeL = 0.0f;
-static unsigned long dumpStartMillis = 0; // [DAILY-HS] for the dump log
 static bool taskRestWindowActive = false;
 
 bool tasksAllowed() {
   return SetPointData.mode != MODE_CONDITIONING;
 }
 
+// ===== Task log (one row per task, datalog.h) =====
+// Opened at the start, closed at the end (finished, timeout or cancelled) and
+// sent after the pressure samples that follow it; a new task sends it earlier,
+// with the samples still missing left empty.
+static const unsigned long TASK_LOG_SAMPLE_SECONDS[TASK_LOG_PRESSURE_SAMPLES] = {60, 180, 300, 600};
+static TaskLogData taskLog;
+static bool taskLogOpen = false;    // task running
+static bool taskLogPending = false; // task ended, collecting the samples
+static unsigned long taskLogStartMillis = 0;
+static unsigned long taskLogEndMillis = 0;
+static uint8_t taskLogNextSample = 0;
+static const char *taskEndOutcome = "finished"; // "timeout" while checkTaskExpiration ends it
+
+static void sendTaskLog() {
+  if (!taskLogPending) return;
+  taskLogPending = false;
+  doTaskDataLog(taskLog);
+}
+
+static void closeTaskLog(const char *outcome, const DumpRecalcResult *dump) {
+  if (!taskLogOpen) return; // finishing again during nucleation
+  taskLogOpen = false;
+  const unsigned long now = millis();
+  const DissolvedCO2LogData co2 = getDissolvedCO2LogData();
+  taskLog.outcome = outcome;
+  taskLog.endEpoch = NTPEpoch();
+  taskLog.durationSeconds = (now - taskLogStartMillis) / 1000.0f;
+  taskLog.temperature = ControlData.temperature;
+  taskLog.environmentTemperature = environmentTemp;
+  taskLog.atmosphericPressure = Patm;
+  taskLog.co2Mode = co2.mode;
+  taskLog.gasRate = co2.gasRate;
+  taskLog.pressureEnd = ControlData.pressure;
+  if (dump) {
+    taskLog.pressureEndIso = dump->pressureAfterIsoBar;
+    taskLog.deltaH = dump->deltaH;
+  }
+  taskLog.headSpaceAfter = CountersData.headSpaceVolume;
+  taskLog.beerVolume = beerVolume;
+  taskLog.dumpedVolume = CountersData.dumpedVolume;
+  taskLogEndMillis = now;
+  taskLogNextSample = 0;
+  taskLogPending = true;
+}
+
+static void openTaskLog(byte type) {
+  closeTaskLog("cancelled", nullptr); // a task replaced before being finished
+  sendTaskLog();
+  taskLog = {};
+  taskLog.task = taskWindowTypeToText(type);
+  taskLog.outcome = "";
+  taskLog.co2Mode = "";
+  taskLog.startEpoch = NTPEpoch();
+  taskLog.pressureStart = ControlData.pressure;
+  taskLog.headSpaceBefore = CountersData.headSpaceVolume;
+  taskLog.pressureEndIso = NAN;
+  taskLog.deltaH = NAN;
+  for (uint8_t i = 0; i < TASK_LOG_PRESSURE_SAMPLES; ++i) taskLog.pressureAfter[i] = NAN;
+  taskLogStartMillis = millis();
+  taskLogOpen = true;
+}
+
+void collectTaskLogSamples() {
+  if (!taskLogPending) return;
+  const unsigned long elapsed = millis() - taskLogEndMillis;
+  while (taskLogNextSample < TASK_LOG_PRESSURE_SAMPLES &&
+         elapsed >= TASK_LOG_SAMPLE_SECONDS[taskLogNextSample] * 1000UL) {
+    taskLog.pressureAfter[taskLogNextSample++] = ControlData.pressure;
+  }
+  if (taskLogNextSample >= TASK_LOG_PRESSURE_SAMPLES) sendTaskLog();
+}
+
 static void startTask(byte type) {
   if (!tasksAllowed()) return;
+  openTaskLog(type);
   taskRestWindowActive = false;
   lastTaskMillis = millis();
   taskWindowType = type;
@@ -42,6 +117,7 @@ static void endTask(unsigned long restWindowMinutes) {
 
 
 void cancelActiveTask() {
+  closeTaskLog("cancelled", nullptr);
   if (taskWindowType != 0) endTask(0);
 }
 
@@ -50,7 +126,6 @@ void startDumpTask() {
   dumpStartPressureBar = ControlData.pressure;
   dumpStartHeadspaceL = CountersData.headSpaceVolume;
   dumpStartBeerVolumeL = beerVolume;
-  dumpStartMillis = millis(); // [DAILY-HS]
   startTask(1);
 }
 void startGasTask()            { startTask(2); }
@@ -59,8 +134,8 @@ void startDryHoppingTask()     { startTask(4); }
 void startDynamicHoppingTask() { startTask(5); }
 
 void endDumpTask() {
-  applyDumpWindowHeadspaceRecalc(dumpStartHeadspaceL, dumpStartPressureBar, ControlData.pressure,
-                                 dumpStartMillis, millis()); // [DAILY-HS] times for the log
+  const DumpRecalcResult dump =
+    applyDumpWindowHeadspaceRecalc(dumpStartHeadspaceL, dumpStartPressureBar, ControlData.pressure);
   // The headspace recalculation treats the pressure loss during a dump as
   // liquid removal. Accumulate only a validated, positive inferred loss.
   const float dumpedThisTask = dumpStartBeerVolumeL - beerVolume;
@@ -69,10 +144,12 @@ void endDumpTask() {
     CountersData.dumpedVolume += dumpedThisTask;
     writeCountersDataToNIV();
   }
+  closeTaskLog(taskEndOutcome, &dump);
   endTask(0);
 }
 
 void endGasTask() {
+  closeTaskLog(taskEndOutcome, nullptr);
   endTask(FMTData.nucleationWindow);
 }
 
@@ -80,16 +157,19 @@ void endGasTask() {
 // no longer apply, and the average restarts after 18 new hours.
 void endLiquidTask() {
   clearDailyHeadspace("liquid");
+  closeTaskLog(taskEndOutcome, nullptr);
   endTask(FMTData.nucleationWindow);
 }
 
 void endDryHoppingTask() {
   clearDailyHeadspace("dryhop");
+  closeTaskLog(taskEndOutcome, nullptr);
   endTask(FMTData.nucleationWindow);
 }
 
 void endDynamicHoppingTask() {
   clearDailyHeadspace("dynhop");
+  closeTaskLog(taskEndOutcome, nullptr);
   endTask(FMTData.nucleationWindow);
 }
 
@@ -99,14 +179,16 @@ void checkTaskExpiration() {
       endTask(0);
       return;
     }
+    taskEndOutcome = "timeout";
     switch (taskWindowType) {
       case 1: endDumpTask(); break;
       case 2: endGasTask(); break;
       case 3: endLiquidTask(); break;
       case 4: endDryHoppingTask(); break;
       case 5: endDynamicHoppingTask(); break;
-      default: endTask(0); break;
+      default: closeTaskLog(taskEndOutcome, nullptr); endTask(0); break;
     }
+    taskEndOutcome = "finished";
   }
 }
 
@@ -247,12 +329,13 @@ void handleTaskFinish(AsyncWebServerRequest *request) {
     case 3: endLiquidTask();        break;
     case 4: endDryHoppingTask();    break;
     case 5: endDynamicHoppingTask();break;
-    default: endTask(0); break;
+    default: closeTaskLog(taskEndOutcome, nullptr); endTask(0); break;
   }
   request->redirect("/");
 }
 
 void handleTaskCancel(AsyncWebServerRequest *request) {
+  closeTaskLog("cancelled", nullptr);
   endTask(0);
   request->redirect("/");
 }

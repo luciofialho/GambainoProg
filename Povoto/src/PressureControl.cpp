@@ -1053,15 +1053,10 @@ DissolvedCO2LogData getDissolvedCO2LogData() {
   DissolvedCO2LogData data = {};
   data.mode = co2DissolvedEstimationModeLabel();
   data.criteriaState = co2StateDecision;
-  // The relief-cadence and 10-minute pressure criteria were replaced by the
-  // gas-phase rate; their columns stay empty until the log is revised.
-  data.withReliefsState = "";
-  data.withoutReliefsState = "";
   data.calculationPressure = dissolvedCO2CalculationPressure();
   data.equilibriumMols = (!co2StateIsHalfLife(co2DissolvedState) && isfinite(henryMeanMols))
       ? henryMeanMols
       : CO2DissolvedMols(data.calculationPressure, beerSG, ControlData.temperature, beerVolume);
-  data.previousPressure = NAN;
   data.gasRate = co2GasRate;
   return data;
 }
@@ -2153,35 +2148,34 @@ void requestDerivedStateRestoreFromCounters() {
   derivedStateRestorePending = true;
 }
 
-// [DAILY-HS] Last dump, reported once in the next Cold log row.
-static DumpLogData lastDumpLog = {false, NAN, NAN, 0, 0, NAN};
-
-bool takeDumpLogData(DumpLogData &data) {
-  if (!lastDumpLog.pending) return false;
-  data = lastDumpLog;
-  lastDumpLog.pending = false;
-  return true;
-}
-
-void applyDumpWindowHeadspaceRecalc(float headspaceBeforeL, float pressureBeforeBar, float pressureAfterBar,
-                                    unsigned long startMillis, unsigned long endMillis) {
-  // [DAILY-HS] Logged even when the recalculation is not applied (dH = NAN).
-  lastDumpLog = {true, pressureBeforeBar, pressureAfterBar, startMillis, endMillis, NAN};
+DumpRecalcResult applyDumpWindowHeadspaceRecalc(float headspaceBeforeL, float pressureBeforeBar,
+                                                float pressureAfterBar) {
+  // Logged in the Task log even when the recalculation is not applied (dH = NAN).
+  DumpRecalcResult result = {NAN, NAN};
   // Ideal gas with constant moles/temperature during the dump window:
   // P1_abs * H_before = P2_abs * H_after  =>  H_after = H_before * P1_abs / P2_abs.
   if (headspaceBeforeL <= 0.0f) {
-    return;
+    return result;
   }
 
   const float p1Abs = pressureBeforeBar + Patm;
-  const float p2Abs = pressureAfterBar + Patm;
-  if (p1Abs <= 0.0f || p2Abs <= 0.0f || p1Abs <= p2Abs) {
-    return;
+  const float p2ReadAbs = pressureAfterBar + Patm;
+  if (p1Abs <= 0.0f || p2ReadAbs <= 0.0f || p1Abs <= p2ReadAbs) {
+    return result;
   }
+  // P2 is read right after the valve closes, with the expanded gas still cold.
+  // Same polytropic correction as the reliefs: P2_iso = P1 * (P2/P1)^(1/n).
+  // Batch 160 (2 dumps, volumes measured): 1.21 -> 0.93 L (0.95 measured) and
+  // 0.68 -> 0.53 L (0.53). Empirical: n also absorbs a ~10 mbar drop that does
+  // not recover; a small dump (20-30 mbar) may still read high.
+  const float exponent = FMTData.FMTEffectiveVentingExponent;
+  const float p2Abs = (isfinite(exponent) && exponent > 0.0f)
+      ? p1Abs * powf(p2ReadAbs / p1Abs, 1.0f / exponent) : p2ReadAbs;
+  result.pressureAfterIsoBar = p2Abs - Patm;
 
   float headAfter = headspaceBeforeL * (p1Abs / p2Abs);
   if (headAfter < 0.0f) {
-    return;
+    return result;
   }
 
   if (headAfter > headspaceBeforeL) {
@@ -2193,7 +2187,7 @@ void applyDumpWindowHeadspaceRecalc(float headspaceBeforeL, float pressureBefore
       const float deltaL = headAfter - headspaceBeforeL;
       rebaseDailyHeadspace(deltaL, "dump");
       applySelectedHeadspace();
-      lastDumpLog.deltaH = deltaL;
+      result.deltaH = deltaL;
     }
   }
 
@@ -2201,15 +2195,16 @@ void applyDumpWindowHeadspaceRecalc(float headspaceBeforeL, float pressureBefore
   recomputeHeadspaceCO2MolsFromCurrentState();
 
   const float impliedHeadspaceDeltaL = CountersData.headSpaceVolume - headspaceBeforeL;
-  Serial.printf("[DUMP] Headspace recalculated: H_before=%.3f L, P1=%.3f bar, P2=%.3f bar, H_after=%.3f L, dH=%.3f L, Beer=%.3f L\n",
+  Serial.printf("[DUMP] Headspace recalculated: H_before=%.3f L, P1=%.3f bar, P2=%.3f bar (iso %.3f), H_after=%.3f L, dH=%.3f L, Beer=%.3f L\n",
                 headspaceBeforeL,
                 pressureBeforeBar,
                 pressureAfterBar,
+                result.pressureAfterIsoBar,
                 CountersData.headSpaceVolume,
                 impliedHeadspaceDeltaL,
                 beerVolume);
-  Serial.printf("[DAILY-HS] dump start=%lu ms end=%lu ms, rebase dH=%.3f L\n",
-                startMillis, endMillis, lastDumpLog.deltaH);
+  Serial.printf("[DAILY-HS] dump rebase dH=%.3f L\n", result.deltaH);
+  return result;
 }
 
 static void markSolenoidToggle() {

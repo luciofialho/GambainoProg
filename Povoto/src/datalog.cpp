@@ -119,7 +119,7 @@ void formatLocalEpochISO(uint32_t epoch, char *out, size_t outSize) {
            year, month, dayOfMonth, hours, minutes, seconds);
 }
 
-static const char *taskWindowTypeToText(byte type) {
+const char *taskWindowTypeToText(byte type) {
   switch (type) {
     case 1: return "Dump";
     case 2: return "Gas";
@@ -279,24 +279,15 @@ void doDataLog() {
     GLogAddData("DissolvedCO2CalculationPressure");
     GLogAddData("DissolvedCO2MolsAtEquilibrium");
     GLogAddData("DissolvedCO2CriteriaState");
-    GLogAddData("CO2WithReliefsState");
-    GLogAddData("CO2WithReliefsElapsedMillis");
-    GLogAddData("CO2WithoutReliefsState");
-    GLogAddData("Pressure10MinAgo");
     GLogAddData("OperatingMode");
     GLogAddData("AtmosphericPressure");
     GLogAddData("EnvironmentTemperature");
-    // [DAILY-HS] 24-hour headspace average and the last dump (dump columns
-    // are filled only in the first row after a dump).
+    // [DAILY-HS] 24-hour headspace average. The tasks (dump included) have
+    // their own log, Task.
     GLogAddData("HeadSpaceEMA");
     GLogAddData("HeadSpaceDaily");
     GLogAddData("DailyHours");
     GLogAddData("DailyState");
-    GLogAddData("DumpP1");
-    GLogAddData("DumpP2");
-    GLogAddData("DumpStartMillis");
-    GLogAddData("DumpEndMillis");
-    GLogAddData("DumpDeltaH");
     GLogAddData("gCO2Source"); // "calculated", "held" (after a reboot) or "transition"
     GLogAddData("GasCO2Rate"); // gas-phase g/L/d of the dissolved-CO2 state (empty = no decision)
 
@@ -339,10 +330,6 @@ void doDataLog() {
     GLogAddData(co2.calculationPressure, 6);
     GLogAddData(co2.equilibriumMols, 6);
     GLogAddData(co2.criteriaState);
-    GLogAddData(co2.withReliefsState);
-    GLogAddData(co2.withReliefsElapsedMillis);
-    GLogAddData(co2.withoutReliefsState);
-    GLogAddData(co2.previousPressure, 6);
     GLogAddData((int)SetPointData.mode);
     GLogAddData(Patm, 6);
     GLogAddData(isValidTemp(environmentTemp) ? environmentTemp : NAN, 2);
@@ -352,16 +339,6 @@ void doDataLog() {
     GLogAddData(dailyHs.daily, 3);
     GLogAddData((int)dailyHs.hours);
     GLogAddData(dailyHs.state);
-    DumpLogData dump;
-    if (takeDumpLogData(dump)) {
-      GLogAddData(dump.pressureBeforeBar, 6);
-      GLogAddData(dump.pressureAfterBar, 6);
-      GLogAddData(dump.startMillis);
-      GLogAddData(dump.endMillis);
-      GLogAddData(dump.deltaH, 3);
-    } else {
-      for (int i = 0; i < 5; i++) GLogAddData("");
-    }
     GLogAddData(getCO2EvolutionSource());
     GLogAddData(co2.gasRate, 3);
     GLogSend();
@@ -591,5 +568,80 @@ void doRecoveryDataLog(unsigned long reliefNumber, float p1, float p1Extrap,
     GLogAddData(ms[i]);
     GLogAddData(pressure[i], 6);
   }
+  GLogSend();
+}
+
+void doTaskDataLog(const TaskLogData &data) {
+  if (!datalogFolderNameInUse[0] || BatchData.batchNumber == 0 || !logLinkReady()) return;
+
+  static bool headerWritten = false;
+  static uint8_t headerAttempts = 0;
+  static int lastBatchNum = -1;
+  const int batchNum = (int)BatchData.batchNumber;
+  if (batchNum != lastBatchNum) { lastBatchNum = batchNum; headerWritten = false; headerAttempts = 0; }
+
+  char batchStr[6];
+  snprintf(batchStr, sizeof(batchStr), "%03d", batchNum);
+
+  if (!headerWritten) {
+    GLogBegin(datalogFolderNameInUse, batchStr, "Task");
+    GLogAddTimeStamp();
+    GLogAddData("FMT");
+    GLogAddData("Task");
+    GLogAddData("Outcome");
+    GLogAddData("Start");
+    GLogAddData("End");
+    GLogAddData("DurationSeconds");
+    GLogAddData("Temperature");
+    GLogAddData("EnvironmentTemperature");
+    GLogAddData("AtmosphericPressure");
+    GLogAddData("DissolvedCO2Mode");
+    GLogAddData("GasCO2Rate");
+    GLogAddData("PressureStart");
+    GLogAddData("PressureEnd");
+    GLogAddData("PressureEndIso"); // Dump: P2 after the polytropic correction (used for dH)
+    GLogAddData("HeadSpaceBefore");
+    GLogAddData("HeadSpaceAfter");
+    GLogAddData("DeltaH");
+    GLogAddData("BeerVolume");
+    GLogAddData("DumpedVolume");
+    GLogAddData("Pressure+1min");
+    GLogAddData("Pressure+3min");
+    GLogAddData("Pressure+5min");
+    GLogAddData("Pressure+10min");
+    headerWritten = sendLogHeader("Task", headerAttempts);
+  }
+
+  char startText[20];
+  char endText[20];
+  formatLocalEpochISO(data.startEpoch, startText, sizeof(startText));
+  formatLocalEpochISO(data.endEpoch, endText, sizeof(endText));
+
+  // The row follows its header in the same call.
+  GLogBegin(datalogFolderNameInUse, batchStr, "Task");
+  GLogAddTimeStamp();
+  GLogAddData(FMTData.PovotoNum);
+  GLogAddData(data.task);
+  GLogAddData(data.outcome);
+  GLogAddData(startText);
+  GLogAddData(endText);
+  GLogAddData(data.durationSeconds, 0);
+  GLogAddData(data.temperature, 2);
+  GLogAddData(isValidTemp(data.environmentTemperature) ? data.environmentTemperature : NAN, 2);
+  GLogAddData(data.atmosphericPressure, 6);
+  GLogAddData(data.co2Mode);
+  GLogAddData(data.gasRate, 3);
+  GLogAddData(data.pressureStart, 6);
+  GLogAddData(data.pressureEnd, 6);
+  GLogAddData(data.pressureEndIso, 6);
+  GLogAddData(data.headSpaceBefore, 3);
+  GLogAddData(data.headSpaceAfter, 3);
+  GLogAddData(data.deltaH, 3);
+  GLogAddData(data.beerVolume, 3);
+  GLogAddData(data.dumpedVolume, 3);
+  GLogAddData(data.pressureAfter[0], 6);
+  GLogAddData(data.pressureAfter[1], 6);
+  GLogAddData(data.pressureAfter[2], 6);
+  GLogAddData(data.pressureAfter[3], 6);
   GLogSend();
 }

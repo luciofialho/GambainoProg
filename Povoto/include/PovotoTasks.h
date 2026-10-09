@@ -22,6 +22,8 @@ void endDryHoppingTask();
 void endDynamicHoppingTask();
 
 void checkTaskExpiration();
+// Pressure samples after a task; sends its Task log row after the last one.
+void collectTaskLogSamples();
 // Ends the task window without its end-of-task processing (Conditioning entry).
 void cancelActiveTask();
 // Tasks are blocked in Conditioning (docs/conditioning.md).

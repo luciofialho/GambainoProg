@@ -1242,8 +1242,7 @@ static void handleTaskTouch(uint16_t x, uint16_t y) {
       taskUIActive = false; mainScreen(); return;
     }
     if (y >= 225 && y <= 280 && x >= 130 && x <= 350) {
-      taskWindowType    = 0;
-      taskWindowEndTime = 0;
+      cancelActiveTask(); // same path as the web Cancel (Task log row included)
       taskUIActive = false; mainScreen(); return;
     }
   }

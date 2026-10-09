@@ -1,4 +1,4 @@
-"""Worst-case sizes of the GLog rows (Cold and Relief): header and data.
+"""Worst-case sizes of the GLog rows (Cold, Relief and Task): header and data.
 
 Field formats follow IOTK_GLog.cpp: strings are quoted, floats use "%.<p>f"
 (non-finite -> ""), integers are plain. The receiver (GambainoCommon) rejects
@@ -23,15 +23,18 @@ STRING_MAX = {
     "pressStableSinceText": 19,
     "co2.mode": 15,                               # "half-life-armed"
     "co2.criteriaState": 12,
-    "co2.withReliefsState": 12,
-    "co2.withoutReliefsState": 12,
     "dailyHs.state": 5,                           # "valid" / "hold" / "ema"
     "getCO2EvolutionSource()": 10,                # "calculated"
     'data.gasFlowModelActive ? "yes" : "no"': 3,
     "data.gasHeadspaceUpdateStatus": 32,          # longest status is 31
     'data.dailyState ? data.dailyState : ""': 5,
+    "data.task": 15,                              # "Dynamic Hopping"
+    "data.outcome": 9,                            # "cancelled"
+    "startText": 19,                              # ISO local time
+    "endText": 19,
+    "data.co2Mode": 15,                           # "half-life-armed"
 }
-UNSIGNED_HINTS = ("Millis", "millis()", "dump.startMillis", "dump.endMillis", "reliefNumber",
+UNSIGNED_HINTS = ("Millis", "millis()", "reliefNumber",
                   "totalReliefCount", "previousReliefNumber", "valveOpened",
                   "polytropicSourceReliefNumber")
 INT_WIDTH = 11          # int / long with sign
@@ -68,7 +71,7 @@ def args_in(block):
 def check(sheet, header_block, data_block):
     header = args_in(header_block)
     # Every "" in these data rows is the alternative branch of a column already
-    # counted (the empty dump-column loop, the else of ResidualFromReliefNumber),
+    # counted (the else of ResidualFromReliefNumber),
     # so the widest branch is kept and "" is dropped.
     data = [a for a in args_in(data_block) if a != '""']
     data_columns = len(data)
@@ -89,7 +92,13 @@ relief = src.index("void doReliefDataLog(")
 relief_header = src[src.index("if (!headerWritten) {", relief):src.index("headerWritten = sendLogHeader(", relief)]
 relief_data = src[src.index("// Send the data row separately", relief):src.index("void doRecoveryDataLog(")]
 
+task = src.index("void doTaskDataLog(")
+task_header = src[src.index("if (!headerWritten) {", task):src.index("headerWritten = sendLogHeader(", task)]
+task_data = src[src.index("// The row follows its header", task):]
+task_data = task_data[:task_data.index("\n}\n")]
+
 ok = check("Cold", cold_header, cold_data)
 ok = check("Relief", relief_header, relief_data) and ok
+ok = check("Task", task_header, task_data) and ok
 print("RESULT:", "PASS" if ok else "FAIL")
 raise SystemExit(0 if ok else 1)

@@ -29,7 +29,7 @@ Pela tela de toque (Batch info → "Begin Conditioning") ou pela página Set Poi
 | Medição do headspace (EMA e média de 24 h), captura de Recovery | idem |
 | Estados do CO2 dissolvido (transições, expiração do armado) | `updateCO2DissolvedStateFromEvents()` retorna |
 | gCO2/L/d informado | 0 |
-| Logs Cold, Relief, Recovery | bloqueados, exceto a linha Cold final |
+| Logs Cold, Relief, Recovery | bloqueados, exceto a linha Cold final (o log Task registra a tarefa cancelada na entrada) |
 | Brewfather | bloqueado, exceto o ponto final (sem `bpm`, porque a taxa é 0) |
 | Regras automáticas | já só rodavam em Fermenting |
 | Tasks | bloqueadas (página Tasks mostra o aviso; o toque no lado esquerdo não abre o menu) |

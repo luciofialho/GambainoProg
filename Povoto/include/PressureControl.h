@@ -13,12 +13,8 @@ void pressureControl();
 struct DissolvedCO2LogData {
   const char *mode;
   const char *criteriaState;
-  const char *withReliefsState;
-  const char *withoutReliefsState;
-  unsigned long withReliefsElapsedMillis;
   float calculationPressure;
   float equilibriumMols;
-  float previousPressure;
   float gasRate; // gas-phase CO2 rate, g/L/d (NAN = no decision)
 };
 DissolvedCO2LogData getDissolvedCO2LogData();
@@ -96,8 +92,13 @@ VolumeKCalibration getVolumeKCalibration();
 bool isVolumeDeterminationActive();
 uint16_t getVolumeDeterminationIteration();
 float getVolumeDeterminationCalculatedSoFar();
-void applyDumpWindowHeadspaceRecalc(float headspaceBeforeL, float pressureBeforeBar, float pressureAfterBar,
-                                    unsigned long startMillis, unsigned long endMillis);
+// Result of a dump recalculation, for the Task log.
+struct DumpRecalcResult {
+  float pressureAfterIsoBar; // P2 after the polytropic correction (NAN = not computed)
+  float deltaH;              // headspace change applied, L (NAN = not applied)
+};
+DumpRecalcResult applyDumpWindowHeadspaceRecalc(float headspaceBeforeL, float pressureBeforeBar,
+                                                float pressureAfterBar);
 
 // [DAILY-HS] 24-hour headspace average (docs/spec_headspace_24h.md).
 struct DailyHeadspaceLogData {
@@ -114,16 +115,6 @@ void clearDailyHeadspace(const char *reason);
 // New batch: empties the hours and the cached result; not persisted.
 void resetDailyHeadspaceTracking();
 
-// [DAILY-HS] Last dump, for one Cold log row.
-struct DumpLogData {
-  bool pending;
-  float pressureBeforeBar;  // P1
-  float pressureAfterBar;   // P2
-  unsigned long startMillis;
-  unsigned long endMillis;
-  float deltaH;             // rebase applied (NAN = not applied)
-};
-bool takeDumpLogData(DumpLogData &data);
 void requestDerivedStateRestoreFromCounters();
 void resetHeadspaceFilterTracking();
 void resetCO2MolsProducedPerLiterTracking();
