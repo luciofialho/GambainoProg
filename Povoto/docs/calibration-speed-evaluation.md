@@ -195,7 +195,8 @@ convertido. Conversão ar → CO2 do escoamento e da ventilação: fator
 - P1 e P2 = média das leituras dos últimos 10 s da espera (sobre o filtro atual:
   INA com 16 conversões e mediana de 9 amostras, ~0,3 s).
 - Pressão mínima de início: 1,9 bar para o teste completo de expansão e a
-  ventilação; ≥0,3 bar para o teste curto de k e piso (para medi-lo em pressão baixa).
+  ventilação; ≥0,3 bar para o teste curto de k e piso e para a determinação de
+  volume (para medi-los em pressão baixa).
 - Colunas (os dois CSVs): `data_hora`, `epoch`, `gas`, `FMTVolume`, `Vr`, `Patm`,
   `temp_ferm_P1`, `temp_ferm_P2`, `temp_amb_P1`, `temp_amb_P2`, `tempo_aberto_s`,
   `P1`, `P_fechamento` (~0,5 s após fechar), `P_15s`, `P_30s`, `P_60s`, `P2`,

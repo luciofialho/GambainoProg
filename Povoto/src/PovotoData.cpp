@@ -39,7 +39,8 @@ FMTData_t FMTData = {
   .maximumPressure = 2.3f,
   .nucleationWindow = 5,
   .heater = {true, 0.5f, 2.0f},
-  .coolingCycle = {{30.0f, 15.0f}, {20.0f, 10.0f}, {5.0f, 8.0f}}
+  .coolingCycle = {{30.0f, 15.0f}, {20.0f, 10.0f}, {5.0f, 8.0f}},
+  .dallasAddress = {}
 };
 
 UserConfigurationData_t UserConfigurationData = {120, 6350, 10};
@@ -220,6 +221,14 @@ bool readFMTDataFromEEPROM() {
         !validCycleMinutes(FMTData.heater.offMinutes))
       FMTData.heater = defaultFMTData.heater;
   }
+  // One 8-byte key per Dallas role: roles can be added or retired without
+  // invalidating the others (a missing key or another size = not assigned).
+  if (store.getBytesLength("dallasFerm") == 8)
+    store.getBytes("dallasFerm", FMTData.dallasAddress[DALLAS_ROLE_FERMENTER], 8);
+  if (store.getBytesLength("dallasEnv") == 8)
+    store.getBytes("dallasEnv", FMTData.dallasAddress[DALLAS_ROLE_ENVIRONMENT], 8);
+  if (store.getBytesLength("dallasExpTank") == 8)
+    store.getBytes("dallasExpTank", FMTData.dallasAddress[DALLAS_ROLE_EXPANSION_TANK], 8);
   store.end();
   return true;
 }
@@ -249,6 +258,9 @@ bool writeFMTDataToNIV() {
   saved = (store.putFloat("ventExponent", FMTData.FMTEffectiveVentingExponent) == sizeof(FMTData.FMTEffectiveVentingExponent)) && saved;
   saved = (store.putBytes("cooling", &FMTData.coolingCycle, sizeof(FMTData.coolingCycle)) == sizeof(FMTData.coolingCycle)) && saved;
   saved = (store.putBytes("heater", &FMTData.heater, sizeof(FMTData.heater)) == sizeof(FMTData.heater)) && saved;
+  saved = (store.putBytes("dallasFerm", FMTData.dallasAddress[DALLAS_ROLE_FERMENTER], 8) == 8) && saved;
+  saved = (store.putBytes("dallasEnv", FMTData.dallasAddress[DALLAS_ROLE_ENVIRONMENT], 8) == 8) && saved;
+  saved = (store.putBytes("dallasExpTank", FMTData.dallasAddress[DALLAS_ROLE_EXPANSION_TANK], 8) == 8) && saved;
   saved = (store.putFloat("p0Current", FMTData.pressure0Current) == sizeof(FMTData.pressure0Current)) && saved;
   saved = (store.putFloat("p1Bar", FMTData.pressure1Bar) == sizeof(FMTData.pressure1Bar)) && saved;
   saved = (store.putFloat("p1Current", FMTData.pressure1Current) == sizeof(FMTData.pressure1Current)) && saved;

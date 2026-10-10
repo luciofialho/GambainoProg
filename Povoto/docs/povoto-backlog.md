@@ -4,7 +4,7 @@ Status: [ ] a fazer · [~] em andamento · [x] feito. Prioridade: P1 alta · P2 
 Contexto técnico: `analise-160-headspace-vs-Tenv.md` (rev. 9).
 
 ## 1. Agora, remoto, durante a fermentação em curso
-- [x] P1 Patch de diagnóstico (log Recovery + headspace "sombra"): em produção desde 28/09 ~20:00; funcionando.
+- [x] P1 Patch de diagnóstico (log Recovery + headspace "sombra"): em produção de 28/09 a 10/2026; removido (a temperatura de referência do tanque de expansão, docs/expansion-tank-k.md, explica a dependência do headspace com a temperatura ambiente; o expoente politrópico estimado continua no log Relief).
 - [x] P1 Recepção da T ambiente vinda do BrewCore. Em 29/09 variou 20,5–28,3 °C, sem travar.
 - [x] P2 Timestamp do log em UTC após reboot: correção aplicada em 2026-09-29; falta compilar e gravar.
 - [~] P1 **Headspace por média móvel de 24 h, já aplicada** (versão única para produção): spec `docs/spec_headspace_24h.md` (v2) e prompt `docs/prompt_headspace_24h.md`, na pasta do firmware (Prog/Povoto/docs). Média das médias horárias, válida com ≥18 h; estados valid/hold/ema; EMA atual como fallback; rebase no Dump (ΔH da lei de Boyle), limpeza em Liquid/Dry Hopping/Dynamic Hopping; blob "dailyHs" em pvt_counters; colunas novas no fim dos logs Relief e Cold. Implementação pelo Claude Code no VS Code. No lote 160, só passa a valer ~18 h depois da gravação.

@@ -290,6 +290,7 @@ void doDataLog() {
     GLogAddData("DailyState");
     GLogAddData("gCO2Source"); // "calculated", "held" (after a reboot) or "transition"
     GLogAddData("GasCO2Rate"); // gas-phase g/L/d of the dissolved-CO2 state (empty = no decision)
+    GLogAddData("ExpansionTankTemperature"); // own Dallas, else the environment
 
     headerWritten = sendLogHeader("Cold", headerAttempts);
   }
@@ -341,6 +342,7 @@ void doDataLog() {
     GLogAddData(dailyHs.state);
     GLogAddData(getCO2EvolutionSource());
     GLogAddData(co2.gasRate, 3);
+    GLogAddData(isValidTemp(expansionTankTemp) ? expansionTankTemp : NAN, 2);
     GLogSend();
     if (SetPointData.mode == MODE_CONDITIONING) conditioningFinalColdPending = false;
   }
@@ -445,6 +447,7 @@ void doReliefDataLog(const ReliefLogData &data) {
     GLogAddData("HeadSpaceDaily");
     GLogAddData("DailyHours");
     GLogAddData("DailyState");
+    GLogAddData("ExpansionTankTemperature");
     headerWritten = sendLogHeader("Relief", headerAttempts);
   }
 
@@ -511,65 +514,10 @@ void doReliefDataLog(const ReliefLogData &data) {
   GLogAddData(data.headSpaceDaily, 3);
   GLogAddData((int)data.dailyHours);
   GLogAddData(data.dailyState ? data.dailyState : "");
+  GLogAddData(isValidTemp(data.expansionTankTemperature) ? data.expansionTankTemperature : NAN, 2);
   GLogSend();
 }
 
-// ===== [DIAG] log da recuperação pós-relief + headspace sombra =====
-void doRecoveryDataLog(unsigned long reliefNumber, float p1, float p1Extrap,
-                       float envTemp, float beerTemp, float openSeconds,
-                       float shadowExponent, float shadowHsInstant, float shadowHsFiltered,
-                       uint8_t points, const unsigned long *ms, const float *pressure) {
-  if (!datalogFolderNameInUse[0] || BatchData.batchNumber == 0 ||
-      SetPointData.mode == MODE_CONDITIONING || !logLinkReady()) return;
-
-  static bool headerWritten = false;
-  static uint8_t headerAttempts = 0;
-  static int lastBatchNum = -1;
-  const int batchNum = (int)BatchData.batchNumber;
-  if (batchNum != lastBatchNum) { lastBatchNum = batchNum; headerWritten = false; headerAttempts = 0; }
-
-  char batchStr[6];
-  snprintf(batchStr, sizeof(batchStr), "%03d", batchNum);
-
-  if (!headerWritten) {
-    GLogBegin(datalogFolderNameInUse, batchStr, "Recovery");
-    GLogAddTimeStamp();
-    GLogAddData("FMT");
-    GLogAddData("ReliefNumber");
-    GLogAddData("PressureOnRelief");
-    GLogAddData("PressureOnReliefExtrapolated");
-    GLogAddData("EnvironmentTemperature");
-    GLogAddData("Temperature");
-    GLogAddData("OpenSeconds");
-    GLogAddData("ShadowExponent");
-    GLogAddData("ShadowHeadspaceInstant");
-    GLogAddData("ShadowHeadspaceFiltered");
-    char name[16];
-    for (uint8_t i = 0; i < points; ++i) {
-      snprintf(name, sizeof(name), "t%u_ms", (unsigned)i);  GLogAddData(name);
-      snprintf(name, sizeof(name), "p%u", (unsigned)i);     GLogAddData(name);
-    }
-    headerWritten = sendLogHeader("Recovery", headerAttempts);
-  }
-
-  GLogBegin(datalogFolderNameInUse, batchStr, "Recovery");
-  GLogAddTimeStamp();
-  GLogAddData(FMTData.PovotoNum);
-  GLogAddData(reliefNumber);
-  GLogAddData(p1, 6);
-  GLogAddData(p1Extrap, 6);
-  GLogAddData(isValidTemp(envTemp) ? envTemp : NAN, 2);
-  GLogAddData(beerTemp, 2);
-  GLogAddData(openSeconds, 3);
-  GLogAddData(shadowExponent, 4);
-  GLogAddData(shadowHsInstant, 3);
-  GLogAddData(shadowHsFiltered, 3);
-  for (uint8_t i = 0; i < points; ++i) {
-    GLogAddData(ms[i]);
-    GLogAddData(pressure[i], 6);
-  }
-  GLogSend();
-}
 
 void doTaskDataLog(const TaskLogData &data) {
   if (!datalogFolderNameInUse[0] || BatchData.batchNumber == 0 || !logLinkReady()) return;

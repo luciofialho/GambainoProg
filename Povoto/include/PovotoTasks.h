@@ -28,5 +28,7 @@ void collectTaskLogSamples();
 void cancelActiveTask();
 // Tasks are blocked in Conditioning (docs/conditioning.md).
 bool tasksAllowed();
+// A task between its start and its end (the rest window after it does not count).
+bool isTaskRunning();
 
 #endif // POVOTOTASKS_H

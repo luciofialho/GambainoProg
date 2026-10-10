@@ -76,7 +76,7 @@ Acrescentar **no fim** das colunas (sem mudar a ordem das existentes):
 - **Relief:** `HeadSpaceMeasured` (instantâneo do relief, NaN se inválido), `HeadSpaceEMA` (headspaceFiltered depois da atualização), `HeadSpaceDaily` (dailyValue, NaN se sem horas), `DailyHours`, `DailyState` (valid/hold/ema). `HeadSpaceVolume` continua sendo o valor aplicado. Adicionar os campos a `ReliefLogData` (datalog.h) e preencher em `processPressure(true)`.
 - **Cold:** `HeadSpaceEMA`, `HeadSpaceDaily`, `DailyHours`, `DailyState`.
 - **Dump:** incluir no `Serial.printf` existente e numa linha do log Relief ou Cold: P1, P2, `millis()` do início e do fim do dump e ΔH aplicado. (2026-10-09: movido para o log Task, uma linha por tarefa, com o P2 corrigido pelo expoente politrópico e a pressão em +1/+3/+5/+10 min; as colunas de dump saíram do Cold.)
-- Manter o log Recovery [DIAG] e o headspace sombra.
+- (Histórico) O log Recovery [DIAG] e o headspace sombra foram removidos em 10/2026.
 
 ## 8. Critérios de aceite
 - Compila sem warnings novos. `python tests/check_storage_schema.py` passa, ou falha só no problema já conhecido (ventResidual*, se ainda existir).

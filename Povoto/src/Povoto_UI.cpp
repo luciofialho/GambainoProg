@@ -166,8 +166,10 @@ void screenBackground() {
 }
 
 
+static const ErrorScreenText *errorScreen = nullptr; // see showErrorScreen()
+
 void screenData() {
-  if (isGraphScreenActive()) return;
+  if (isGraphScreenActive() || errorScreen) return;
   if (DisplayMode != 0)
     return;
   if (povotoWiFiConfigurationActive())
@@ -312,7 +314,32 @@ void screenData() {
   drawCalibrationStatus();
 }
 
+// Alarm error screen (PovotoAlarms.cpp): full screen while it lasts. Every
+// redraw of the main screen comes back to it; the keyboard, task and batch
+// screens keep working on top of it (errorScreen is declared above screenData()).
+static void drawErrorScreen() {
+  tft.fillScreen(TFT_RED);
+  tft.setTextColor(TFT_WHITE, TFT_RED);
+  textOut(CENTER, &Swiss_911_Extra_Compressed_Regular72pt7b, 240, 60, "%s", errorScreen->big1);
+  textOut(CENTER, &Swiss_911_Extra_Compressed_Regular72pt7b, 240, 168, "%s", errorScreen->big2);
+  textOut(CENTER, &Swiss_911_Extra_Compressed_Regular18pt7b, 240, 245, "%s", errorScreen->line1);
+  textOut(CENTER, &Swiss_911_Extra_Compressed_Regular18pt7b, 240, 275, "%s", errorScreen->line2);
+  textOut(CENTER, &Swiss_911_Extra_Compressed_Regular12pt7b, 240, 304, "%s", errorScreen->line3);
+}
+
+void showErrorScreen(const ErrorScreenText *text) {
+  if (text == errorScreen) return;
+  errorScreen = text;
+  if (text && isGraphScreenActive()) closeGraphScreen(); // its redraw shows the error
+  else mainScreen();
+}
+
 void mainScreen() {
+  if (errorScreen) {
+    if (!isTempKeyboardActive() && !isTaskUIActive() && !isBatchInfoActive())
+      drawErrorScreen();
+    return;
+  }
   if (isGraphScreenActive()) {
     redrawGraphScreen();
     return;

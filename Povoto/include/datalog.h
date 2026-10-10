@@ -20,6 +20,7 @@ struct ReliefLogData {
   float targetPressure;
   float atmosphericPressure;
   float environmentTemperature;
+  float expansionTankTemperature; // own Dallas, else the environment (docs/thermometers.md)
   float tankReferenceTemperature; // expansion tank Tref, C (docs/expansion-tank-k.md)
   float reliefVolume;
   float effectiveVentingExponent;

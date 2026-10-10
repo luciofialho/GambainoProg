@@ -5,6 +5,7 @@
 
 #include "PovotoData.h"
 #include "GasFlowModel.h"
+#include "DallasSensors.h"
 
 static void appendNumber(String &json, const char *name, double value,
                          uint8_t decimals, bool isLast = false) {
@@ -20,6 +21,20 @@ static void appendBool(String &json, const char *name, bool value) {
   json += "  \"";
   json += name;
   json += value ? "\": true,\n" : "\": false,\n";
+}
+
+// Dallas role addresses: XX-XX-XX-XX-XX-XX-XX-XX, "" = not assigned.
+static const char *const DALLAS_BACKUP_KEYS[DALLAS_ROLE_COUNT] = {
+  "dallasFermenter", "dallasEnvironment", "dallasExpansionTank"};
+
+static void appendDallasAddress(String &json, const char *name, const uint8_t *address) {
+  char text[DALLAS_ADDRESS_TEXT_SIZE];
+  formatDallasAddress(address, text, sizeof(text));
+  json += "  \"";
+  json += name;
+  json += "\": \"";
+  json += text;
+  json += "\",\n";
 }
 
 String savePovotoSettingsBackup() {
@@ -59,6 +74,8 @@ String savePovotoSettingsBackup() {
     snprintf(key, sizeof(key), "coolingOff%u", i);
     appendNumber(json, key, FMTData.coolingCycle[i].offMinutes, 6);
   }
+  for (uint8_t role = 0; role < DALLAS_ROLE_COUNT; ++role)
+    appendDallasAddress(json, DALLAS_BACKUP_KEYS[role], FMTData.dallasAddress[role]);
   appendNumber(json, "screensaverTime", UserConfigurationData.screensaverTime, 0);
   appendNumber(json, "keypadPin", UserConfigurationData.keypadPin, 0);
   appendNumber(json, "displayBrightness", UserConfigurationData.displayBrightness, 0, true);
@@ -97,6 +114,23 @@ static bool readInt(const char *json, const char *name, int &value) {
       parsed > 2147483647.0 || floor(parsed) != parsed) return false;
   value = static_cast<int>(parsed);
   return true;
+}
+
+static bool readDallasAddress(const char *json, const char *name, uint8_t *address) {
+  char key[64];
+  snprintf(key, sizeof(key), "\"%s\"", name);
+  const char *field = strstr(json, key);
+  if (!field) return false;
+  const char *colon = strchr(field + strlen(key), ':');
+  if (!colon) return false;
+  const char *open = strchr(colon, '"');
+  if (!open) return false;
+  const char *close = strchr(open + 1, '"');
+  if (!close || close - open - 1 >= (int)DALLAS_ADDRESS_TEXT_SIZE) return false;
+  char text[DALLAS_ADDRESS_TEXT_SIZE];
+  memcpy(text, open + 1, close - open - 1);
+  text[close - open - 1] = '\0';
+  return parseDallasAddress(text, address);
 }
 
 static bool readBool(const char *json, const char *name, bool &value) {
@@ -216,6 +250,12 @@ bool loadPovotoSettingsBackup(const String &settings) {
     snprintf(key, sizeof(key), "coolingOff%u", i);
     READ_BACKUP_FLOAT(key, loadedFmt.coolingCycle[i].offMinutes);
   }
+  // Optional: older backups keep the current assignments.
+  for (uint8_t role = 0; role < DALLAS_ROLE_COUNT; ++role) {
+    if (!hasKey(json, DALLAS_BACKUP_KEYS[role])) continue;
+    if (!readDallasAddress(json, DALLAS_BACKUP_KEYS[role], loadedFmt.dallasAddress[role])) return false;
+  }
+  if (!dallasRolesDistinct(loadedFmt.dallasAddress)) return false;
 
 #undef READ_BACKUP_FLOAT
 #undef READ_BACKUP_INT
@@ -225,5 +265,6 @@ bool loadPovotoSettingsBackup(const String &settings) {
   FMTData = loadedFmt;
   UserConfigurationData = loadedUser;
   updatePatmFromFMTAltitude();
+  applyDallasRoles();
   return writeFMTDataToNIV() && writeUserConfigurationDataToNIV();
 }

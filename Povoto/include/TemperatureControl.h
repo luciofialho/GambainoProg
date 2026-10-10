@@ -5,6 +5,10 @@ extern bool interruptedHeating;
 
 void temperatureControl();
 void setEnvironmentTemperatureFromPacket(const char *payload);
+const char *environmentTempSource();   // "Dallas" or "SideKick"
+const char *expansionTankTempSource(); // "Dallas" or "environment"
+bool fermenterThermometerAlarmActive(); // target set, no fermenter thermometer (docs/thermometers.md)
+String describeFermenterThermometer();  // several lines, for the alarm e-mail
 void resetChillHeatCycle();
 char *getTemperatureModeLabel();
 char *getTemperatureControlStatus(char *st);

@@ -21,6 +21,10 @@ bool tasksAllowed() {
   return SetPointData.mode != MODE_CONDITIONING;
 }
 
+bool isTaskRunning() {
+  return taskWindowType != 0 && !taskRestWindowActive;
+}
+
 // ===== Task log (one row per task, datalog.h) =====
 // Opened at the start, closed at the end (finished, timeout or cancelled) and
 // sent after the pressure samples that follow it; a new task sends it earlier,

@@ -18,6 +18,7 @@ void handleFMTDataPage(AsyncWebServerRequest *request);
 void handleFMTDataUpdate(AsyncWebServerRequest *request);
 void handleFMTDataSave(AsyncWebServerRequest *request);
 void handleFMTDataLoad(AsyncWebServerRequest *request);
+void handleDallasScan(AsyncWebServerRequest *request);
 
 void handleCalibrationDataPage(AsyncWebServerRequest *request);
 void handleCalibrationCurrentRefresh(AsyncWebServerRequest *request);

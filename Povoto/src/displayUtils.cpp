@@ -9,6 +9,7 @@
 #include "PressureControl.h"
 #include "PovotoTasks.h"
 #include "TemperatureControl.h"
+#include "PovotoAlarms.h"
 #include "PovotoWifi.h"
 #include "Swiss_911_Extra_Compressed_Regular10pt7b.h"
 #include "Swiss_911_Extra_Compressed_Regular12pt7b.h"
@@ -1338,7 +1339,8 @@ void processTouch() {
   uint16_t x, y;
   uint16_t raw_x, raw_y;
 
-  if (isVolumeDeterminationActive() || isSpeedCalibrationActive()) {
+  // Tests and an active alarm keep the screen awake.
+  if (isVolumeDeterminationActive() || isSpeedCalibrationActive() || activePovotoAlarm() != ALARM_NONE) {
     lastClick = millis();
     if (screenSaverActive) {
       forceScreenSaver(false);

@@ -8,27 +8,48 @@
 #include <IOTK_NTP.h>
 #include "GambainoCommon.h"
 #include "PressureControl.h"
+#include "DallasSensors.h"
 
 
 
 // sensor readigs
-float dallasTemperature = 0;
+float dallasTemperature = NOTaTEMP; // invalid until the first reading (never 0 C)
+// Environment: its own Dallas when assigned, else the SideKick's. Expansion
+// tank: its own Dallas when assigned, else the environment (docs/thermometers.md).
 float environmentTemp = NOTaTEMP;
+float expansionTankTemp = NOTaTEMP;
 static constexpr unsigned long ENVIRONMENT_TEMP_TIMEOUT_MS = 10UL * 60UL * 1000UL;
+static float sidekickEnvironmentTemp = NOTaTEMP;
 static unsigned long lastEnvironmentTempReceivedMillis = 0;
 static bool environmentTempReceived = false;
 bool  debugTemperatureOverride = false;  // when true, ControlData.temperature is not overwritten by Dallas
 
+static void updateEnvironmentTemperatures() {
+  environmentTemp = dallasRoleAssigned(DALLAS_ROLE_ENVIRONMENT)
+      ? dallasRoleTemperature(DALLAS_ROLE_ENVIRONMENT) : sidekickEnvironmentTemp;
+  expansionTankTemp = dallasRoleAssigned(DALLAS_ROLE_EXPANSION_TANK)
+      ? dallasRoleTemperature(DALLAS_ROLE_EXPANSION_TANK) : environmentTemp;
+}
+
+const char *environmentTempSource() {
+  return dallasRoleAssigned(DALLAS_ROLE_ENVIRONMENT) ? "Dallas" : "SideKick";
+}
+
+const char *expansionTankTempSource() {
+  return dallasRoleAssigned(DALLAS_ROLE_EXPANSION_TANK) ? "Dallas" : "environment";
+}
+
+// ESP-NOW callback: stored here, applied by temperatureControl() in the loop.
 void setEnvironmentTemperatureFromPacket(const char *payload) {
   char *end = nullptr;
   const float received = payload ? strtof(payload, &end) : NAN;
   if (!payload || end == payload || *end != '\0' ||
       !isfinite(received) || received == NOTaTEMP || received == 85.0f) {
-    environmentTemp = NOTaTEMP;
+    sidekickEnvironmentTemp = NOTaTEMP;
     environmentTempReceived = false;
     return;
   }
-  environmentTemp = received;
+  sidekickEnvironmentTemp = received;
   lastEnvironmentTempReceivedMillis = millis();
   environmentTempReceived = true;
 }
@@ -200,6 +221,47 @@ long int fermenterOnOffCycle(float temperature, byte targetMode) {
     return targetMode == FMTCHILL ? 0 : 24*60*60*1000L;
 }
 
+// Fermenting or conditioning with a temperature target and no fermenter
+// thermometer (not assigned, or no valid reading for 60 s): the control is
+// idle. Signalled by PovotoAlarms.cpp (docs/alarms.md). In debug mode it
+// follows the considered temperature: 85 or -127 (debug page) trigger it.
+static bool thermometerAlarmActive = false;
+
+bool fermenterThermometerAlarmActive() {
+  return thermometerAlarmActive;
+}
+
+// Alarm e-mail (PovotoAlarms.cpp).
+String describeFermenterThermometer() {
+  char id[DALLAS_ADDRESS_TEXT_SIZE];
+  formatDallasAddress(FMTData.dallasAddress[DALLAS_ROLE_FERMENTER], id, sizeof(id));
+  char text[256];
+  snprintf(text, sizeof(text),
+           "Fermenter thermometer: %s%s\nDallas reading: %.2f C\nConsidered temperature: %.2f C (target %.2f C)\n"
+           "Temperature control: idle while the thermometer is missing\n",
+           id[0] ? id : "NOT ASSIGNED",
+           id[0] && !dallasOnBus(FMTData.dallasAddress[DALLAS_ROLE_FERMENTER]) ? " (not found in last scan)" : "",
+           dallasTemperature, ControlData.temperature, SetPointData.setPointTemp);
+  return String(text);
+}
+
+static void fermenterThermometerAlarm() {
+  static constexpr unsigned long INVALID_TOLERANCE_MS = 60000UL;
+  static unsigned long invalidSince = 0; // 0 = valid reading
+  const unsigned long now = millis();
+  // Debug mode: only the considered temperature counts (the debug page value
+  // or the fake 18 C), so the alarm is tested by setting 85 or -127 there.
+  const float t = debugging ? ControlData.temperature : dallasTemperature;
+  const bool valid = isfinite(t) && t != NOTaTEMP && t != 85;
+  if (valid) invalidSince = 0;
+  else if (invalidSince == 0) invalidSince = now | 1;
+  const bool missing = (!debugging && !dallasRoleAssigned(DALLAS_ROLE_FERMENTER)) ||
+      (invalidSince != 0 && now - invalidSince >= INVALID_TOLERANCE_MS);
+  const bool controlling = (SetPointData.mode == MODE_FERMENTING || SetPointData.mode == MODE_CONDITIONING) &&
+      SetPointData.setPointTemp != NOTaTEMP;
+  thermometerAlarmActive = controlling && missing;
+}
+
 void temperatureControl() {
   static unsigned long int lastRun = 0;
   if (!(MILLISDIFF(lastRun,100))) 
@@ -208,9 +270,11 @@ void temperatureControl() {
 
   if (environmentTempReceived &&
       (unsigned long)(lastRun - lastEnvironmentTempReceivedMillis) >= ENVIRONMENT_TEMP_TIMEOUT_MS) {
-    environmentTemp = NOTaTEMP;
+    sidekickEnvironmentTemp = NOTaTEMP;
     environmentTempReceived = false;
   }
+  dallasSensorsProcess();
+  updateEnvironmentTemperatures();
 
   
   byte newMode = FMTIDLE;  
@@ -236,10 +300,12 @@ void temperatureControl() {
     lastNoTemp = 0;
   }
 
-  if (SetPointData.setPointTemp == 85) 
+  if (SetPointData.setPointTemp == 85)
     SetPointData.setPointTemp = NOTaTEMP;
-  if (SetPointData.setPointSlowTemp == 85) 
+  if (SetPointData.setPointSlowTemp == 85)
     SetPointData.setPointSlowTemp = NOTaTEMP;
+
+  fermenterThermometerAlarm();
 
   static float lastSlowTarget = NOTaTEMP;
   if (SetPointData.setPointSlowTemp != lastSlowTarget) {
@@ -491,11 +557,12 @@ char *getTemperatureControlStatus(char *st) {
       : "non-parasitic";
 
   char buf[2048];  
-    sprintf(buf, "<br>-------TEMPERATURE CONTROL<br>Dallas sensor: %s<br>Dallas power mode: %s<br>Temperature: %.2f C<br>Environment Temp: %.2f C<br>Target temp: %.2f C<br>Mode: %s<br>Chill: %s<br>Interrupted cooling: %s<br>Heat: %s<br>Interrupted heating: %s<br>Total chill time: %ld s<br>Total heat time: %ld s<br>",
+    sprintf(buf, "<br>-------TEMPERATURE CONTROL<br>Dallas sensor: %s<br>Dallas power mode: %s<br>Temperature: %.2f C<br>Environment Temp: %.2f C (%s)<br>Expansion tank Temp: %.2f C (%s)<br>Target temp: %.2f C<br>Mode: %s<br>Chill: %s<br>Interrupted cooling: %s<br>Heat: %s<br>Interrupted heating: %s<br>Total chill time: %ld s<br>Total heat time: %ld s<br>",
           (dallasTemperature == NOTaTEMP || dallasTemperature == 85) ? "NOT DETECTED" : "OK",
           dallasPowerMode,
           ControlData.temperature,
-          environmentTemp,
+          environmentTemp, environmentTempSource(),
+          expansionTankTemp, expansionTankTempSource(),
           SetPointData.setPointTemp,
           getTemperatureModeLabel(),
           chillControl ? "ON" : "OFF",
@@ -505,6 +572,42 @@ char *getTemperatureControlStatus(char *st) {
           CountersData.totalChillTime,
           CountersData.totalHeatTime);
   strnncat(st,buf,2048);
+
+  // Each Dallas role, then the sensors of the last scan without a role
+  // (docs/thermometers.md).
+  static const char *const roleNames[DALLAS_ROLE_COUNT] = {"fermenter", "environment", "expansion tank"};
+  static const char *const unassignedNotes[DALLAS_ROLE_COUNT] = {
+    "temperature control idle", "using the SideKick", "using the environment"};
+  char id[DALLAS_ADDRESS_TEXT_SIZE];
+  for (uint8_t r = 0; r < DALLAS_ROLE_COUNT; ++r) {
+    if (!dallasRoleAssigned(r)) {
+      snprintf(buf, sizeof(buf), "Dallas %s: not assigned (%s)<br>", roleNames[r], unassignedNotes[r]);
+    } else {
+      const float t = dallasRoleTemperature(r);
+      const bool valid = isfinite(t) && t != NOTaTEMP && t != 85.0f;
+      formatDallasAddress(FMTData.dallasAddress[r], id, sizeof(id));
+      snprintf(buf, sizeof(buf), "Dallas %s: %s %s %.2f C%s<br>", roleNames[r], id,
+               valid ? "OK" : "NO READING", t,
+               dallasOnBus(FMTData.dallasAddress[r]) ? "" : " (not found in last scan)");
+    }
+    strnncat(st, buf, 2048);
+  }
+  snprintf(buf, sizeof(buf), "Fermenter thermometer alarm: %s<br>",
+           thermometerAlarmActive ? "ACTIVE" : "off");
+  strnncat(st, buf, 2048);
+  DallasScanEntry scan[DALLAS_SCAN_MAX];
+  const uint8_t scanned = getDallasScan(scan, DALLAS_SCAN_MAX);
+  snprintf(buf, sizeof(buf), "Dallas bus: %u sensor(s) in last scan<br>", scanned);
+  strnncat(st, buf, 2048);
+  for (uint8_t i = 0; i < scanned; ++i) {
+    bool hasRole = false;
+    for (uint8_t r = 0; r < DALLAS_ROLE_COUNT; ++r)
+      hasRole = hasRole || memcmp(FMTData.dallasAddress[r], scan[i].address, 8) == 0;
+    if (hasRole) continue;
+    formatDallasAddress(scan[i].address, id, sizeof(id));
+    snprintf(buf, sizeof(buf), "Dallas no role: %s %.2f C (last scan)<br>", id, scan[i].temperature);
+    strnncat(st, buf, 2048);
+  }
 
   snprintf(buf, sizeof(buf),
            "Calculated cycle times at %.2f C: Chiller on: %.2f min; Chiller off: %.2f min; Heater on: %.2f min; Heater off: %.2f min<br>",

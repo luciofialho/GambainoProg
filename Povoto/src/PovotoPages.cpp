@@ -22,6 +22,7 @@
 #include "CloudSync.h"
 #include "GraphHistory.h"
 #include "Povoto_UI.h"
+#include "DallasSensors.h"
 
 // ========== MAIN MENU ==========
 
@@ -615,8 +616,98 @@ void handleDebugParamsUpdate(AsyncWebServerRequest *request) {
 
 // ========== FMT DATA HANDLERS ==========
 
+// Thermometers on the Dallas bus and their roles (docs/thermometers.md). The
+// list is the last scan, made in the main loop (boot or "Rescan bus").
+static const char *const DALLAS_ROLE_FIELDS[DALLAS_ROLE_COUNT] = {
+  "dallasFermenter", "dallasEnvironment", "dallasExpansionTank"};
+static const char *const DALLAS_ROLE_LABELS[DALLAS_ROLE_COUNT] = {
+  "Fermenter", "Environment", "Expansion tank"};
+
+static void dallasTemperatureText(float t, char *out, size_t size) {
+  if (isfinite(t) && t != NOTaTEMP && t != 85.0f) snprintf(out, size, "%.2f &deg;C", t);
+  else snprintf(out, size, "n/a");
+}
+
+static void appendDallasRolesSection(char *html, size_t capacity) {
+  char buffer[320];
+  char id[DALLAS_ADDRESS_TEXT_SIZE];
+  char reading[24];
+  DallasScanEntry scan[DALLAS_SCAN_MAX];
+  const uint8_t count = getDallasScan(scan, DALLAS_SCAN_MAX);
+  auto append = [&](const char *text) { strncat(html, text, capacity - strlen(html) - 1); };
+  auto onBus = [&](const uint8_t *address) {
+    for (uint8_t i = 0; i < count; ++i)
+      if (memcmp(scan[i].address, address, 8) == 0) return true;
+    return false;
+  };
+
+  append("<h2>Thermometers (Dallas)</h2><input type='hidden' name='dallasConfig' value='1'>"
+         "<table style='width:100%'><thead><tr><th>ID</th><th>Reading</th><th>Role</th></tr></thead><tbody>");
+  for (uint8_t i = 0; i < count; ++i) {
+    const char *role = "-";
+    for (uint8_t r = 0; r < DALLAS_ROLE_COUNT; ++r)
+      if (memcmp(FMTData.dallasAddress[r], scan[i].address, 8) == 0) role = DALLAS_ROLE_LABELS[r];
+    formatDallasAddress(scan[i].address, id, sizeof(id));
+    dallasTemperatureText(scan[i].temperature, reading, sizeof(reading));
+    snprintf(buffer, sizeof(buffer), "<tr><td><code>%s</code></td><td>%s</td><td>%s</td></tr>", id, reading, role);
+    append(buffer);
+  }
+  for (uint8_t r = 0; r < DALLAS_ROLE_COUNT; ++r) {
+    if (!dallasRoleAssigned(r) || onBus(FMTData.dallasAddress[r])) continue;
+    formatDallasAddress(FMTData.dallasAddress[r], id, sizeof(id));
+    snprintf(buffer, sizeof(buffer), "<tr><td><code>%s</code></td><td><b>not found</b></td><td>%s</td></tr>",
+             id, DALLAS_ROLE_LABELS[r]);
+    append(buffer);
+  }
+  if (count == 0) append("<tr><td colspan='3'>No thermometer found on the bus.</td></tr>");
+  append("</tbody></table>");
+
+  const char *emptyOption[DALLAS_ROLE_COUNT] = {
+    "Not assigned (no temperature control)",
+    "SideKick (received by ESP-NOW)",
+    "Same as environment"};
+  const float current[DALLAS_ROLE_COUNT] = {dallasTemperature, environmentTemp, expansionTankTemp};
+  const char *source[DALLAS_ROLE_COUNT] = {"Dallas", environmentTempSource(), expansionTankTempSource()};
+  for (uint8_t r = 0; r < DALLAS_ROLE_COUNT; ++r) {
+    dallasTemperatureText(current[r], reading, sizeof(reading));
+    snprintf(buffer, sizeof(buffer),
+             "<div class='form-group'%s><label for='%s'>%s thermometer (now %s, %s):</label><select id='%s' name='%s'>"
+             "<option value=''%s>%s</option>",
+             r == 0 ? " style='margin-top:20px'" : "",
+             DALLAS_ROLE_FIELDS[r], DALLAS_ROLE_LABELS[r], reading, source[r], DALLAS_ROLE_FIELDS[r],
+             DALLAS_ROLE_FIELDS[r], dallasRoleAssigned(r) ? "" : " selected", emptyOption[r]);
+    append(buffer);
+    // The sensors on the bus, plus the assigned one when it is missing, so
+    // saving the page never drops it.
+    for (uint8_t i = 0; i <= count; ++i) {
+      const uint8_t *address = i < count ? scan[i].address : FMTData.dallasAddress[r];
+      if (i == count && (!dallasRoleAssigned(r) || onBus(address))) break;
+      formatDallasAddress(address, id, sizeof(id));
+      if (i < count) dallasTemperatureText(scan[i].temperature, reading, sizeof(reading));
+      else snprintf(reading, sizeof(reading), "not found");
+      snprintf(buffer, sizeof(buffer), "<option value='%s'%s>%s (%s)</option>", id,
+               memcmp(FMTData.dallasAddress[r], address, 8) == 0 ? " selected" : "", id, reading);
+      append(buffer);
+    }
+    append("</select>");
+    if (r == DALLAS_ROLE_FERMENTER && !dallasRoleAssigned(r))
+      append("<small><b>No fermenter thermometer: temperature control is idle.</b></small>");
+    append("</div>");
+  }
+  append("<div style='margin-bottom:28px'><button type='button' class='btn-secondary' "
+         "onclick='window.location=\"/fmtdata/dallasscan\"'>Rescan bus</button></div>");
+}
+
+void handleDallasScan(AsyncWebServerRequest *request) {
+  requestDallasScan();
+  request->send(200, "text/html",
+    "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta http-equiv='refresh' content='3;url=/fmtdata'>"
+    "<style>body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }</style></head>"
+    "<body><h1>Scanning the Dallas bus...</h1><p>Back to Settings in 3 seconds.</p></body></html>");
+}
+
 void handleFMTDataPage(AsyncWebServerRequest *request) {
-  const size_t BUFFER_SIZE = 9000;
+  const size_t BUFFER_SIZE = 14000;
   char* html = (char*)malloc(BUFFER_SIZE);
   if (!html) {
     request->send(500, "text/plain", "Out of memory");
@@ -741,6 +832,8 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
   strncat(html, buffer, BUFFER_SIZE - strlen(html) - 1);
   strncat(html, "</td></tr></tbody></table><script>document.querySelector(\"input[name='enableHeater']\").onchange=function(){document.querySelectorAll('.heater-time').forEach(function(e){e.hidden=!this.checked;e.querySelector('input').disabled=!this.checked;},this);};document.querySelector(\"input[name='enableHeater']\").dispatchEvent(new Event('change'));</script>", BUFFER_SIZE - strlen(html) - 1);
 
+  appendDallasRolesSection(html, BUFFER_SIZE);
+
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='form-group'>"
                "<label for='FMTAltitude'>Altitude (m):</label>", remaining);
@@ -816,6 +909,23 @@ void handleFMTDataUpdate(AsyncWebServerRequest *request) {
     request->send(400, "text/plain", "Heater times must be between 0.01 and 1440 minutes.");
     return;
   }
+  const bool dallasConfig = request->hasParam("dallasConfig", true);
+  uint8_t dallasAddress[DALLAS_ROLE_COUNT][8];
+  memcpy(dallasAddress, FMTData.dallasAddress, sizeof(dallasAddress));
+  if (dallasConfig) {
+    for (uint8_t r = 0; r < DALLAS_ROLE_COUNT; ++r) {
+      const String text = request->hasParam(DALLAS_ROLE_FIELDS[r], true)
+          ? request->getParam(DALLAS_ROLE_FIELDS[r], true)->value() : String();
+      if (!parseDallasAddress(text.c_str(), dallasAddress[r])) {
+        request->send(400, "text/plain", "Invalid thermometer ID.");
+        return;
+      }
+    }
+    if (!dallasRolesDistinct(dallasAddress)) {
+      request->send(400, "text/plain", "The same thermometer cannot have two roles.");
+      return;
+    }
+  }
   if (request->hasParam("heaterConfig", true))
     FMTData.heater.enabled = request->hasParam("enableHeater", true) &&
       request->getParam("enableHeater", true)->value() == "1";
@@ -871,9 +981,11 @@ void handleFMTDataUpdate(AsyncWebServerRequest *request) {
     }
     FMTData.FMTEffectiveVentingExponent = exponent;
   }
+  if (dallasConfig) memcpy(FMTData.dallasAddress, dallasAddress, sizeof(dallasAddress));
   writeFMTDataToNIV();
   updatePatmFromFMTAltitude();
-  
+  if (dallasConfig) applyDallasRoles();
+
   String html = "<!DOCTYPE html><html><head>";
   html += "<meta charset='UTF-8'>";
   html += "<meta http-equiv='refresh' content='2;url=/'>";
@@ -1217,8 +1329,8 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
     kCalibrationHtml = String("<p><strong>k calibrated (") + gasName + "):</strong> " + String(kCalibration.kMedian, 4) +
       " (median of " + String(kCalibration.count) + " reliefs, sd " + String(kCalibration.kSpread, 4) +
       "; cumulative factor " + String(kCalibration.kOverall, 4) + "). Mean temperatures: fermenter " +
-      String(kCalibration.fermenterC, 1) + " &deg;C, ambient " +
-      (isfinite(kCalibration.ambientC) ? String(kCalibration.ambientC, 1) + " &deg;C" : String("n/a")) +
+      String(kCalibration.fermenterC, 1) + " &deg;C, expansion tank " +
+      (isfinite(kCalibration.expansionTankC) ? String(kCalibration.expansionTankC, 1) + " &deg;C" : String("n/a")) +
       ". Only valid with the empty fermenter and the correct FMT volume.</p>"
       "<form action='/calibration/savek' method='POST'><button name='target' value='k'>Save k" + (kCalibration.co2 ? "CO2" : "Air") +
       " = " + String(kCalibration.kMedian, 4) + "</button>";
@@ -1228,7 +1340,7 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
     kCalibrationHtml += "</form>";
   }
   const String actions = String("<div class='container' style='margin-top:20px'><h2>Calibration tests</h2>") +
-    "<p>Requirements: Mode OFF; initial pressure at least 1.9 bar.</p><p>No pressure target.</p>" +
+    "<p>Requirements: Mode OFF; initial pressure at least 1.9 bar (volume determination and k &amp; floor: 0.3 bar).</p><p>No pressure target.</p>" +
     "<hr><h3>FMT volume determination</h3>" +
     "<p>Determines the fermenter total volume from the pressure reduction produced by repeated expansions into the configured relief volume. " +
     "Slow mode keeps the existing three-minute expansion and four-minute settling time. Fast mode uses t(R,P) for each expansion and waits two minutes after closing. " +

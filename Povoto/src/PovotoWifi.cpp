@@ -10,6 +10,7 @@
 #include "GambainoCommon.h"
 #include "PovotoCommon.h"
 #include "displayUtils.h"
+#include "PovotoAlarms.h"
 
 namespace {
 constexpr char WIFI_NAMESPACE[] = "pvt_wifi";
@@ -58,6 +59,12 @@ void syncDebugModeWithStationIp() {
 }
 
 void updateWiFiStatusLed() {
+  static uint32_t previousColor = 0xFFFFFFFFUL;
+  // An active alarm owns the LED (PovotoAlarms.cpp).
+  if (activePovotoAlarm() != ALARM_NONE) {
+    previousColor = 0xFFFFFFFFUL; // rewrite the Wi-Fi color when it ends
+    return;
+  }
   const bool pulseOn = (millis() % 1000UL) < 200UL;
   uint8_t red = 0;
   uint8_t green = 0;
@@ -74,7 +81,6 @@ void updateWiFiStatusLed() {
     red = 255;                             // Configured but disconnected: red.
   }
 
-  static uint32_t previousColor = 0xFFFFFFFFUL;
   const uint32_t color = (uint32_t(red) << 16) | (uint32_t(green) << 8) | blue;
   if (color == previousColor) return;
   previousColor = color;

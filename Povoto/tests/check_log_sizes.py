@@ -90,7 +90,7 @@ cold_data = src[src.index("// The row follows its header", cold):src.index("void
 
 relief = src.index("void doReliefDataLog(")
 relief_header = src[src.index("if (!headerWritten) {", relief):src.index("headerWritten = sendLogHeader(", relief)]
-relief_data = src[src.index("// Send the data row separately", relief):src.index("void doRecoveryDataLog(")]
+relief_data = src[src.index("// Send the data row separately", relief):src.index("void doTaskDataLog(")]
 
 task = src.index("void doTaskDataLog(")
 task_header = src[src.index("if (!headerWritten) {", task):src.index("headerWritten = sendLogHeader(", task)]

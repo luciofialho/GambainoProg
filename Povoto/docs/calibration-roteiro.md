@@ -5,7 +5,7 @@ aquecimento do tanque de expansão (k), o "piso" e a curva de ventilação, e
 descobrir a causa do piso (sensor ou volume). Fundamentos:
 `Povoto/docs/calibration-speed-evaluation.md` e `Povoto/docs/expansion-tank-k.md`.
 
-Tempo total: ~2 h (a maior parte é o equipamento rodando sozinho).
+Tempo total: ~3 h (a maior parte é o equipamento rodando sozinho).
 
 **Não aperte os botões "Save ..." da página Calibration antes de eu analisar os
 dados.** Os resultados ficam na página até reiniciar a placa; o que vale é o CSV.
@@ -18,7 +18,10 @@ dados.** Os resultados ficam na página até reiniciar a placa; o que vale é o 
 3. Confira na página **Calibration**: "Flow factor CO2/air" = **0,79**.
 4. Fermentador **vazio, limpo e seco**, fechado, modo **OFF**, sem tarefa ativa.
 5. Confira se a temperatura ambiente aparece no status (o CSV a registra).
-6. Anote: data, hora de início, temperatura ambiente, se há sol ou vento sobre o
+6. Confira em **Settings** a **altitude** do local (a placa de teste estava com
+   0 m, Patm 1,013 bar). Um erro constante pesa pouco (50 m ≈ 6 hPa → < 0,001
+   ponto de SG), mas a altitude não deve ser mudada no meio de um lote.
+7. Anote: data, hora de início, temperatura ambiente, se há sol ou vento sobre o
    equipamento, e a leitura do seu manômetro no início de cada ensaio.
 
 Em todos os ensaios: pressurize com ar, **espere ~10 min** para a temperatura do
@@ -30,16 +33,30 @@ gás assentar e só então aperte o botão. Não mexa no equipamento durante o e
 |---|---|---|---|---|---|
 | 1 | Expansão | ≥ 1,9 bar (ideal ~2,0) | Gas = Air, **Expansion** | ~40 min | Expansion CSV |
 | 2 | k & piso, pressão alta | ≥ 1,9 bar (repressurize) | Gas = Air, **k & floor** | ~15 min | k & floor CSV |
-| 3 | k & piso, pressão baixa | **~0,5 bar** (alivie até ~0,5 e espere 10 min) | Gas = Air, **k & floor** | ~15 min | k & floor CSV |
-| 4 | Volume rápida | ≥ 1,9 bar (repressurize) | Gas = Air, **Volume determination (fast)** | ~1 h | Pressure history |
+| 3 | k & piso, pressão baixa | **~0,53 bar** (alivie até ~0,53 e espere 10 min) | Gas = Air, **k & floor** | ~15 min | k & floor CSV |
+| 4 | Volume rápida, pressão alta | ≥ 1,9 bar (repressurize) | Gas = Air, **Volume determination (fast)** | ~1 h | Pressure history |
+| 4b | Volume rápida, pressão baixa | **~0,6 bar** (alivie até ~0,6 e espere 10 min) | Gas = Air, **Volume determination (fast)** | ~1 h | Pressure history |
 | 5 | Ventilação (opcional) | ≥ 1,9 bar, **saída da válvula ligada à atmosfera** | Gas = Air, **Venting** | ~10 min | Venting CSV |
 
 Notas:
 
+- Pressões durante os ensaios (fermentador vazio 129,6 L, tanque 2,01 L: cada
+  abertura derruba ~1,5%):
+  - "k & floor" faz 8 aberturas e termina a ~88% da pressão inicial; o resultado
+    mostra a **média** das pressões antes de cada abertura, ~5% abaixo do
+    início. Ensaio 2: de 1,9 bar → média ~1,8 bar. Ensaio 3: de **0,53 bar →
+    média 0,50 bar** (de 0,50 daria média 0,47, o que também serve).
+  - Volume rápida: os reliefs usados no cálculo (6º ao 35º) ficam entre ~92% e
+    ~59% da pressão inicial. Ensaio 4, de 1,9 bar: ~1,75 a ~1,1 bar, **média
+    ~1,4 bar**. Ensaio 4b, de **0,6 bar**: ~0,55 a ~0,35 bar, **média ~0,45
+    bar**. O firmware já aceita começar a partir de 0,3 bar.
+  - O 4b é a confirmação, pelo volume, do que o ensaio 3 mostrar: cada relief cai
+    só ~0,008 bar, então o resultado é mais ruidoso que o do 4.
+
 - O ensaio 3 é o que decide a causa do piso: se ele crescer ~4× em relação ao
   ensaio 2 (de ~1,9 para ~0,5 bar), a causa é o sensor; se ficar igual, é volume.
 - Baixe o CSV de cada ensaio **antes** de começar o próximo do mesmo tipo (o 3
-  substitui o 2 na memória da placa).
+  substitui o 2 e o 4b substitui o 4 na memória da placa).
 - O ensaio 5 só se a montagem com a saída para a atmosfera for prática; a
   ventilação pesa pouco na contabilidade.
 - Depois de cada ensaio, copie (ou fotografe) o bloco de resultados que aparece
@@ -53,6 +70,7 @@ Salve em `A:\Nuvem\Povoto\Calibracoes` com a data na frente:
 - `AAAA-MM-DD_2_kpiso_alta.csv`
 - `AAAA-MM-DD_3_kpiso_baixa.csv`
 - `AAAA-MM-DD_4_volume_rapida.csv`
+- `AAAA-MM-DD_4b_volume_rapida_baixa.csv`
 - `AAAA-MM-DD_5_ventilacao.csv` (se feito)
 - `AAAA-MM-DD_notas.txt`: suas anotações e os blocos de resultado da página.
 
@@ -67,9 +85,11 @@ AAAA-MM-DD"*. Eu leio a memória e a documentação e analiso.
 | Verificação | Critério | Consequência |
 |---|---|---|
 | Piso no ensaio 3 contra o 2 | ∝ 1/P ou constante | sensor → recalibrar o sensor na faixa de trabalho (fase C); constante → rever volumes |
+| k contra a pressão (ensaios 2, 3, 4 e 4b) | k muda com 1/P ou com P | 1/P: erro do sensor → fase C (não usar k(p)); P: volume efetivo do tanque muda com a pressão (térmico ou elasticidade) → k(p) no firmware (k em duas pressões, interpolado por relief). Fermentações a 0,5, 1 e 2 bar. |
 | Ajuste do ensaio 1 | RMSE ≲ 0,02; espera adaptativa terminando antes dos 180 s | aceitar a, b (CO2) e o k do aquecimento |
 | k do aquecimento: ensaio 1 contra ensaio 2 | diferença ≲ 0,01 | gravar kAir (botão) |
 | Volume rápida (ensaio 4) | com o kAir novo e o piso explicado, ~129,6 L | validação cruzada |
+| Volume rápida baixa (4b) contra a alta (4) | mesmo volume (~129,6 L) e mesmo k | k diferente confirma a dependência com a pressão vista nos ensaios 2 e 3 |
 | Pressões aos 15/30/60 s | quanto tempo o fermentador leva para estabilizar | ajustar a espera mínima |
 | Ventilação (ensaio 5) | RMSE da parábola | gravar c, d, e (CO2) |
 

@@ -180,29 +180,6 @@ static float polytropicFitSlopeBarPerMinute = NAN, polytropicEstimatedExponent =
 static float polytropicFitRMSEBar = NAN;
 static float currentOnReliefMeasured = 0.0f;
 
-// ===== [DIAG] recuperação pós-relief + headspace sombra (somente log) =====
-static constexpr float SHADOW_EXPONENT_SLOPE_PER_C = 0.0078f;  // empírico (fermentação 160)
-static constexpr float SHADOW_EXPONENT_HINGE_C     = 21.0f;    // abaixo disso, sem correção
-static float shadowExponent = NAN;
-static float shadowHeadspaceInstant = NAN;
-static float shadowHeadspaceFiltered = NAN;
-
-static const unsigned long RECOVERY_OFFSETS_MS[] = {
-  360, 500, 750, 1000, 1500, 2000, 3000, 5000, 7500,
-  10000, 15000, 20000, 30000, 45000, 60000
-};
-static constexpr uint8_t RECOVERY_POINTS =
-  sizeof(RECOVERY_OFFSETS_MS) / sizeof(RECOVERY_OFFSETS_MS[0]);
-static float recoveryPressure[RECOVERY_POINTS];
-static unsigned long recoveryActualMs[RECOVERY_POINTS];
-static uint8_t recoveryNext = 0;
-static bool recoveryActive = false;
-static unsigned long recoveryCloseMillis = 0;
-static unsigned long recoveryReliefNumber = 0;
-static float recoveryP1 = NAN, recoveryP1Extrap = NAN;
-static float recoveryEnvTemp = NAN, recoveryBeerTemp = NAN;
-static float recoveryOpenSeconds = NAN;
-// ===== [DIAG] fim =====
 
 float  adjustedPressureAfterRelief;
 static float adjustedEquilibriumPressure = NAN;
@@ -300,7 +277,7 @@ struct PressureReliefRecord {
   bool converged;
   bool volumeMetricsValid;
   bool pressureSettled;
-  float environmentTemperature; // NAN when the sensor is not valid
+  float expansionTankTemperature; // NAN when the sensor is not valid
   float tRefK;                  // tank reference temperature (fast mode)
   float kRelief;                // k of this relief that returns FMTVolume (fast mode)
   float kCumulative;            // same from the cumulative factor
@@ -498,7 +475,8 @@ float kelvin(float x) {
 // temperature difference, so the tank is at Tref = Tamb + phi*(Tferm - Tamb).
 // Relative to the fermenter gas counted at Tferm, the tank behaves as an
 // isothermal volume Vr/k * Tferm/Tref. Valve timing and the gas-flow model keep
-// the physical FMTReliefVolume.
+// the physical FMTReliefVolume. Tamb ("ambientC" below) is expansionTankTemp:
+// the tank's own Dallas, else the environment (docs/thermometers.md).
 static constexpr float GAMMA_CO2 = 1.29f;
 static constexpr float GAMMA_AIR = 1.40f;
 
@@ -573,7 +551,7 @@ static float volumeRoutineReliefVolume(float fermenterC, float ambientC) {
 }
 
 static float volumeRoutineReliefVolume() {
-  return volumeRoutineReliefVolume(ControlData.temperature, environmentTemp);
+  return volumeRoutineReliefVolume(ControlData.temperature, expansionTankTemp);
 }
 
 // Pressure ratio after/before a relief extended to full equalization.
@@ -606,7 +584,7 @@ static float volumeRoutineVolume(float factor, float fermenterC, float ambientC)
 }
 
 static float volumeRoutineVolume(float factor) {
-  return volumeRoutineVolume(factor, ControlData.temperature, environmentTemp);
+  return volumeRoutineVolume(factor, ControlData.temperature, expansionTankTemp);
 }
 
 // k of the test gas that makes the fast test return FMTVolume (the empty
@@ -627,7 +605,7 @@ static float kCO2FromBeerVolume(float dropFactor) {
   const float headspace = FMTData.FMTVolume - (BatchData.initialBeerVolume - CountersData.dumpedVolume);
   if (!(headspace > 0.0f)) return NAN;
   return solveExpansionTankK(headspace * (1.0f - dropFactor) / dropFactor, GAMMA_CO2,
-                             ControlData.temperature, environmentTemp);
+                             ControlData.temperature, expansionTankTemp);
 }
 
 static void updateBeerVolumeFromHeadspace() {
@@ -2405,6 +2383,90 @@ void readPressure() {
   }
 }  
 
+// ===== Pressure sensor check (docs/alarms.md) =====
+// Fermenting or conditioning with a pressure target and no valid pressure
+// reading for 10 s: the INA226 does not answer, or the loop current is out of
+// [I(0 bar) - 1.5 mA, I(maximum pressure) + 1.5 mA] (open loop, short, sensor
+// fault). Detection only: the pressure control is not changed. In debug mode
+// only a negative considered pressure (debug page) triggers it.
+static constexpr float PRESSURE_SENSOR_CURRENT_MARGIN_MA = 1.5f;
+static constexpr unsigned long PRESSURE_SENSOR_INVALID_TOLERANCE_MS = 10000UL;
+static constexpr unsigned long INA226_PROBE_INTERVAL_MS = 2000UL;
+static bool ina226Responding = true;
+static bool pressureSensorAlarm = false;
+static bool pressureSensorNoResponse = false;
+static const char *pressureSensorProblemText = "";
+
+// Calibration current at a gauge pressure: straight line through points 0-1,
+// or 1-2 above point 1 when point 2 is calibrated.
+static float currentAtPressure(float bar) {
+  if (FMTData.pressure2Bar > FMTData.pressure1Bar && bar > FMTData.pressure1Bar)
+    return FMTData.pressure1Current + (bar - FMTData.pressure1Bar) *
+        (FMTData.pressure2Current - FMTData.pressure1Current) / (FMTData.pressure2Bar - FMTData.pressure1Bar);
+  if (!(FMTData.pressure1Bar > 0.0f)) return NAN;
+  return FMTData.pressure0Current + bar * (FMTData.pressure1Current - FMTData.pressure0Current) / FMTData.pressure1Bar;
+}
+
+static float pressureSensorCurrentLow() {
+  return FMTData.pressure0Current - PRESSURE_SENSOR_CURRENT_MARGIN_MA;
+}
+
+static float pressureSensorCurrentHigh() {
+  return currentAtPressure(FMTData.maximumPressure) + PRESSURE_SENSOR_CURRENT_MARGIN_MA;
+}
+
+// Main loop only (I2C probe).
+void checkPressureSensor() {
+  static unsigned long lastProbe = 0;
+  static unsigned long invalidSince = 0; // 0 = valid reading
+  const unsigned long now = millis();
+  if (pressureSensorConnected && (lastProbe == 0 || now - lastProbe >= INA226_PROBE_INTERVAL_MS)) {
+    lastProbe = now | 1;
+    ina226Responding = ina226.isConnected();
+  }
+  // Debug mode: only the considered pressure counts (the debug page value or
+  // the simulation), so the alarm is tested by setting a negative pressure.
+  const bool responding = debugging || (pressureSensorConnected && ina226Responding);
+  const float high = pressureSensorCurrentHigh();
+  const bool inRange = debugging
+      ? ControlData.pressure >= 0.0f
+      : responding && isfinite(currentReading) && isfinite(high) &&
+        currentReading >= pressureSensorCurrentLow() && currentReading <= high;
+  if (inRange) invalidSince = 0;
+  else if (invalidSince == 0) invalidSince = now | 1;
+  pressureSensorNoResponse = !responding;
+  pressureSensorProblemText = !responding ? "INA226 not responding"
+      : inRange ? "" : debugging ? "negative pressure (debug)" : "current out of range";
+  const bool controlling = (SetPointData.mode == MODE_FERMENTING || SetPointData.mode == MODE_CONDITIONING) &&
+      SetPointData.setPointPressure != NOTaTEMP;
+  pressureSensorAlarm = controlling && invalidSince != 0 && now - invalidSince >= PRESSURE_SENSOR_INVALID_TOLERANCE_MS;
+}
+
+bool pressureSensorAlarmActive() {
+  return pressureSensorAlarm;
+}
+
+bool pressureSensorNotResponding() {
+  return pressureSensorNoResponse;
+}
+
+const char *pressureSensorProblem() {
+  return pressureSensorProblemText;
+}
+
+// Alarm e-mail (PovotoAlarms.cpp).
+String describePressureSensor() {
+  char text[256];
+  snprintf(text, sizeof(text),
+           "Problem: %s\nINA226: %s\nFiltered current: %.2f mA (valid %.2f to %.2f mA)\n"
+           "Considered pressure: %.3f bar (target %.3f bar, maximum %.2f bar)\n",
+           pressureSensorProblemText[0] ? pressureSensorProblemText : "none",
+           pressureSensorConnected && ina226Responding ? "responding" : "NOT responding",
+           currentReading, pressureSensorCurrentLow(), pressureSensorCurrentHigh(),
+           ControlData.pressure, SetPointData.setPointPressure, FMTData.maximumPressure);
+  return String(text);
+}
+
 static char calibrationDisplayLines[3][80] = {};
 
 static void showVolumeStatus(const char *line1, const char *line2, const char *line3) {
@@ -2544,7 +2606,7 @@ static void finalizeVolumeDeterminationSummary() {
   for (uint16_t i = 0; i < pressureReliefCount && pressureReliefHistory; ++i) {
     const PressureReliefRecord &record = pressureReliefHistory[i];
     if (isfinite(record.temperature)) { fermenterSum += record.temperature; ++fermenterCount; }
-    if (isfinite(record.environmentTemperature)) { ambientSum += record.environmentTemperature; ++ambientCount; }
+    if (isfinite(record.expansionTankTemperature)) { ambientSum += record.expansionTankTemperature; ++ambientCount; }
     if (isfinite(record.kRelief) && kCount < K_VALUES_MAX) kValues[kCount++] = record.kRelief;
   }
   const float meanFermenterC = fermenterCount ? fermenterSum / fermenterCount : ControlData.temperature;
@@ -2553,7 +2615,7 @@ static void finalizeVolumeDeterminationSummary() {
   volumeCalibration = {};
   volumeCalibration.co2 = volumeDeterminationCO2;
   volumeCalibration.fermenterC = meanFermenterC;
-  volumeCalibration.ambientC = meanAmbientC;
+  volumeCalibration.expansionTankC = meanAmbientC;
   volumeCalibration.volume = volumeSummaryFermenterVolume;
   volumeCalibration.kOverall = volumeRoutineCalibratedK(volumeSummaryFactor, meanFermenterC, meanAmbientC);
   volumeCalibration.kMedian = NAN;
@@ -2763,85 +2825,10 @@ static void estimatePreviousReliefPolytropicExponent() {
     polytropicEstimatedExponent = exponent;
 }
 
-// ===== [DIAG] funções (somente log) =====
-// [DIAG] Definida em datalog.cpp (pode ser movida para datalog.h).
-void doRecoveryDataLog(unsigned long reliefNumber, float p1, float p1Extrap,
-                       float envTemp, float beerTemp, float openSeconds,
-                       float shadowExponent, float shadowHsInstant, float shadowHsFiltered,
-                       uint8_t points, const unsigned long *ms, const float *pressure);
-
 static bool ENV_TEMP_VALID(float t) {
   // TODO: trocar por "recebido há menos de X min" quando houver timestamp.
   return isfinite(t) && t > -20.0f && t < 60.0f && t != NOTaTEMP;
 }
-
-static float shadowExponentNow() {
-  float e = FMTData.FMTEffectiveVentingExponent;
-  if (ENV_TEMP_VALID(environmentTemp))
-    e += SHADOW_EXPONENT_SLOPE_PER_C * fmaxf(0.0f, environmentTemp - SHADOW_EXPONENT_HINGE_C);
-  return e;
-}
-
-// Mesmo cálculo de adjustedEquilibriumPressureForPostRelief(), com expoente explícito.
-static float shadowHeadspaceFromRelief(float exponent) {
-  if (!isfinite(exponent) || exponent <= 0.0f ||
-      !isfinite(pressureAfterRelief) || !isfinite(pressureOnReliefMeas) ||
-      !isfinite(pressureOnReliefExtrap) || pressureOnReliefExtrap <= 0.01f ||
-      pressureAfterRelief + Patm <= 0.0f || pressureOnReliefMeas + Patm <= 0.0f) return NAN;
-  const float adj = (pressureOnReliefMeas + Patm) *
-    powf((pressureAfterRelief + Patm) / (pressureOnReliefMeas + Patm), 1.0f / exponent) - Patm;
-  const float residual = FMTData.targetResidualAfterReliefPercent / 100.0f;
-  const float peq = pressureOnReliefMeas - (pressureOnReliefMeas - adj) / (1.0f - residual);
-  const float f = peq / pressureOnReliefExtrap;
-  if (!(f > 0.0f && f < 1.0f)) return NAN;
-  return volumeEstimationFromPressureDrop(f);
-}
-
-static void startRecoveryCapture(unsigned long closeMillis, float openSeconds) {
-  recoveryActive = true;
-  recoveryNext = 0;
-  recoveryCloseMillis = closeMillis;
-  recoveryReliefNumber = CountersData.totalReliefCount + 1;  // incrementado em processPressure(true)
-  recoveryP1 = pressureOnReliefMeas;
-  recoveryP1Extrap = pressureOnReliefExtrap;
-  recoveryEnvTemp = environmentTemp;
-  recoveryBeerTemp = ControlData.temperature;
-  recoveryOpenSeconds = openSeconds;
-  for (uint8_t i = 0; i < RECOVERY_POINTS; ++i) {
-    recoveryPressure[i] = NAN;
-    recoveryActualMs[i] = 0;
-  }
-}
-
-static void finishRecoveryCapture() {
-  if (!recoveryActive) return;
-  recoveryActive = false;
-  doRecoveryDataLog(recoveryReliefNumber, recoveryP1, recoveryP1Extrap,
-                    recoveryEnvTemp, recoveryBeerTemp, recoveryOpenSeconds,
-                    shadowExponent, shadowHeadspaceInstant, shadowHeadspaceFiltered,
-                    RECOVERY_POINTS, recoveryActualMs, recoveryPressure);
-}
-
-// Chamar a cada loop (ver [E]). Um ponto por chamada, com o tempo real registrado.
-static void collectRecoverySample() {
-  if (!recoveryActive) return;
-  if (ControlData.transferValve) {          // novo relief começou antes de 60 s
-    finishRecoveryCapture();
-    return;
-  }
-  if (!pressureAcquisitionValid || inPressureNoiseWindow() ||
-      !isfinite(ControlData.pressure)) return;
-  const long elapsed = (long)(pressureAcquiredMillis - recoveryCloseMillis);
-  if (elapsed < 0) return;
-  if (recoveryNext < RECOVERY_POINTS &&
-      (unsigned long)elapsed >= RECOVERY_OFFSETS_MS[recoveryNext]) {
-    recoveryPressure[recoveryNext] = ControlData.pressure;
-    recoveryActualMs[recoveryNext] = (unsigned long)elapsed;
-    ++recoveryNext;
-  }
-  if (recoveryNext >= RECOVERY_POINTS) finishRecoveryCapture();
-}
-// ===== [DIAG] fim =====
 
 void processPressure(bool afterRelief) {
   // Capture the old volume before a relief can update headspace below.
@@ -2909,17 +2896,6 @@ void processPressure(bool afterRelief) {
     if (isfinite(pressureOnReliefExtrap) && pressureOnReliefExtrap > 0.01f &&
         isfinite(adjustedEquilibriumPressure)) {
       instantPressureDropFactor = adjustedEquilibriumPressure / pressureOnReliefExtrap;
-    }
-
-    // [DIAG] headspace sombra com expoente dependente da T ambiente (somente log)
-    if (!volumeDeterminationActive) {
-      shadowExponent = shadowExponentNow();
-      shadowHeadspaceInstant = shadowHeadspaceFromRelief(shadowExponent);
-      if (isfinite(shadowHeadspaceInstant)) {
-        shadowHeadspaceFiltered = isfinite(shadowHeadspaceFiltered)
-          ? shadowHeadspaceFiltered + 0.05f * (shadowHeadspaceInstant - shadowHeadspaceFiltered)
-          : shadowHeadspaceInstant;
-      }
     }
 
     const bool skipTaskWindow = reliefOpenedDuringTask || taskWindowType != 0;
@@ -3057,20 +3033,20 @@ void processPressure(bool afterRelief) {
           record.factorMedio = powf(record.pfAdjusted / record.pi, 1.0f / (float)record.nReliefs);
 
             record.fermenterVolume = volumeRoutineVolume(record.factorMedio, record.temperature,
-                                                         record.environmentTemperature);
+                                                         record.expansionTankTemperature);
             record.volumeMetricsValid = isfinite(record.fermenterVolume) && record.fermenterVolume > 0.0f;
             volumeCalculatedSoFar = record.fermenterVolume;
             volumeCalculatedSoFarValid = record.volumeMetricsValid;
             record.kCumulative = volumeRoutineCalibratedK(record.factorMedio, record.temperature,
-                                                          record.environmentTemperature);
+                                                          record.expansionTankTemperature);
         }
       }
       if (volumeDeterminationFast) {
         record.tRefK = expansionTankReferenceKelvin(volumeRoutineK(), volumeRoutineGamma(),
-                                                    record.temperature, record.environmentTemperature);
+                                                    record.temperature, record.expansionTankTemperature);
         if (record.pressureBefore > 0.0001f)
           record.kRelief = volumeRoutineCalibratedK(record.pressureAfter / record.pressureBefore,
-                                                    record.temperature, record.environmentTemperature);
+                                                    record.temperature, record.expansionTankTemperature);
       }
 
       volumeFittedSoFar = fitVolumeFromHistory();
@@ -3111,8 +3087,9 @@ void processPressure(bool afterRelief) {
     reliefLog.targetPressure = SetPointData.setPointPressure;
     reliefLog.atmosphericPressure = Patm;
     reliefLog.environmentTemperature = environmentTemp;
+    reliefLog.expansionTankTemperature = expansionTankTemp;
     reliefLog.tankReferenceTemperature = expansionTankReferenceKelvin(
-        FMTData.expansionTankKCO2, GAMMA_CO2, ControlData.temperature, environmentTemp) - 273.15f;
+        FMTData.expansionTankKCO2, GAMMA_CO2, ControlData.temperature, expansionTankTemp) - 273.15f;
     reliefLog.reliefVolume = FMTData.FMTReliefVolume;
     reliefLog.effectiveVentingExponent = FMTData.FMTEffectiveVentingExponent;
     reliefLog.pressureOnReliefMeasured = pressureOnReliefMeas;
@@ -3259,10 +3236,6 @@ bool processReliefCycle() {
         ControlData.transferValve = false;
         const unsigned long transferClosedMillis = millis();
         reliefValveClosedMillis = transferClosedMillis;
-        // [DIAG] inicia a captura da recuperação pós-relief (somente log)
-        if (!volumeDeterminationActive && SetPointData.mode != MODE_CONDITIONING)
-          startRecoveryCapture(transferClosedMillis,
-                               (transferClosedMillis - reliefValveOpenedMillis) / 1000.0f);
         pressureAcquisitionValid = false;
         clearPolytropicSamples();
         // The measured inventory is installed at the post-relief reading, but
@@ -3366,7 +3339,7 @@ void pressureRelief(bool fromVolumeDetermination) {
       record.timestamp[0] = '\0';
       NTPFormatedDateTime(record.timestamp);
       record.temperature = ControlData.temperature;
-      record.environmentTemperature = ENV_TEMP_VALID(environmentTemp) ? environmentTemp : NAN;
+      record.expansionTankTemperature = ENV_TEMP_VALID(expansionTankTemp) ? expansionTankTemp : NAN;
       record.tRefK = NAN;
       record.kRelief = NAN;
       record.kCumulative = NAN;
@@ -3485,7 +3458,7 @@ void handlePressureHistoryCSV(AsyncWebServerRequest *request) {
         size_t len = 0;
 
         if (!pressureHistoryHeaderSent) {
-          const char *header = "data_hora;temperatura;temperatura_ambiente;pressao_antes;pressao_depois;adjustedEquilibriumPressure;corrente_antes_mA;corrente_depois_mA;patm;relief_volume;modo;gas;k;T_ref_K;relief_volume_efetivo;volume_estimado;Ti_K;Tf_K;Pi;Pf_ajustada;nReliefs;fatorMedio;fator_equalizado;volume_fermentador;k_relief;k_para_FMTVolume;volume_ajuste;diferenca_ajuste_percentual;volume_ajuste_ultimas10;diferenca_recente_percentual;tendencia_percentual_por_ciclo;pressao_estabilizada;convergiu\n";
+          const char *header = "data_hora;temperatura;temperatura_tanque_expansao;pressao_antes;pressao_depois;adjustedEquilibriumPressure;corrente_antes_mA;corrente_depois_mA;patm;relief_volume;modo;gas;k;T_ref_K;relief_volume_efetivo;volume_estimado;Ti_K;Tf_K;Pi;Pf_ajustada;nReliefs;fatorMedio;fator_equalizado;volume_fermentador;k_relief;k_para_FMTVolume;volume_ajuste;diferenca_ajuste_percentual;volume_ajuste_ultimas10;diferenca_recente_percentual;tendencia_percentual_por_ciclo;pressao_estabilizada;convergiu\n";
           size_t headerLen = strlen(header);
           if (headerLen > maxLen) {
             headerLen = maxLen;
@@ -3506,7 +3479,7 @@ void handlePressureHistoryCSV(AsyncWebServerRequest *request) {
           float volumeEstimated = 0.0f;
           if (record.pressureBefore > 0.0001f) {
             const float single = volumeRoutineVolume(record.pressureAfter / record.pressureBefore,
-                                                     record.temperature, record.environmentTemperature);
+                                                     record.temperature, record.expansionTankTemperature);
             if (isfinite(single)) volumeEstimated = single;
           }
 
@@ -3556,15 +3529,15 @@ void handlePressureHistoryCSV(AsyncWebServerRequest *request) {
           }
 
           formatFloatCsv(tempBuf, sizeof(tempBuf), record.temperature, 2);
-          if (isfinite(record.environmentTemperature))
-            formatFloatCsv(envTempBuf, sizeof(envTempBuf), record.environmentTemperature, 2);
+          if (isfinite(record.expansionTankTemperature))
+            formatFloatCsv(envTempBuf, sizeof(envTempBuf), record.expansionTankTemperature, 2);
           snprintf(modeBuf, sizeof(modeBuf), "%s", volumeDeterminationFast ? "rapido" : "lento");
           snprintf(gasBuf, sizeof(gasBuf), "%s", volumeDeterminationCO2 ? "CO2" : "ar");
           formatFloatCsv(kBuf, sizeof(kBuf), volumeDeterminationFast ? volumeRoutineK() : 1.0f, 3);
           if (isfinite(record.tRefK)) formatFloatCsv(tRefBuf, sizeof(tRefBuf), record.tRefK, 2);
           if (isfinite(record.kRelief)) formatFloatCsv(kReliefBuf, sizeof(kReliefBuf), record.kRelief, 4);
           formatFloatCsv(effectiveReliefBuf, sizeof(effectiveReliefBuf),
-                         volumeRoutineReliefVolume(record.temperature, record.environmentTemperature), 3);
+                         volumeRoutineReliefVolume(record.temperature, record.expansionTankTemperature), 3);
           formatFloatCsv(pBeforeBuf, sizeof(pBeforeBuf), record.pressureBefore, 3);
           formatFloatCsv(pAfterBuf, sizeof(pAfterBuf), record.pressureAfter, 3);
           formatFloatCsv(equilibriumBuf, sizeof(equilibriumBuf), record.adjustedEquilibriumPressure, 3);
@@ -4294,9 +4267,11 @@ bool startVolumeDetermination(bool fast, bool co2, char *reason, size_t reasonSi
     return false;
   }
 
-  if (!isfinite(ControlData.pressure) || ControlData.pressure < 1.9f) {
+  // 0.3 bar, as k & floor: the test also runs at low pressure to check whether
+  // k changes with the pressure (docs/calibration-roteiro.md, test 4b).
+  if (!isfinite(ControlData.pressure) || ControlData.pressure < 0.3f) {
     if (reason && reasonSize > 0) {
-      snprintf(reason, reasonSize, "Insufficient pressure (min 1.9 bar)");
+      snprintf(reason, reasonSize, "Insufficient pressure (min 0.3 bar)");
     }
     return false;
   }
@@ -4522,7 +4497,6 @@ void pressureControl() {
   }
 
   collectPolytropicPressureSample();
-  collectRecoverySample();  // [DIAG]
 
   if (volumeDeterminationActive) {
     if (volumeConverged || volumeIteration >= VOLUME_DETERMINATION_RECORD_END_CYCLE) {
@@ -4701,6 +4675,11 @@ char *getPressureControlStatus(char *st) {
     snprintf(tmp, sizeof(tmp), "INA226 Pressure Sensor: DISCONNECTED<br>Atmospheric pressure: %.3f bar<br>", Patm);
     strnncat(st, tmp, PRESSURE_STATUS_SIZE);
   }
+  snprintf(tmp, sizeof(tmp), "Pressure sensor check: %s; valid current %.2f-%.2f mA; alarm %s<br>",
+           pressureSensorProblemText[0] ? pressureSensorProblemText : "OK",
+           pressureSensorCurrentLow(), pressureSensorCurrentHigh(),
+           pressureSensorAlarm ? "ACTIVE" : "off");
+  strnncat(st, tmp, PRESSURE_STATUS_SIZE);
 
   // --- Diagnóstico de relés ---
   unsigned long now = millis();

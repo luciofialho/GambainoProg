@@ -23,6 +23,11 @@ schema change: their keys (`co2TransferTime`, `supersatTauD`, `supersatTauA`,
 FMTData.expansionTankKCO2 / expansionTankKAir (keys `kCO2`, `kAir`, 1.0-1.5,
 default 1.08) are the expansion-tank filling factors; see
 docs/expansion-tank-k.md.
+FMTData.dallasAddress holds the Dallas ROM address of each thermometer role,
+one 8-byte blob per role: `dallasFerm` (fermenter), `dallasEnv` (environment),
+`dallasExpTank` (expansion tank); zeros = not assigned. A missing key or a
+different size reads as not assigned, so roles can be added or retired without
+touching the others. See docs/thermometers.md.
 CountersData.co2CorrectionDebt (key `co2Debt`, double) keeps the debt of the
 produced-CO2 integral across reboots; see docs/gco2-rate.md.
 CountersData.co2TransStart / co2TransDir / co2TransHenryRef / co2TransRate /

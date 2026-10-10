@@ -30,7 +30,9 @@ moles in the tank = P_tank * (Vr/k) / (R Tref)
 
 Relative to the fermenter gas counted at Tferm, the tank is an isothermal volume
 `Vr/k * Tferm/Tref` (`accountingReliefVolume()` in PressureControl.cpp). With
-Tamb = Tferm, or without a valid ambient reading, Tref = Tferm.
+Tamb = Tferm, or without a valid ambient reading, Tref = Tferm. Tamb is
+`expansionTankTemp`: the tank's own Dallas when assigned, else the environment
+(docs/thermometers.md).
 
 - Fermentation (`FMTData.expansionTankKCO2`, NVS key `kCO2`, gamma 1.29): moles
   of each relief and headspace volume from the pressure drop

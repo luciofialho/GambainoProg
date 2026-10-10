@@ -74,7 +74,18 @@ struct FMTData_t {
   int   nucleationWindow;
   HeaterCycle_t heater;
   CoolingCyclePoint_t coolingCycle[3]; // Fixed rows: 20, 10 and 0 degrees C.
+  // ROM address of the Dallas thermometer of each role (DALLAS_ROLE_*),
+  // all zeros = not assigned; one NVS key per role (docs/thermometers.md).
+  uint8_t dallasAddress[3][8];
 } __attribute__((packed));
+
+// Thermometer roles on the Dallas bus. Unassigned: the fermenter has no
+// reading (never chosen automatically), the environment comes from the
+// SideKick and the expansion tank follows the environment.
+constexpr uint8_t DALLAS_ROLE_FERMENTER = 0;
+constexpr uint8_t DALLAS_ROLE_ENVIRONMENT = 1;
+constexpr uint8_t DALLAS_ROLE_EXPANSION_TANK = 2;
+constexpr uint8_t DALLAS_ROLE_COUNT = 3;
 
 
 extern FMTData_t FMTData;

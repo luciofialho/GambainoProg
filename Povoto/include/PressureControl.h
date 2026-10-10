@@ -29,6 +29,12 @@ void resumeCO2AccountingAfterConditioning();
 // Saves the gCO2 window and the 30-min Henry samples (every 10 min and at an OTA start).
 void saveCO2Buffers();
 char *getPressureControlStatus(char *st);
+// Pressure sensor check (docs/alarms.md): checkPressureSensor() in the main loop.
+void checkPressureSensor();
+bool pressureSensorAlarmActive();
+bool pressureSensorNotResponding();   // INA226 absent or not answering
+const char *pressureSensorProblem();  // "" when the reading is valid
+String describePressureSensor();      // several lines, for the alarm e-mail
 void handlePressureHistoryCSV(AsyncWebServerRequest *request);
 void handlePressureDumpCSV(AsyncWebServerRequest *request);
 // Gas-transfer speed tests (docs/calibration-speed-evaluation.md).
@@ -85,7 +91,7 @@ struct VolumeKCalibration {
   float kOverall;   // from the cumulative factor, for comparison
   uint16_t count;
   float fermenterC; // mean temperatures of the test
-  float ambientC;
+  float expansionTankC;
   float volume;     // volume returned with the current k
 };
 VolumeKCalibration getVolumeKCalibration();

@@ -16,6 +16,8 @@
 
 #include "IOTK_NTP.h"
 #include "IOTK_Dallas.h"
+#include "DallasSensors.h"
+#include "PovotoAlarms.h"
 #include "IOTK_GLog.h"
 
 #include "PovotoCommon.h"
@@ -49,6 +51,7 @@ static volatile bool resetDisplayRequested = false;
 static char datalogBuffer[MAXPACKETSIZE+2];
 static char webStatusBuffer[MAXSTATUSLEN + 1];
 bool soundAlarm = false;
+volatile uint8_t buzzerBeepRequest = 0;
 
 char *getPovotoStatus(char *st);
 
@@ -240,6 +243,7 @@ void setup() {
   server.on("/fmtdata/save", HTTP_GET, handleFMTDataSave);
   server.on("/fmtdata/load", HTTP_POST, handleFMTDataLoad);
   server.on("/fmtdata/update", HTTP_POST, handleFMTDataUpdate);
+  server.on("/fmtdata/dallasscan", HTTP_GET, handleDallasScan);
   server.on("/fmtdata", HTTP_GET, handleFMTDataPage);
   server.on("/userConfig", HTTP_GET, handleUserConfigPage);
   server.on("/userConfig/update", HTTP_POST, handleUserConfigUpdate);
@@ -395,17 +399,16 @@ void setup() {
   digitalWrite(PINVENTINGLED, LOW);
   digitalWrite(PINBUZZER, LOW);
   neopixelWrite(PINLED, 0, 0, 0);
+  povotoAlarmsSetup();
 
   mainScreen();
 
   DallasSetup(PINDALLAS);
-  uniqueDallasThermometer(dallasTemperature);
-  delay(800); // aguarda 1a conversao do DS18B20 para diagnostico
-  if (dallasTemperature == NOTaTEMP || dallasTemperature == 85) {
-    Serial.println("[DALLAS] Termometro NAO detectado");
-  } else {
-    Serial.printf("[DALLAS] Termometro detectado. Temperatura inicial: %.2f C\n", dallasTemperature);
-  }
+  dallasSensorsSetup(); // one slot per role (docs/thermometers.md)
+  if (!dallasRoleAssigned(DALLAS_ROLE_FERMENTER))
+    Serial.println("[DALLAS] Fermenter thermometer NOT assigned: temperature control idle");
+  else if (!dallasOnBus(FMTData.dallasAddress[DALLAS_ROLE_FERMENTER]))
+    Serial.println("[DALLAS] Fermenter thermometer NOT found on the bus");
 
   GLogSetBuffer(datalogBuffer, sizeof(datalogBuffer));
 }
@@ -472,13 +475,32 @@ void loop() {
     resetDisplayHardware();
   }
 
-  { // buzzer do alarme: liga por 1s a cada acionamento de soundAlarm
+  processPovotoAlarms(); // sensor alarms: beeps, error screen, LEDs (docs/alarms.md)
+
+  { // buzzer do alarme: liga por 1s a cada acionamento de soundAlarm;
+    // buzzerBeepRequest toca N bipes curtos (250 ms ligado, 250 ms desligado)
     static unsigned long lastAlarm = 0;
+    static unsigned long beepStart = 0;
+    static uint8_t beepCount = 0;
+    if (buzzerBeepRequest) {
+      beepCount = buzzerBeepRequest;
+      buzzerBeepRequest = 0;
+      beepStart = millis();
+    }
     if (soundAlarm) {
       lastAlarm = millis();
       soundAlarm = false;
       digitalWrite(PINBUZZER, millis() % 1000 < 250 ? HIGH : LOW);
-    } 
+    }
+    else if (beepCount) {
+      const unsigned long phase = (millis() - beepStart) / 250UL;
+      if (phase >= 2UL * beepCount) {
+        beepCount = 0;
+        digitalWrite(PINBUZZER, LOW);
+      }
+      else
+        digitalWrite(PINBUZZER, phase % 2 == 0 ? HIGH : LOW);
+    }
     else if (millis() > lastAlarm + 1000) {
       digitalWrite(PINBUZZER, LOW);
     }

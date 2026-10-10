@@ -18,6 +18,7 @@ extern TFT_eSPI tft;
 #define PINLED    48  // Addressable RGB LED built into the ESP32-S3 DevKitC.
 
 #define PINBTN    14
+#define PINATTENTIONLED 13 // front panel LED: alarms (fast) and running tasks (slow)
 
 
 #define FMTCHILL 0
@@ -28,7 +29,9 @@ extern TFT_eSPI tft;
 extern float dallasTemperature;
 extern bool  debugTemperatureOverride;
 extern float environmentTemp;
+extern float expansionTankTemp; // its own Dallas, else environmentTemp
 extern byte DisplayMode;
 extern bool  soundAlarm;
+extern volatile uint8_t buzzerBeepRequest; // number of short beeps to play (loop() consumes it)
 
 
