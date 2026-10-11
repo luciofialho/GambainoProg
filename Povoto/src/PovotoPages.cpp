@@ -23,6 +23,8 @@
 #include "GraphHistory.h"
 #include "Povoto_UI.h"
 #include "DallasSensors.h"
+#include "SensorZero.h"
+#include "CalibrationEvents.h"
 
 // ========== MAIN MENU ==========
 
@@ -1048,6 +1050,91 @@ void handleCalibrationCurrentRefresh(AsyncWebServerRequest *request) {
   request->redirect(target);
 }
 
+// Sensor zero (docs/pressure-sensor-zero.md) and the gain check.
+static String sensorZeroSectionHtml() {
+  auto num = [](float v, int d) { return isfinite(v) ? String(v, d) : String("n/a"); };
+  const SensorZeroResult r = getSensorZeroResult();
+  const float mbarPerMilliamp = (FMTData.pressure1Current > FMTData.pressure0Current)
+      ? 1000.0f * FMTData.pressure1Bar / (FMTData.pressure1Current - FMTData.pressure0Current) : NAN;
+  String html = "<hr><h3>Sensor zero</h3>"
+    "<p>Open the fermenter to the atmosphere (ideally one opening at the top and one at the bottom), wait a few minutes "
+    "and confirm. The routine opens no valve: it averages the filtered sensor current and compares it with the stored zero "
+    "(the pressure shown elsewhere is clipped at zero and hides a zero that is too high). Requirements: mode OFF, board on for "
+    "at least 30 min (now " + String(millis() / 60000UL) + " min).</p>";
+  if (sensorZeroActive()) {
+    html += "<p><b>Running:</b> " + String(sensorZeroProgressMinutes(), 1) + " min; current " + num(currentReading, 3) +
+      " mA. <form action='/calibration/zero/abort' method='POST'><button>Abort</button></form></p>";
+  } else {
+    html += "<form action='/calibration/zero/start' method='POST'><label><input type='checkbox' name='open' value='1' required> "
+      "The fermenter is open to the atmosphere</label> <label>Duration (min) <input type='number' name='minutes' value='" +
+      String(SENSOR_ZERO_DEFAULT_MINUTES, 0) + "' min='1' max='15' step='1' style='width:70px'></label> "
+      "<button>Sensor zero</button></form>";
+  }
+  if (r.available) {
+    html += "<p>Mean current " + num(r.meanCurrent, 4) + " mA over " + num(r.minutes, 1) + " min (" + String(r.samples) +
+      " samples); sd " + num(r.sdCurrent * r.barPerMilliamp * 1000.0f, 2) + " mbar; range of 10-s means " +
+      num(r.blockAmplitude * r.barPerMilliamp * 1000.0f, 2) + " mbar; trend " + num(r.trend * r.barPerMilliamp * 1000.0f, 2) +
+      " mbar.<br>Stored zero " + num(r.storedZero, 4) + " mA; difference <b>" + (r.difference >= 0 ? "+" : "") +
+      num(r.difference, 4) + " mA = " + (r.difference >= 0 ? "+" : "") + num(r.difference * r.barPerMilliamp * 1000.0f, 2) +
+      " mbar</b> (no clipping).</p>";
+    if (!r.stable)
+      html += "<p><b>Unstable reading: fermenter not open, gas flowing or sensor drifting.</b> Check and repeat.</p>";
+    if (!r.warmedUp)
+      html += "<p><b>The board was on for less than 30 min at the start:</b> repeat later to save.</p>";
+    if (r.saved) html += "<p>Saved.</p>";
+    if (r.canSave)
+      html += "<form action='/calibration/zero/save' method='POST'><button>Save zero</button> "
+        "(shifts the three calibration currents by the difference; the gain is kept)</form>";
+  }
+  html += "<p><b>Gain check</b> (fermenter closed and pressurized, against the analog gauge): current " +
+    num(currentReading, 3) + " mA, pressure without clipping " + num(convertCurrentToPressureUnclipped(currentReading), 4) +
+    " bar (" + num(mbarPerMilliamp, 1) + " mbar/mA near zero). <a href='/calibration'>Refresh</a></p>";
+  const String events = calibrationEventsHtmlRows(10);
+  if (events.length())
+    html += "<p><b>Calibration events</b> (newest first; <a href='/calibration/events.txt'>all</a>)</p>"
+      "<table style='width:100%;font-size:0.9em'><tr><th>Time</th><th>Event</th><th>Details</th></tr>" + events + "</table>";
+  return html;
+}
+
+static void sendCalibrationMessage(AsyncWebServerRequest *request, const char *title, const char *text) {
+  String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta http-equiv='refresh' content='3;url=/calibration'>"
+    "<style>body{font-family:Arial;text-align:center;margin-top:50px;}</style></head><body><h1>";
+  html += title;
+  html += "</h1><p>";
+  html += text;
+  html += "</p></body></html>";
+  request->send(200, "text/html", html);
+}
+
+void handleSensorZeroStart(AsyncWebServerRequest *request) {
+  if (!request->hasParam("open", true)) {
+    sendCalibrationMessage(request, "Sensor zero not started", "Confirm that the fermenter is open to the atmosphere.");
+    return;
+  }
+  const float minutes = request->hasParam("minutes", true)
+      ? request->getParam("minutes", true)->value().toFloat() : SENSOR_ZERO_DEFAULT_MINUTES;
+  char reason[100];
+  if (!startSensorZero(minutes, reason, sizeof(reason))) {
+    sendCalibrationMessage(request, "Sensor zero not started", reason);
+    return;
+  }
+  request->redirect("/calibration");
+}
+
+void handleSensorZeroAbort(AsyncWebServerRequest *request) {
+  abortSensorZero();
+  request->redirect("/calibration");
+}
+
+void handleSensorZeroSave(AsyncWebServerRequest *request) {
+  char reason[100];
+  if (!saveSensorZero(reason, sizeof(reason))) {
+    sendCalibrationMessage(request, "Zero not saved", reason);
+    return;
+  }
+  request->redirect("/calibration");
+}
+
 void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   float pageCurrentReading = currentReading;
   bool usingAverageCurrent = false;
@@ -1347,6 +1434,7 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
     kCalibrationHtml += "</form>";
   }
   const String actions = String("<div class='container' style='margin-top:20px'><h2>Calibration tests</h2>") +
+    sensorZeroSectionHtml() +
     "<p>Requirements: Mode OFF; initial pressure at least 1.9 bar (volume determination and k &amp; floor: 0.3 bar).</p><p>No pressure target.</p>" +
     "<hr><h3>FMT volume determination</h3>" +
     "<p>Determines the fermenter total volume from the pressure reduction produced by repeated expansions into the configured relief volume. " +
@@ -1376,6 +1464,7 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
     "<a href='/calibration/speed.csv?type=venting'>Venting CSV</a></p>" +
     "<p>CSV results are kept in RAM until restart or the next test of the same type.</p></div>";
   page.replace("</body>", actions + "</body>");
+  if (sensorZeroActive()) page.replace("<head>", "<head><meta http-equiv='refresh' content='10'>");
   request->send(200, "text/html", page);
   free(html);
 }

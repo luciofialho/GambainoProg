@@ -35,6 +35,7 @@
 #include "PovotoFilesystem.h"
 #include "PovotoGraphScreen.h"
 #include "AtmosphericPressure.h"
+#include "CalibrationEvents.h"
 #include <esp_system.h>
 #include <esp_heap_caps.h>
 
@@ -261,6 +262,10 @@ void setup() {
   server.on("/calibration/savespeed", HTTP_POST, handleSaveSpeedCalibration);
   server.on("/calibration/speed", HTTP_POST, handleStartSpeedCalibration);
   server.on("/calibration/savek", HTTP_POST, handleSaveVolumeK);
+  server.on("/calibration/zero/start", HTTP_POST, handleSensorZeroStart);
+  server.on("/calibration/zero/abort", HTTP_POST, handleSensorZeroAbort);
+  server.on("/calibration/zero/save", HTTP_POST, handleSensorZeroSave);
+  server.on("/calibration/events.txt", HTTP_GET, handleCalibrationEventsText);
   server.on("/calibration", HTTP_GET, handleCalibrationDataPage);
   server.on("/calibration/refresh-current", HTTP_GET, handleCalibrationCurrentRefresh);
   server.on("/calibration/update", HTTP_POST, handleCalibrationDataUpdate);

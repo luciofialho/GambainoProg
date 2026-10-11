@@ -85,6 +85,10 @@ struct SpeedCalibrationResults {
 SpeedCalibrationResults getSpeedCalibrationResults();
 String getSpeedCalibrationStatus();
 bool isSpeedCalibrationActive();
+// Any calibration routine (speed tests, volume determination, sensor zero).
+bool calibrationRoutineActive();
+// Three text lines of the calibration panel on the TFT (and the dashboard).
+void showCalibrationPanel(const char *line1, const char *line2, const char *line3);
 void drawCalibrationStatus();
 // Line 0..2 of the calibration panel; empty while the panel is hidden.
 const char *getCalibrationDisplayLine(uint8_t index);
@@ -168,6 +172,10 @@ extern bool pressureSensorConnected;
 extern bool debugPressureOverride;
 // Connected sensor (or debugging) and a finite reading.
 bool pressureReadingValid();
+// Acquisition time (millis) of the latest filtered pressure/current.
+unsigned long pressureAcquisitionMillis();
+float convertCurrentToPressure(float current);          // clipped at zero
+float convertCurrentToPressureUnclipped(float current); // negative below the zero current
 void markPressureSetpointChanged(bool slow);
 const char *getPressStateLabel();
 extern float currentReading;

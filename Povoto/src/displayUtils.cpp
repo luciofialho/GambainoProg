@@ -1340,7 +1340,7 @@ void processTouch() {
   uint16_t raw_x, raw_y;
 
   // Tests and an active alarm keep the screen awake.
-  if (isVolumeDeterminationActive() || isSpeedCalibrationActive() || activePovotoAlarm() != ALARM_NONE) {
+  if (calibrationRoutineActive() || activePovotoAlarm() != ALARM_NONE) {
     lastClick = millis();
     if (screenSaverActive) {
       forceScreenSaver(false);
@@ -1349,7 +1349,7 @@ void processTouch() {
   
   if (!touchFlag) {
     unsigned long ssTimeout = (unsigned long)UserConfigurationData.screensaverTime * 1000UL;
-    if (!screenSaverActive && !isVolumeDeterminationActive() && !isSpeedCalibrationActive() && !taskUIActive && (MILLISDIFF(lastClick, ssTimeout))) {
+    if (!screenSaverActive && !calibrationRoutineActive() && !taskUIActive && (MILLISDIFF(lastClick, ssTimeout))) {
       forceScreenSaver(true);
     }
     // Sai da tela de seleção de tarefa se ficar idle por mais que o timeout do screensaver

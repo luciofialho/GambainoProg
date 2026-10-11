@@ -14,6 +14,7 @@
 #include <LittleFS.h>
 #include "PovotoFilesystem.h"
 #include "AtmosphericPressure.h"
+#include "SensorZero.h"
 #include <math.h>
 #include <algorithm>
 
@@ -2282,12 +2283,11 @@ static void resetCurrentMedianFilter() {
   lastCurrentMedianSampleMillis = 0;
 }
 
-float convertCurrentToPressure(float current) {
+// Calibration curve without the clipping at zero: below the zero current the
+// result is negative (sensor zero check, docs/pressure-sensor-zero.md).
+float convertCurrentToPressureUnclipped(float current) {
   float pressure = 0.0f;
-  if (current <= FMTData.pressure0Current) {
-    pressure = 0.0f;
-  }
-  else if (FMTData.pressure2Bar != 0.0f && FMTData.pressure2Current != 0.0f) { // quadratic interpolation using Lagrange polynomials
+  if (FMTData.pressure2Bar != 0.0f && FMTData.pressure2Current != 0.0f) { // quadratic interpolation using Lagrange polynomials
     const float x0 = FMTData.pressure0Current;
     const float y0 = 0.0f;
     const float x1 = FMTData.pressure1Current;
@@ -2320,16 +2320,21 @@ float convertCurrentToPressure(float current) {
       pressure = ratio * FMTData.pressure1Bar;
     }
   }
-
-  if (pressure < 0.0f) {
-    pressure = 0.0f;
-  }
-
   return pressure;
+}
+
+float convertCurrentToPressure(float current) {
+  if (current <= FMTData.pressure0Current) return 0.0f;
+  const float pressure = convertCurrentToPressureUnclipped(current);
+  return pressure < 0.0f ? 0.0f : pressure;
 }
 
 bool inTheMiddleOfRelief() {
   return (timeToStartExpansion || timeToFinishExpansion || timeToRegisterPressure);
+}
+
+unsigned long pressureAcquisitionMillis() {
+  return pressureAcquiredMillis;
 }
 
 void readPressure() {
@@ -2566,7 +2571,7 @@ String describeReliefCheck() {
 
 static char calibrationDisplayLines[3][80] = {};
 
-static void showVolumeStatus(const char *line1, const char *line2, const char *line3) {
+void showCalibrationPanel(const char *line1, const char *line2, const char *line3) {
   // Publish the text; screenData draws it after the normal screen update.
   snprintf(calibrationDisplayLines[0], sizeof(calibrationDisplayLines[0]), "%s", line1);
   snprintf(calibrationDisplayLines[1], sizeof(calibrationDisplayLines[1]), "%s", line2);
@@ -2674,14 +2679,14 @@ static void finalizeVolumeDeterminationSummary() {
   if (volumeSummaryTiK <= 0.0f || volumeSummaryTfK <= 0.0f ||
       volumeSummaryPi <= 0.0f || volumeSummaryNReliefs == 0) {
     volumeDeterminationActive = false;
-    showVolumeStatus("Volume: END", "Dados insuficientes", "Sem resumo");
+    showCalibrationPanel("Volume: END", "Dados insuficientes", "Sem resumo");
     return;
   }
 
   volumeSummaryPfAdjusted = (ControlData.pressure + Patm) * (volumeSummaryTiK / volumeSummaryTfK) - Patm;
   if (volumeSummaryPfAdjusted <= 0.0f) {
     volumeDeterminationActive = false;
-    showVolumeStatus("Volume: END", "Pf ajustada invalida", "Sem resumo");
+    showCalibrationPanel("Volume: END", "Pf ajustada invalida", "Sem resumo");
     return;
   }
 
@@ -2689,7 +2694,7 @@ static void finalizeVolumeDeterminationSummary() {
   const float denom = 1.0f - volumeSummaryFactor;
   if (fabsf(denom) < 0.000001f) {
     volumeDeterminationActive = false;
-    showVolumeStatus("Volume: END", "Fator invalido", "Sem resumo");
+    showCalibrationPanel("Volume: END", "Fator invalido", "Sem resumo");
     return;
   }
 
@@ -2747,7 +2752,7 @@ static void finalizeVolumeDeterminationSummary() {
            (unsigned)volumeSummaryNReliefs, (unsigned)volumeIteration);
   formatVolumeComparison(line2, sizeof(line2), line3, sizeof(line3),
                          volumeSummaryFermenterVolume, volumeFittedSoFar);
-  showVolumeStatus(line1, line2, line3);
+  showCalibrationPanel(line1, line2, line3);
 }
 
 void calculateFermentationState() {
@@ -3177,7 +3182,7 @@ void processPressure(bool afterRelief) {
       formatVolumeComparison(line2, sizeof(line2), line3, sizeof(line3),
                              record.volumeMetricsValid ? record.fermenterVolume : NAN,
                              record.fittedVolume);
-      showVolumeStatus(line1, line2, line3);
+      showCalibrationPanel(line1, line2, line3);
       volumeAwaitingRecord = false;
       volumeRecordIndex = -1;
     }
@@ -3840,7 +3845,7 @@ bool startSpeedCalibration(uint8_t test, bool co2, char *reason, size_t reasonSi
   const float minimumPressure = test == SPEED_TEST_K_FLOOR ? 0.3f : 1.9f;
   if (test >= SPEED_TEST_COUNT) blocked = "Invalid test";
   else if (SetPointData.mode != MODE_OFF) blocked = "Mode must be OFF";
-  else if (speedCalibrationActive || volumeDeterminationActive || inTheMiddleOfRelief() || taskWindowType != 0)
+  else if (calibrationRoutineActive() || inTheMiddleOfRelief() || taskWindowType != 0)
     blocked = "Process in progress";
   else if (!isfinite(ControlData.pressure) || ControlData.pressure < minimumPressure)
     blocked = test == SPEED_TEST_K_FLOOR ? "Insufficient pressure (min 0.3 bar)"
@@ -3893,6 +3898,10 @@ bool isSpeedCalibrationActive() {
   return speedCalibrationActive;
 }
 
+bool calibrationRoutineActive() {
+  return speedCalibrationActive || volumeDeterminationActive || sensorZeroActive();
+}
+
 static const char *speedTestName(uint8_t test) {
   return test == SPEED_TEST_VENTING ? "Venting" : test == SPEED_TEST_K_FLOOR ? "k & floor" : "Expansion";
 }
@@ -3920,7 +3929,7 @@ static void showSpeedCalibrationProgress(bool force = false) {
     snprintf(line2, sizeof(line2), "Medicoes: %u/%u", count, target);
     snprintf(line3, sizeof(line3), "%s", count == target ? "Resultado na pagina Calibration" : speedStatus);
   }
-  showVolumeStatus(line1, line2, line3);
+  showCalibrationPanel(line1, line2, line3);
 }
 
 static void speedResetWait(unsigned long now) {
@@ -4395,7 +4404,7 @@ bool startVolumeDetermination(bool fast, bool co2, char *reason, size_t reasonSi
     return false;
   }
 
-  if (speedCalibrationActive || volumeDeterminationActive || inTheMiddleOfRelief()) {
+  if (calibrationRoutineActive() || inTheMiddleOfRelief()) {
     if (reason && reasonSize > 0) {
       snprintf(reason, reasonSize, "Process in progress");
     }
@@ -4472,7 +4481,7 @@ bool startVolumeDetermination(bool fast, bool co2, char *reason, size_t reasonSi
   char line2[32];
   snprintf(line1, sizeof(line1), "Volume: START");
   snprintf(line2, sizeof(line2), "P ini: %.2f bar", volumeStartPressure);
-  showVolumeStatus(line1, line2, "Waiting...");
+  showCalibrationPanel(line1, line2, "Waiting...");
 
   if (reason && reasonSize > 0) {
     snprintf(reason, reasonSize, "Process started successfully");
@@ -4608,6 +4617,7 @@ void pressureControl() {
     processSpeedCalibration();
     return;
   }
+  processSensorZero();
   processSlowPressureTarget();
   updatePressureStability();
   updateCO2DissolvedStateFromEvents();
@@ -4725,8 +4735,9 @@ char *getPressureControlStatus(char *st) {
     strnncat(st, tmp, PRESSURE_STATUS_SIZE);
     appendAtmosphericPressureStatus(st, PRESSURE_STATUS_SIZE);
     snprintf(tmp, sizeof(tmp),
-             "INA: Filtered current reading: %.2f mA Shunt voltage: %.2f mV Momentary current: %.2f mA<br>",
-             currentReading, ina226.getShuntVoltage_mV(), readCurrentFromINA226mA());
+             "INA: filtered %.3f mA, momentary %.3f mA, shunt %.3f mV; pressure without clipping %.4f bar<br>",
+             currentReading, readCurrentFromINA226mA(), ina226.getShuntVoltage_mV(),
+             convertCurrentToPressureUnclipped(currentReading));
     strnncat(st, tmp, PRESSURE_STATUS_SIZE);
 
     const unsigned long criteriaElapsedMs = co2DissolvedCriteriaElapsedMillis(now);
@@ -4737,7 +4748,7 @@ char *getPressureControlStatus(char *st) {
              co2CalculationPressure);
     strnncat(st, tmp, PRESSURE_STATUS_SIZE);
 
-    strnncat(st, "-------------------------------------------------------------------------------------------<br>", PRESSURE_STATUS_SIZE);
+    strnncat(st, "--------------------<br>", PRESSURE_STATUS_SIZE);
     snprintf(tmp, sizeof(tmp),
              "<br>CO2 moles accounting:<br>&nbsp;&nbsp;&nbsp;&nbsp;Headspace: %.3f<br>&nbsp;&nbsp;&nbsp;&nbsp;Dissolved: %.3f (if in equilibrium: %.3f)<br>&nbsp;&nbsp;&nbsp;&nbsp;Ejected: %.3f<br>&nbsp;&nbsp;&nbsp;&nbsp;Total: %.3f (%.2f g)<br>",
              headSpaceCO2Mols, CountersData.CO2InSolution, equilibriumCO2Mols,

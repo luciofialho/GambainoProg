@@ -23,6 +23,9 @@ void handleDallasScan(AsyncWebServerRequest *request);
 void handleCalibrationDataPage(AsyncWebServerRequest *request);
 void handleCalibrationCurrentRefresh(AsyncWebServerRequest *request);
 void handleCalibrationDataUpdate(AsyncWebServerRequest *request);
+void handleSensorZeroStart(AsyncWebServerRequest *request);
+void handleSensorZeroAbort(AsyncWebServerRequest *request);
+void handleSensorZeroSave(AsyncWebServerRequest *request);
 
 void handleBatchDataPage(AsyncWebServerRequest *request);
 void handleBatchDataUpdate(AsyncWebServerRequest *request);
