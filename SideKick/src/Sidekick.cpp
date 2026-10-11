@@ -8,6 +8,7 @@
 #include <WiFiClientSecure.h>
 #include "Sidekick-log.h"
 #include "Sidekick-cloud.h"
+#include "Sidekick-ambient.h"
 #include "IOTK.h"
 #include <RCSwitch.h>
 #include <esp_now.h>
@@ -238,6 +239,7 @@ char *getSideKickStatus(char *st) {
   strcat(st, buf2);
 
   appendCloudLogStatus(st, MAXSTATUSLEN);
+  appendAmbientSensorsStatus(st, MAXSTATUSLEN);
   if (logSendTaskHandle) {
     // Least free stack ever of the task that runs the three TLS clients.
     char stackLine[80];
@@ -342,6 +344,7 @@ void setup() {
   } else {
     Serial.println("ESP-NOW init failed");
   }
+  ambientSensorsBegin(); // barometer and environment thermometer, broadcast to the Povotos
 }
 
 // ================== LOOP ======================
@@ -355,6 +358,7 @@ void loop() {
   gambainoWiFiProcess();
   handle_IOTK();
   forwardCloudCommands();
+  ambientSensorsProcess();
 
   // reads Serial2 
   if (MILLISDIFF(lastSerial2Read, 10)) {

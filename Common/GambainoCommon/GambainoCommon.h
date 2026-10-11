@@ -22,7 +22,8 @@
 #define TRANSFERSTARTPACKET  'T'   // BrewCore→Povoto: "batchNum,inoculationTemp"
 #define TRANSFERENDPACKET    'E'   // BrewCore→Povoto: transfer complete
 #define FERMERTEMPPACKET     'F'   // Povoto→BrewCore: "povotoIndex,temperature"
-#define ENVTEMPPACKET        'V'   // BrewCore→broadcast: "environmentTemp"
+#define ENVTEMPPACKET        'V'   // BrewCore/SideKick→broadcast: "environmentTemp" (one number only: older Povotos reject anything else)
+#define ATMPRESSUREPACKET    'A'   // SideKick→broadcast: atmospheric pressure, "hPa" (older receivers ignore it)
 #define BREWFATHERLOGPACKET  'W'   // Povoto→SideKick: full Brewfather JSON payload
 #define CLOUDLOGPACKET       'G'   // Povoto→SideKick: one cloud log record (JSON, Povoto/docs/cloud-log.md)
 #define CLOUDSTATEPACKET     'H'   // Povoto→SideKick: latest batch state for the cloud (JSON, not spooled)
