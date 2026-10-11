@@ -17,10 +17,10 @@
 static constexpr unsigned long DALLAS_HOLD_MS = 60000UL; // same tolerance as the fermenter
 
 static uint8_t slotAddress[DALLAS_ROLE_COUNT][8];
-static float slotReading[DALLAS_ROLE_COUNT] = {NOTaTEMP, NOTaTEMP, NOTaTEMP}; // fermenter: dallasTemperature
+static float slotReading[DALLAS_ROLE_COUNT] = {NOTaTEMP, NOTaTEMP, NOTaTEMP, NOTaTEMP}; // fermenter: dallasTemperature
 static bool slotRegistered[DALLAS_ROLE_COUNT];
 
-static float heldReading[DALLAS_ROLE_COUNT] = {NOTaTEMP, NOTaTEMP, NOTaTEMP};
+static float heldReading[DALLAS_ROLE_COUNT] = {NOTaTEMP, NOTaTEMP, NOTaTEMP, NOTaTEMP};
 static unsigned long heldMillis[DALLAS_ROLE_COUNT];
 static bool heldValid[DALLAS_ROLE_COUNT];
 

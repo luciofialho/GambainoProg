@@ -76,16 +76,18 @@ struct FMTData_t {
   CoolingCyclePoint_t coolingCycle[3]; // Fixed rows: 20, 10 and 0 degrees C.
   // ROM address of the Dallas thermometer of each role (DALLAS_ROLE_*),
   // all zeros = not assigned; one NVS key per role (docs/thermometers.md).
-  uint8_t dallasAddress[3][8];
+  uint8_t dallasAddress[4][8];
 } __attribute__((packed));
 
 // Thermometer roles on the Dallas bus. Unassigned: the fermenter has no
 // reading (never chosen automatically), the environment comes from the
-// SideKick and the expansion tank follows the environment.
+// ESP-NOW broadcast, the expansion tank follows the environment and the gas
+// temperature is the fermenter's (no headspace thermometer).
 constexpr uint8_t DALLAS_ROLE_FERMENTER = 0;
 constexpr uint8_t DALLAS_ROLE_ENVIRONMENT = 1;
 constexpr uint8_t DALLAS_ROLE_EXPANSION_TANK = 2;
-constexpr uint8_t DALLAS_ROLE_COUNT = 3;
+constexpr uint8_t DALLAS_ROLE_HEADSPACE = 3; // gas in the headspace (docs/thermometers.md)
+constexpr uint8_t DALLAS_ROLE_COUNT = 4;
 
 
 extern FMTData_t FMTData;

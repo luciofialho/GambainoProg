@@ -220,6 +220,8 @@ bool readFMTDataFromEEPROM() {
     store.getBytes("dallasEnv", FMTData.dallasAddress[DALLAS_ROLE_ENVIRONMENT], 8);
   if (store.getBytesLength("dallasExpTank") == 8)
     store.getBytes("dallasExpTank", FMTData.dallasAddress[DALLAS_ROLE_EXPANSION_TANK], 8);
+  if (store.getBytesLength("dallasHeadspace") == 8)
+    store.getBytes("dallasHeadspace", FMTData.dallasAddress[DALLAS_ROLE_HEADSPACE], 8);
   store.end();
   return true;
 }
@@ -252,6 +254,7 @@ bool writeFMTDataToNIV() {
   saved = (store.putBytes("dallasFerm", FMTData.dallasAddress[DALLAS_ROLE_FERMENTER], 8) == 8) && saved;
   saved = (store.putBytes("dallasEnv", FMTData.dallasAddress[DALLAS_ROLE_ENVIRONMENT], 8) == 8) && saved;
   saved = (store.putBytes("dallasExpTank", FMTData.dallasAddress[DALLAS_ROLE_EXPANSION_TANK], 8) == 8) && saved;
+  saved = (store.putBytes("dallasHeadspace", FMTData.dallasAddress[DALLAS_ROLE_HEADSPACE], 8) == 8) && saved;
   saved = (store.putFloat("p0Current", FMTData.pressure0Current) == sizeof(FMTData.pressure0Current)) && saved;
   saved = (store.putFloat("p1Bar", FMTData.pressure1Bar) == sizeof(FMTData.pressure1Bar)) && saved;
   saved = (store.putFloat("p1Current", FMTData.pressure1Current) == sizeof(FMTData.pressure1Current)) && saved;

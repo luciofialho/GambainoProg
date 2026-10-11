@@ -621,9 +621,9 @@ void handleDebugParamsUpdate(AsyncWebServerRequest *request) {
 // Thermometers on the Dallas bus and their roles (docs/thermometers.md). The
 // list is the last scan, made in the main loop (boot or "Rescan bus").
 static const char *const DALLAS_ROLE_FIELDS[DALLAS_ROLE_COUNT] = {
-  "dallasFermenter", "dallasEnvironment", "dallasExpansionTank"};
+  "dallasFermenter", "dallasEnvironment", "dallasExpansionTank", "dallasHeadspace"};
 static const char *const DALLAS_ROLE_LABELS[DALLAS_ROLE_COUNT] = {
-  "Fermenter", "Environment", "Expansion tank"};
+  "Fermenter", "Environment", "Expansion tank", "Headspace"};
 
 static void dallasTemperatureText(float t, char *out, size_t size) {
   if (isfinite(t) && t != NOTaTEMP && t != 85.0f) snprintf(out, size, "%.2f &deg;C", t);
@@ -667,9 +667,10 @@ static void appendDallasRolesSection(char *html, size_t capacity) {
   const char *emptyOption[DALLAS_ROLE_COUNT] = {
     "Not assigned (no temperature control)",
     "Broadcast by ESP-NOW (SideKick, else BrewCore)",
-    "Same as environment"};
-  const float current[DALLAS_ROLE_COUNT] = {dallasTemperature, environmentTemp, expansionTankTemp};
-  const char *source[DALLAS_ROLE_COUNT] = {"Dallas", environmentTempSource(), expansionTankTempSource()};
+    "Same as environment",
+    "Not assigned (gas temperature = fermenter)"};
+  const float current[DALLAS_ROLE_COUNT] = {dallasTemperature, environmentTemp, expansionTankTemp, gasTemperature()};
+  const char *source[DALLAS_ROLE_COUNT] = {"Dallas", environmentTempSource(), expansionTankTempSource(), gasTemperatureSource()};
   for (uint8_t r = 0; r < DALLAS_ROLE_COUNT; ++r) {
     dallasTemperatureText(current[r], reading, sizeof(reading));
     snprintf(buffer, sizeof(buffer),
@@ -709,7 +710,8 @@ void handleDallasScan(AsyncWebServerRequest *request) {
 }
 
 void handleFMTDataPage(AsyncWebServerRequest *request) {
-  const size_t BUFFER_SIZE = 14000;
+  // Four thermometer roles with up to DALLAS_SCAN_MAX options each.
+  const size_t BUFFER_SIZE = 18000;
   char* html = (char*)malloc(BUFFER_SIZE);
   if (!html) {
     request->send(500, "text/plain", "Out of memory");

@@ -52,6 +52,27 @@ const char *expansionTankTempSource() {
   return dallasRoleAssigned(DALLAS_ROLE_EXPANSION_TANK) ? "Dallas" : "environment";
 }
 
+// Headspace thermometer when assigned and with a valid reading (held 60 s),
+// else the fermenter's. No configuration key: the assignment decides. It never
+// controls the temperature (docs/thermometers.md).
+static bool headspaceTemperatureValid() {
+  if (!dallasRoleAssigned(DALLAS_ROLE_HEADSPACE)) return false;
+  const float t = dallasRoleTemperature(DALLAS_ROLE_HEADSPACE);
+  return isfinite(t) && t != NOTaTEMP && t != 85.0f;
+}
+
+float gasTemperature() {
+  return headspaceTemperatureValid() ? dallasRoleTemperature(DALLAS_ROLE_HEADSPACE) : ControlData.temperature;
+}
+
+const char *gasTemperatureSource() {
+  return headspaceTemperatureValid() ? "headspace" : "liquid";
+}
+
+float headspaceTemperature() {
+  return headspaceTemperatureValid() ? dallasRoleTemperature(DALLAS_ROLE_HEADSPACE) : NAN;
+}
+
 // ESP-NOW callback: stored here, applied by temperatureControl() in the loop.
 void setEnvironmentTemperatureFromPacket(const char *payload, bool fromSideKick) {
   ReceivedEnvironmentTemp &slot = receivedEnvironment[fromSideKick ? ENV_FROM_SIDEKICK : ENV_FROM_OTHER];
@@ -590,9 +611,9 @@ char *getTemperatureControlStatus(char *st) {
 
   // Each Dallas role, then the sensors of the last scan without a role
   // (docs/thermometers.md).
-  static const char *const roleNames[DALLAS_ROLE_COUNT] = {"fermenter", "environment", "expansion tank"};
+  static const char *const roleNames[DALLAS_ROLE_COUNT] = {"fermenter", "environment", "expansion tank", "headspace"};
   static const char *const unassignedNotes[DALLAS_ROLE_COUNT] = {
-    "temperature control idle", "using the ESP-NOW broadcast", "using the environment"};
+    "temperature control idle", "using the ESP-NOW broadcast", "using the environment", "gas = fermenter"};
   char id[DALLAS_ADDRESS_TEXT_SIZE];
   for (uint8_t r = 0; r < DALLAS_ROLE_COUNT; ++r) {
     if (!dallasRoleAssigned(r)) {
@@ -607,8 +628,8 @@ char *getTemperatureControlStatus(char *st) {
     }
     strnncat(st, buf, 2048);
   }
-  snprintf(buf, sizeof(buf), "Fermenter thermometer alarm: %s<br>",
-           thermometerAlarmActive ? "ACTIVE" : "off");
+  snprintf(buf, sizeof(buf), "Gas temperature: %.2f C (%s); fermenter thermometer alarm: %s<br>",
+           gasTemperature(), gasTemperatureSource(), thermometerAlarmActive ? "ACTIVE" : "off");
   strnncat(st, buf, 2048);
   DallasScanEntry scan[DALLAS_SCAN_MAX];
   const uint8_t scanned = getDallasScan(scan, DALLAS_SCAN_MAX);

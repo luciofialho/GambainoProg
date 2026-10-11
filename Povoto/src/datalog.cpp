@@ -293,6 +293,7 @@ void doDataLog() {
     GLogAddData("gCO2Source"); // "calculated", "held" (after a reboot) or "transition"
     GLogAddData("GasCO2Rate"); // gas-phase g/L/d of the dissolved-CO2 state (empty = no decision)
     GLogAddData("ExpansionTankTemperature"); // own Dallas, else the environment
+    GLogAddData("HeadspaceTemperature");     // headspace Dallas (empty: none or no reading)
 
     headerWritten = sendLogHeader("Cold", headerAttempts);
   }
@@ -346,6 +347,7 @@ void doDataLog() {
     GLogAddData(getCO2EvolutionSource());
     GLogAddData(co2.gasRate, 3);
     GLogAddData(isValidTemp(expansionTankTemp) ? expansionTankTemp : NAN, 2);
+    GLogAddData(headspaceTemperature(), 2);
     GLogSend();
     if (SetPointData.mode == MODE_CONDITIONING) conditioningFinalColdPending = false;
   }

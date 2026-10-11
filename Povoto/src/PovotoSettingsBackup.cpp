@@ -25,7 +25,7 @@ static void appendBool(String &json, const char *name, bool value) {
 
 // Dallas role addresses: XX-XX-XX-XX-XX-XX-XX-XX, "" = not assigned.
 static const char *const DALLAS_BACKUP_KEYS[DALLAS_ROLE_COUNT] = {
-  "dallasFermenter", "dallasEnvironment", "dallasExpansionTank"};
+  "dallasFermenter", "dallasEnvironment", "dallasExpansionTank", "dallasHeadspace"};
 
 static void appendDallasAddress(String &json, const char *name, const uint8_t *address) {
   char text[DALLAS_ADDRESS_TEXT_SIZE];
