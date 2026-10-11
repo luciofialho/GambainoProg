@@ -35,6 +35,10 @@ bool pressureSensorAlarmActive();
 bool pressureSensorNotResponding();   // INA226 absent or not answering
 const char *pressureSensorProblem();  // "" when the reading is valid
 String describePressureSensor();      // several lines, for the alarm e-mail
+// Relief check (docs/alarms.md): drop of each relief against the expected one.
+bool reliefCheckAlarmActive();
+bool reliefCheckAlarmIsLeak();        // else: relief without effect
+String describeReliefCheck();         // several lines, for the alarm e-mail
 void handlePressureHistoryCSV(AsyncWebServerRequest *request);
 void handlePressureDumpCSV(AsyncWebServerRequest *request);
 // Gas-transfer speed tests (docs/calibration-speed-evaluation.md).
@@ -70,6 +74,13 @@ struct SpeedCalibrationResults {
   float ventingCO2[3];          // converted
   float ventingRmse;
   uint8_t ventingPoints;
+  // Against the configured curve (CO2) at the end of the test
+  // (docs/calibration-speed-evaluation.md): mean and sd of the flow of each
+  // release / configured flow - 1 (fraction).
+  float ventingConfigured[3];
+  float ventingFlowVsConfig;
+  float ventingFlowVsConfigSd;
+  uint8_t ventingFlowVsConfigPoints;
 };
 SpeedCalibrationResults getSpeedCalibrationResults();
 String getSpeedCalibrationStatus();

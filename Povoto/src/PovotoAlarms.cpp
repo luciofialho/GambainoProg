@@ -25,6 +25,13 @@ static const ErrorScreenText PRESSURE_OUT_OF_RANGE_SCREEN = {
   "PRESSURE", "SENSOR", "PRESSURE SENSOR CURRENT OUT OF RANGE", "PRESSURE READING UNRELIABLE",
   "Check the 4-20 mA sensor and the INA226 wiring"};
 
+static const ErrorScreenText RELIEF_LEAK_SCREEN = {
+  "RELIEF", "LEAK", "PRESSURE DROP TOO LARGE IN THE RELIEFS", "LEAK BETWEEN VALVE AND TANK?",
+  "Check the hoses and fittings of the expansion tank"};
+static const ErrorScreenText RELIEF_NO_EFFECT_SCREEN = {
+  "RELIEF", "FAILED", "RELIEFS DO NOT LOWER THE PRESSURE", "VALVE NOT OPENING OR TANK NOT VENTING?",
+  "Check the transfer valve and the tank vent"};
+
 static PovotoAlarm activeAlarm = ALARM_NONE;
 
 static const char *modeLabel(byte mode) {
@@ -56,10 +63,22 @@ static void sendAlarmMail(PovotoAlarm alarm, unsigned long activeMs) {
   snprintf(line, sizeof(line), "Active for: %lu h %02lu min\n\n",
            activeMs / 3600000UL, (activeMs / 60000UL) % 60UL);
   body += line;
-  body += alarm == ALARM_PRESSURE_SENSOR ? describePressureSensor() : describeFermenterThermometer();
-  body += alarm == ALARM_PRESSURE_SENSOR
-      ? "\nThe pressure reading is unreliable: check the 4-20 mA sensor and the INA226 wiring.\n"
-      : "\nAssign the fermenter thermometer on the Settings page or check the Dallas wiring.\n";
+  switch (alarm) {
+    case ALARM_PRESSURE_SENSOR:
+      body += describePressureSensor();
+      body += "\nThe pressure reading is unreliable: check the 4-20 mA sensor and the INA226 wiring.\n";
+      break;
+    case ALARM_RELIEF:
+      body += describeReliefCheck();
+      body += reliefCheckAlarmIsLeak()
+          ? "\nThe reliefs remove much more gas than the expansion tank holds: check the hoses and fittings between the valve and the tank.\n"
+          : "\nThe reliefs do not lower the pressure: check the transfer valve and the tank vent.\n";
+      break;
+    default:
+      body += describeFermenterThermometer();
+      body += "\nAssign the fermenter thermometer on the Settings page or check the Dallas wiring.\n";
+      break;
+  }
   body += "This e-mail repeats every hour while the alarm lasts.\n";
   char info[200];
   snprintf(info, sizeof(info), "\nMode: %s\nIP: %s\n",
@@ -72,6 +91,7 @@ static void sendAlarmMail(PovotoAlarm alarm, unsigned long activeMs) {
 const char *povotoAlarmLabel(PovotoAlarm alarm) {
   switch (alarm) {
     case ALARM_PRESSURE_SENSOR: return "pressure sensor";
+    case ALARM_RELIEF: return reliefCheckAlarmIsLeak() ? "relief leak" : "relief without effect";
     case ALARM_FERMENTER_THERMOMETER: return "fermenter thermometer";
     default: return "none";
   }
@@ -90,6 +110,7 @@ static const ErrorScreenText *alarmScreen(PovotoAlarm alarm) {
   switch (alarm) {
     case ALARM_PRESSURE_SENSOR:
       return pressureSensorNotResponding() ? &PRESSURE_NOT_RESPONDING_SCREEN : &PRESSURE_OUT_OF_RANGE_SCREEN;
+    case ALARM_RELIEF: return reliefCheckAlarmIsLeak() ? &RELIEF_LEAK_SCREEN : &RELIEF_NO_EFFECT_SCREEN;
     case ALARM_FERMENTER_THERMOMETER: return &THERMOMETER_SCREEN;
     default: return nullptr;
   }
@@ -98,6 +119,7 @@ static const ErrorScreenText *alarmScreen(PovotoAlarm alarm) {
 void processPovotoAlarms() {
   checkPressureSensor();
   const PovotoAlarm alarm = pressureSensorAlarmActive() ? ALARM_PRESSURE_SENSOR
+      : reliefCheckAlarmActive() ? ALARM_RELIEF
       : fermenterThermometerAlarmActive() ? ALARM_FERMENTER_THERMOMETER : ALARM_NONE;
   const unsigned long now = millis();
   static unsigned long lastBeeps = 0; // 0 = not beeping
@@ -116,7 +138,8 @@ void processPovotoAlarms() {
       neopixelWrite(PINLED, 0, 0, 0); // the Wi-Fi indication resumes
     }
   }
-  // Also follows a change of the pressure problem (not responding / out of range).
+  // Also follows a change of the problem (pressure: not responding / out of
+  // range; relief: leak / no effect).
   showErrorScreen(alarmScreen(alarm));
 
   if (alarm != ALARM_NONE && now - lastMail >= ALARM_MAIL_INTERVAL_MS) {
@@ -127,7 +150,8 @@ void processPovotoAlarms() {
   // Silent in debug mode (bench boards); screen and LEDs still signal.
   if (alarm != ALARM_NONE && (lastBeeps == 0 || now - lastBeeps >= ALARM_BEEP_INTERVAL_MS)) {
     lastBeeps = now | 1;
-    if (!debugging) buzzerBeepRequest = alarm == ALARM_PRESSURE_SENSOR ? 4 : 3;
+    if (!debugging)
+      buzzerBeepRequest = alarm == ALARM_PRESSURE_SENSOR ? 4 : alarm == ALARM_RELIEF ? 5 : 3;
   }
 
   const bool alarmBlink = (now % ALARM_BLINK_PERIOD_MS) < ALARM_BLINK_PERIOD_MS / 2;

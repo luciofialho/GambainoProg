@@ -33,6 +33,8 @@ struct ReliefLogData {
   float adjustedPressureAfterRelief;
   float adjustedEquilibriumPressure;
   float tankPressureAtClose; // expansion tank at valve close, gauge
+  float reliefDropRatio;     // measured / expected drop (NAN = not checked, docs/alarms.md)
+  const char *reliefCheck;   // "ok", "leak", "no-effect" or "" (not checked)
   float liquidMassInGasVentingPercent;
   // Final residual of the previous tank cycle, sampled at this relief's opening.
   float expansionTankResidualMoles;

@@ -1318,6 +1318,13 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
         num(speed.ventingAir[0], 5) + ", d " + num(speed.ventingAir[1], 5) + ", e " + num(speed.ventingAir[2], 5) +
         " &rarr; CO2 c " + num(speed.ventingCO2[0], 5) + ", d " + num(speed.ventingCO2[1], 5) + ", e " + num(speed.ventingCO2[2], 5) +
         "; RMSE " + num(speed.ventingRmse, 5) + " (" + String(speed.ventingPoints) + " points).</p>" +
+        "<p><strong>Valve flow against the configured curve</strong> (CO2 c " + num(speed.ventingConfigured[0], 5) +
+        ", d " + num(speed.ventingConfigured[1], 5) + ", e " + num(speed.ventingConfigured[2], 5) + "): " +
+        (isfinite(speed.ventingFlowVsConfig)
+            ? (speed.ventingFlowVsConfig >= 0.0f ? "+" : "") + num(100.0f * speed.ventingFlowVsConfig, 2) + "%" +
+              (isfinite(speed.ventingFlowVsConfigSd) ? " (sd " + num(100.0f * speed.ventingFlowVsConfigSd, 2) + "%" : String(" (")) +
+              ", " + String(speed.ventingFlowVsConfigPoints) + " releases). Negative = the valve passes less gas than configured."
+            : String("n/a")) + "</p>" +
         "<form action='/calibration/savespeed' method='POST'><button name='target' value='cde'>Save c, d, e (CO2)</button></form>";
     }
   }

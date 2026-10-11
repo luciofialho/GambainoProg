@@ -6,10 +6,35 @@ precedência e cuida da sinalização. Cada verificação fica no seu módulo.
 | Precedência | Alarme | Condição | Bipes |
 |---|---|---|---|
 | 1 | Sensor de pressão (`checkPressureSensor()`, PressureControl.cpp) | Fermenting ou Conditioning, alvo de pressão definido, leitura inválida há 10 s | 4 por minuto |
-| 2 | Termômetro do fermentador (`fermenterThermometerAlarm()`, TermperatureControl.cpp) | Fermenting ou Conditioning, alvo de temperatura definido, termômetro não atribuído ou sem leitura válida há 60 s | 3 por minuto |
+| 2 | Relief (`evaluateReliefCheck()`, PressureControl.cpp) | Fermenting: dois reliefs seguidos com queda > 2× a esperada (vazamento) ou < 0,25× (relief sem efeito) | 5 por minuto |
+| 3 | Termômetro do fermentador (`fermenterThermometerAlarm()`, TermperatureControl.cpp) | Fermenting ou Conditioning, alvo de temperatura definido, termômetro não atribuído ou sem leitura válida há 60 s | 3 por minuto |
 
-Com os dois ativos, sinaliza só o de pressão. O `/getstatus` mostra o estado de
-cada um ("Pressure sensor check" e "Fermenter thermometer alarm").
+Com mais de um ativo, sinaliza só o de maior precedência. O `/getstatus` mostra o
+estado de cada um ("Pressure sensor check", "Relief check" e "Fermenter
+thermometer alarm").
+
+## Verificação de cada relief
+
+A queda de cada relief (fator `adjustedEquilibriumPressure / pressureOnReliefExtrap`,
+o mesmo da medição do headspace) é comparada com a esperada pelo headspace
+**aplicado** (média de 24 h, referência congelada): queda esperada = Vr / (V + Vr),
+com Vr o volume de contabilidade do tanque (k e Tref).
+
+- **Vazamento** (> 2×): com a ligação válvula-tanque solta, o gás vai direto para a
+  atmosfera pela válvula e a queda fica ~2,9× (a 1,9 bar) a ~3,8× (a 0,5 bar) a
+  esperada com o tanque de 2 L (ensaio de ventilação de 18/09); por isso o limiar
+  é 2× e não 4×.
+- **Relief sem efeito** (< 0,25×): válvula que não abre ou tanque que não ventilou.
+- **Quarentena:** o relief suspeito não alimenta a EMA, a média de 24 h nem as
+  amostras iniciais; o CO2 dele vem do lado do fermentador (queda × headspace de
+  referência / RT, aplicado via `tankPressureAtClose`). Dois seguidos do mesmo
+  tipo disparam o alarme; um relief normal o apaga e volta a alimentar o
+  headspace. Um suspeito isolado é descartado sem alarme.
+- Não avalia: janelas de task, determinação de volume, primeiros 3 reliefs (sem
+  headspace estabelecido), alarme do sensor de pressão ativo, pressão de debug
+  sobrescrita, pressão no relief < 0,1 bar. Fora de Fermenting o alarme não vale.
+- Log Relief: colunas `ReliefDropRatio` (medida/esperada) e `ReliefCheck` (ok,
+  leak, no-effect ou vazio). Relief normal: nada muda no headspace nem no CO2.
 
 ## Leitura de pressão inválida
 

@@ -33,6 +33,7 @@ STRING_MAX = {
     "startText": 19,                              # ISO local time
     "endText": 19,
     "data.co2Mode": 15,                           # "half-life-armed"
+    'data.reliefCheck ? data.reliefCheck : ""': 9, # "no-effect"
 }
 UNSIGNED_HINTS = ("Millis", "millis()", "reliefNumber",
                   "totalReliefCount", "previousReliefNumber", "valveOpened",

@@ -448,6 +448,8 @@ void doReliefDataLog(const ReliefLogData &data) {
     GLogAddData("DailyHours");
     GLogAddData("DailyState");
     GLogAddData("ExpansionTankTemperature");
+    GLogAddData("ReliefDropRatio"); // measured / expected drop (docs/alarms.md)
+    GLogAddData("ReliefCheck");     // ok, leak, no-effect or empty (not checked)
     headerWritten = sendLogHeader("Relief", headerAttempts);
   }
 
@@ -515,6 +517,8 @@ void doReliefDataLog(const ReliefLogData &data) {
   GLogAddData((int)data.dailyHours);
   GLogAddData(data.dailyState ? data.dailyState : "");
   GLogAddData(isValidTemp(data.expansionTankTemperature) ? data.expansionTankTemperature : NAN, 2);
+  GLogAddData(data.reliefDropRatio, 3);
+  GLogAddData(data.reliefCheck ? data.reliefCheck : "");
   GLogSend();
 }
 

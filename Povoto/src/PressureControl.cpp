@@ -325,6 +325,9 @@ struct SpeedRecord {
   float p1, pClose, p15, p30, p60, p2, pl, r;
   float waitSeconds;
   float tempFermP1, tempAmbP1, tempFermP2, tempAmbP2;
+  // Venting: configured F(P1) for CO2 and this release's flow against it
+  // (ln F / ln F_configured - 1), taken at the end of the test.
+  float fConfigured, flowVsConfig;
   bool valid;
 };
 static SpeedRecord speedRecords[SPEED_TEST_COUNT][SPEED_MAX_RECORDS];
@@ -2467,6 +2470,99 @@ String describePressureSensor() {
   return String(text);
 }
 
+// ===== Relief check (docs/alarms.md) =====
+// Each fermentation relief's drop against the one expected from the applied
+// headspace (24-hour average, frozen reference): above 2x, the gas left
+// elsewhere (leak between the valve and the expansion tank, ~3x with the tank
+// off); below 0.25x, the relief had no effect (valve not opening, tank not
+// venting). A suspect relief is quarantined (does not feed the headspace, CO2
+// from the fermenter side); two consecutive of the same kind raise the alarm
+// and an OK relief clears it.
+static constexpr float RELIEF_LEAK_DROP_RATIO = 2.0f;
+static constexpr float RELIEF_NO_EFFECT_DROP_RATIO = 0.25f;
+static constexpr uint8_t RELIEF_CHECK_CONSECUTIVE = 2;
+static constexpr float RELIEF_CHECK_MIN_PRESSURE = 0.1f; // bar
+static constexpr uint8_t RELIEF_CHECK_SKIPPED = 0;
+static constexpr uint8_t RELIEF_CHECK_OK = 1;
+static constexpr uint8_t RELIEF_CHECK_LEAK = 2;
+static constexpr uint8_t RELIEF_CHECK_NO_EFFECT = 3;
+static uint8_t reliefCheckLast = RELIEF_CHECK_SKIPPED;  // last evaluated relief
+static uint8_t reliefCheckRun = 0;                      // consecutive suspects of that kind
+static uint8_t reliefCheckAlarmKind = RELIEF_CHECK_OK;  // LEAK / NO_EFFECT while the alarm lasts
+static float reliefCheckDropRatio = NAN;
+static float reliefCheckExpectedDrop = NAN;
+static float reliefCheckMeasuredDrop = NAN;
+static float reliefCheckPressure = NAN;
+static float reliefCheckReference = NAN;
+
+static const char *reliefCheckLabel(uint8_t check) {
+  switch (check) {
+    case RELIEF_CHECK_OK: return "ok";
+    case RELIEF_CHECK_LEAK: return "leak";
+    case RELIEF_CHECK_NO_EFFECT: return "no-effect";
+    default: return "";
+  }
+}
+
+static uint8_t evaluateReliefCheck(float dropFactor, bool taskWindow) {
+  const float reference = CountersData.headSpaceVolume;
+  const float relief = fermentationReliefVolume();
+  const bool applicable = !taskWindow && !volumeDeterminationActive && !pressureSensorAlarm &&
+      !(debugging && debugPressureOverride) && isfinite(headspaceFiltered) &&
+      CountersData.totalReliefCount >= 3 && isfinite(reference) && reference > 0.0f &&
+      isfinite(relief) && relief > 0.0f && isfinite(dropFactor) &&
+      isfinite(pressureOnReliefExtrap) && pressureOnReliefExtrap >= RELIEF_CHECK_MIN_PRESSURE;
+  reliefCheckDropRatio = NAN;
+  uint8_t result = RELIEF_CHECK_SKIPPED;
+  if (applicable) {
+    // Same model as the headspace measurement: drop fraction Vr / (V + Vr).
+    const float expected = relief / (reference + relief);
+    const float measured = 1.0f - dropFactor;
+    reliefCheckDropRatio = measured / expected;
+    reliefCheckExpectedDrop = expected * pressureOnReliefExtrap;
+    reliefCheckMeasuredDrop = measured * pressureOnReliefExtrap;
+    reliefCheckPressure = pressureOnReliefExtrap;
+    reliefCheckReference = reference;
+    result = reliefCheckDropRatio > RELIEF_LEAK_DROP_RATIO ? RELIEF_CHECK_LEAK
+           : reliefCheckDropRatio < RELIEF_NO_EFFECT_DROP_RATIO ? RELIEF_CHECK_NO_EFFECT : RELIEF_CHECK_OK;
+  }
+  if (result == RELIEF_CHECK_LEAK || result == RELIEF_CHECK_NO_EFFECT) {
+    reliefCheckRun = result == reliefCheckLast ? reliefCheckRun + 1 : 1;
+    if (reliefCheckRun >= RELIEF_CHECK_CONSECUTIVE) reliefCheckAlarmKind = result;
+  } else if (result == RELIEF_CHECK_OK) {
+    reliefCheckRun = 0;
+    reliefCheckAlarmKind = RELIEF_CHECK_OK;
+  }
+  if (result != RELIEF_CHECK_SKIPPED) reliefCheckLast = result;
+  if (result == RELIEF_CHECK_LEAK || result == RELIEF_CHECK_NO_EFFECT)
+    Serial.printf("[RELIEF] suspect %s: drop %.4f bar, expected %.4f bar (%.2fx), run %u\n",
+                  reliefCheckLabel(result), reliefCheckMeasuredDrop, reliefCheckExpectedDrop,
+                  reliefCheckDropRatio, reliefCheckRun);
+  return result;
+}
+
+bool reliefCheckAlarmActive() {
+  return reliefCheckAlarmKind != RELIEF_CHECK_OK && SetPointData.mode == MODE_FERMENTING &&
+      !volumeDeterminationActive && !(debugging && debugPressureOverride);
+}
+
+bool reliefCheckAlarmIsLeak() {
+  return reliefCheckAlarmKind == RELIEF_CHECK_LEAK;
+}
+
+// Alarm e-mail (PovotoAlarms.cpp).
+String describeReliefCheck() {
+  char text[320];
+  snprintf(text, sizeof(text),
+           "Relief check: %s\nLast relief drop: %.4f bar, expected %.4f bar (%.2fx; alarm above %.1fx or below %.2fx)\n"
+           "Pressure at the relief: %.3f bar\nReference headspace: %.2f L\n",
+           reliefCheckAlarmKind == RELIEF_CHECK_LEAK ? "drop too large (leak between valve and expansion tank?)"
+               : reliefCheckAlarmKind == RELIEF_CHECK_NO_EFFECT ? "no pressure drop (valve not opening or tank not venting?)" : "ok",
+           reliefCheckMeasuredDrop, reliefCheckExpectedDrop, reliefCheckDropRatio,
+           RELIEF_LEAK_DROP_RATIO, RELIEF_NO_EFFECT_DROP_RATIO, reliefCheckPressure, reliefCheckReference);
+  return String(text);
+}
+
 static char calibrationDisplayLines[3][80] = {};
 
 static void showVolumeStatus(const char *line1, const char *line2, const char *line3) {
@@ -2842,6 +2938,7 @@ void processPressure(bool afterRelief) {
   float headspaceMeasuredForLog = NAN;    // [DAILY-HS]
   bool collectingInitialHeadspaceSamples = false;
   float ejectedMols = 0.0f;
+  uint8_t reliefCheckResult = RELIEF_CHECK_SKIPPED; // [RELIEF-CHECK]
   float ventingElapsedAtLogSeconds = NAN;
   float ejectedMolsBeforeLiquidCorrection = 0.0f;
 
@@ -2899,8 +2996,17 @@ void processPressure(bool afterRelief) {
     }
 
     const bool skipTaskWindow = reliefOpenedDuringTask || taskWindowType != 0;
-    if (!skipTaskWindow && isfinite(instantPressureDropFactor) && instantPressureDropFactor > 0.0f &&
-        instantPressureDropFactor < 1.0f) {
+    // [RELIEF-CHECK] A suspect relief (leak or no effect, docs/alarms.md) does
+    // not feed the headspace, and its CO2 is the fermenter-side loss over the
+    // reference headspace instead of the tank-side estimate.
+    reliefCheckResult = evaluateReliefCheck(instantPressureDropFactor, skipTaskWindow);
+    const bool reliefQuarantined = reliefCheckResult == RELIEF_CHECK_LEAK ||
+                                   reliefCheckResult == RELIEF_CHECK_NO_EFFECT;
+    if (reliefQuarantined)
+      tankPressureAtClose = fmaxf(0.0f, pressureOnReliefExtrap - adjustedEquilibriumPressure) *
+          CountersData.headSpaceVolume / fermentationReliefVolume();
+    if (!skipTaskWindow && !reliefQuarantined && isfinite(instantPressureDropFactor) &&
+        instantPressureDropFactor > 0.0f && instantPressureDropFactor < 1.0f) {
       const float headspaceMeasured =
         volumeEstimationFromPressureDrop(instantPressureDropFactor);
       const bool validHeadspaceMeasured = isfinite(headspaceMeasured) &&
@@ -2939,6 +3045,8 @@ void processPressure(bool afterRelief) {
       gasHeadspaceUpdateStatus = "updated_adjusted_equilibrium";
     } else if (gasFlowCycle && collectingInitialHeadspaceSamples) {
       gasHeadspaceUpdateStatus = "collecting_initial_samples";
+    } else if (gasFlowCycle && reliefQuarantined) {
+      gasHeadspaceUpdateStatus = "skipped_relief_check";
     } else if (gasFlowCycle && skipTaskWindow) {
       gasHeadspaceUpdateStatus = "skipped_task_window";
     } else if (gasFlowCycle &&
@@ -3101,6 +3209,8 @@ void processPressure(bool afterRelief) {
     reliefLog.adjustedPressureAfterRelief = adjustedPressureAfterRelief;
     reliefLog.adjustedEquilibriumPressure = adjustedEquilibriumPressure;
     reliefLog.tankPressureAtClose = tankPressureAtClose;
+    reliefLog.reliefDropRatio = reliefCheckResult != RELIEF_CHECK_SKIPPED ? reliefCheckDropRatio : NAN;
+    reliefLog.reliefCheck = reliefCheckLabel(reliefCheckResult);
     reliefLog.liquidMassInGasVentingPercent = FMTData.liquidMassInGasVentingPercent;
     reliefLog.expansionTankResidualMoles = gasPreviousTankValid ?
       (float)gasPreviousTankRemainingMoles : NAN;
@@ -4063,12 +4173,39 @@ static void computeVentingResults() {
   }
   out.ventingRmse = m ? (float)sqrt(sse / m) : NAN;
   out.ventingPoints = m;
+
+  // Change against the configured curve (CO2), to follow the valve over time
+  // (e.g. before/after cleaning it). The flow of each release is -ln F: the
+  // ratio of the logarithms is the flow against the configured one.
+  out.ventingConfigured[0] = FMTData.ventingResidualCoefficientA;
+  out.ventingConfigured[1] = FMTData.ventingResidualCoefficientB;
+  out.ventingConfigured[2] = FMTData.ventingResidualCoefficientC;
+  double sum = 0.0, sumSq = 0.0;
+  uint8_t compared = 0;
+  for (uint8_t i = 0; i < n; ++i) {
+    SpeedRecord &r = speedRecords[SPEED_TEST_VENTING][i];
+    r.fConfigured = (float)GasFlow::ventingResidualFactorAtPressure(r.p1, out.ventingConfigured[0],
+                                                                    out.ventingConfigured[1], out.ventingConfigured[2]);
+    const float fCO2 = powf(r.r, speedFlowFactor());
+    r.flowVsConfig = (r.valid && fCO2 > 0.0f && fCO2 < 1.0f && r.fConfigured > 0.0f && r.fConfigured < 1.0f)
+        ? logf(fCO2) / logf(r.fConfigured) - 1.0f : NAN;
+    if (!isfinite(r.flowVsConfig)) continue;
+    sum += r.flowVsConfig;
+    sumSq += (double)r.flowVsConfig * r.flowVsConfig;
+    ++compared;
+  }
+  out.ventingFlowVsConfigPoints = compared;
+  out.ventingFlowVsConfig = compared ? (float)(sum / compared) : NAN;
+  out.ventingFlowVsConfigSd = compared > 1
+      ? (float)sqrt(fmax(0.0, (sumSq - sum * sum / compared) / (compared - 1))) : NAN;
   out.ventingAvailable = out.ventingAvailable &&
       GasFlow::validVentingResidualCurve(out.ventingCO2[0], out.ventingCO2[1], out.ventingCO2[2], FMTData.maximumPressure);
 }
 
 static void speedOpenValve(SpeedRecord &record, uint8_t index, float p1, unsigned long now) {
   record = {};
+  record.fConfigured = NAN; // filled at the end of a venting test
+  record.flowVsConfig = NAN;
   record.epoch = NTPEpoch();
   record.p1 = p1;
   record.pl = p1 * speedVolumeFactor;
@@ -4188,7 +4325,7 @@ void handleSpeedCalibrationCSV(AsyncWebServerRequest *request) {
   const bool gasCO2 = test == SPEED_TEST_EXPANSION ? speedResults.expansionGasCO2
                     : test == SPEED_TEST_K_FLOOR ? speedResults.kFloorGasCO2 : speedResults.ventingGasCO2;
   String csv = "data_hora;epoch;teste;gas;FMTVolume;Vr;Patm;temp_ferm_P1;temp_amb_P1;temp_ferm_P2;temp_amb_P2;";
-  csv += venting ? "liberacao;tempo_pedido_s;tempo_aberto_s;P1;P_fechamento;P_15s;P_30s;P_60s;P2;espera_s;F;valido\n"
+  csv += venting ? "liberacao;tempo_pedido_s;tempo_aberto_s;P1;P_fechamento;P_15s;P_30s;P_60s;P2;espera_s;F;valido;F_configurado_CO2;vazao_vs_config_pct\n"
                  : "medicao;tempo_pedido_s;tempo_aberto_s;P1;P_fechamento;P_15s;P_30s;P_60s;P2;espera_s;PL;R;R_x_P1;k_efetivo\n";
   csv.reserve(8192);
   char common[64];
@@ -4222,7 +4359,10 @@ void handleSpeedCalibrationCSV(AsyncWebServerRequest *request) {
     char tail[96];
     if (venting) {
       speedFloatCsv(b[16], 16, r.r, 6);
-      snprintf(tail, sizeof(tail), "%s;%s\n", b[16], r.valid ? "sim" : "nao");
+      speedFloatCsv(b[17], 16, r.fConfigured, 6);
+      char flowPct[16];
+      speedFloatCsv(flowPct, sizeof(flowPct), 100.0f * r.flowVsConfig, 3);
+      snprintf(tail, sizeof(tail), "%s;%s;%s;%s\n", b[16], r.valid ? "sim" : "nao", b[17], flowPct);
     } else {
       char pl[16], rr[16], rp[16], k[16];
       speedFloatCsv(pl, sizeof(pl), r.pl, 6);
@@ -4679,6 +4819,11 @@ char *getPressureControlStatus(char *st) {
            pressureSensorProblemText[0] ? pressureSensorProblemText : "OK",
            pressureSensorCurrentLow(), pressureSensorCurrentHigh(),
            pressureSensorAlarm ? "ACTIVE" : "off");
+  strnncat(st, tmp, PRESSURE_STATUS_SIZE);
+  snprintf(tmp, sizeof(tmp), "Relief check: last %s, drop %.4f / expected %.4f bar (%.2fx), run %u; alarm %s<br>",
+           reliefCheckLast == RELIEF_CHECK_SKIPPED ? "none" : reliefCheckLabel(reliefCheckLast),
+           reliefCheckMeasuredDrop, reliefCheckExpectedDrop, reliefCheckDropRatio, reliefCheckRun,
+           reliefCheckAlarmActive() ? reliefCheckLabel(reliefCheckAlarmKind) : "off");
   strnncat(st, tmp, PRESSURE_STATUS_SIZE);
 
   // --- Diagnóstico de relés ---

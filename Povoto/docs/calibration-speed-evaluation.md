@@ -201,7 +201,10 @@ convertido. Conversão ar → CO2 do escoamento e da ventilação: fator
   `temp_ferm_P1`, `temp_ferm_P2`, `temp_amb_P1`, `temp_amb_P2`, `tempo_aberto_s`,
   `P1`, `P_fechamento` (~0,5 s após fechar), `P_15s`, `P_30s`, `P_60s`, `P2`,
   `espera_s`; expansão: `PL`, `R`, `R_x_P1`, `k_efetivo = 1/(1 − R)`; ventilação:
-  `F = P2/P1`.
+  `F = P2/P1`, `F_configurado_CO2` (curva c, d, e configurada no fim do ensaio) e
+  `vazao_vs_config_pct` = ln F(CO2) / ln F_configurado − 1 (vazão da válvula
+  contra a configurada; a página mostra a média e o desvio). Serve para seguir a
+  válvula no tempo (sujeira, antes/depois de limpar).
 - Retirar `/calibration/fit-expansion`.
 
 ### 8.2 Rotinas, saídas e uso

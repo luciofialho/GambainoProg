@@ -36,7 +36,7 @@ gás assentar e só então aperte o botão. Não mexa no equipamento durante o e
 | 3 | k & piso, pressão baixa | **~0,53 bar** (alivie até ~0,53 e espere 10 min) | Gas = Air, **k & floor** | ~15 min | k & floor CSV |
 | 4 | Volume rápida, pressão alta | ≥ 1,9 bar (repressurize) | Gas = Air, **Volume determination (fast)** | ~1 h | Pressure history |
 | 4b | Volume rápida, pressão baixa | **~0,6 bar** (alivie até ~0,6 e espere 10 min) | Gas = Air, **Volume determination (fast)** | ~1 h | Pressure history |
-| 5 | Ventilação (opcional) | ≥ 1,9 bar, **saída da válvula ligada à atmosfera** | Gas = Air, **Venting** | ~10 min | Venting CSV |
+| 5 | Ventilação | ≥ 1,9 bar, **saída da válvula ligada à atmosfera** | Gas = Air, **Venting** | ~10 min | Venting CSV |
 
 Notas:
 
@@ -57,8 +57,13 @@ Notas:
   ensaio 2 (de ~1,9 para ~0,5 bar), a causa é o sensor; se ficar igual, é volume.
 - Baixe o CSV de cada ensaio **antes** de começar o próximo do mesmo tipo (o 3
   substitui o 2 e o 4b substitui o 4 na memória da placa).
-- O ensaio 5 só se a montagem com a saída para a atmosfera for prática; a
-  ventilação pesa pouco na contabilidade.
+- O ensaio 5 (ventilação) agora também compara a vazão da válvula com a curva
+  configurada: a página mostra "Valve flow against the configured curve" em %
+  (negativo = passa menos gás que o configurado) e o CSV traz, por liberação,
+  `F_configurado_CO2` e `vazao_vs_config_pct`. Ele mede quanto a válvula muda
+  com o tempo (sujeira) e é a base para avaliar a ventilação direta sem tanque.
+  Ideal: repeti-lo ao fim de um lote, **antes de limpar a válvula**, e de novo
+  depois de limpá-la.
 - Depois de cada ensaio, copie (ou fotografe) o bloco de resultados que aparece
   na página Calibration.
 
@@ -91,7 +96,7 @@ AAAA-MM-DD"*. Eu leio a memória e a documentação e analiso.
 | Volume rápida (ensaio 4) | com o kAir novo e o piso explicado, ~129,6 L | validação cruzada |
 | Volume rápida baixa (4b) contra a alta (4) | mesmo volume (~129,6 L) e mesmo k | k diferente confirma a dependência com a pressão vista nos ensaios 2 e 3 |
 | Pressões aos 15/30/60 s | quanto tempo o fermentador leva para estabilizar | ajustar a espera mínima |
-| Ventilação (ensaio 5) | RMSE da parábola | gravar c, d, e (CO2) |
+| Ventilação (ensaio 5) | RMSE da parábola; vazão contra a configurada | gravar c, d, e (CO2); a diferença mostra a mudança da válvula desde a última calibração |
 
 Depois da análise eu indico quais botões apertar (ou faço a mudança da fase C).
 O kCO2 continua 1,08 até a fase C; ele é refinado pelas colunas
