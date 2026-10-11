@@ -13,6 +13,7 @@
 #include "__NumFilters.h"
 #include <LittleFS.h>
 #include "PovotoFilesystem.h"
+#include "AtmosphericPressure.h"
 #include <math.h>
 #include <algorithm>
 
@@ -3194,6 +3195,7 @@ void processPressure(bool afterRelief) {
     reliefLog.temperature = ControlData.temperature;
     reliefLog.targetPressure = SetPointData.setPointPressure;
     reliefLog.atmosphericPressure = Patm;
+    reliefLog.atmosphericPressureSource = atmosphericPressureSourceLabel();
     reliefLog.environmentTemperature = environmentTemp;
     reliefLog.expansionTankTemperature = expansionTankTemp;
     reliefLog.tankReferenceTemperature = expansionTankReferenceKelvin(
@@ -4718,9 +4720,10 @@ char *getPressureControlStatus(char *st) {
       + CountersData.CO2InSolution + headSpaceCO2Mols + expansionTankInventoryMoles();
 
     snprintf(tmp, sizeof(tmp),
-             "Measured pressure: %.3f bar<br>Target pressure: %.3f bar<br>Atmospheric pressure: %.3f bar<br>",
-             ControlData.pressure, SetPointData.setPointPressure, Patm);
+             "Measured pressure: %.3f bar<br>Target pressure: %.3f bar<br>",
+             ControlData.pressure, SetPointData.setPointPressure);
     strnncat(st, tmp, PRESSURE_STATUS_SIZE);
+    appendAtmosphericPressureStatus(st, PRESSURE_STATUS_SIZE);
     snprintf(tmp, sizeof(tmp),
              "INA: Filtered current reading: %.2f mA Shunt voltage: %.2f mV Momentary current: %.2f mA<br>",
              currentReading, ina226.getShuntVoltage_mV(), readCurrentFromINA226mA());

@@ -246,6 +246,7 @@ bool writeBatchDataToNIV();
 bool readSetPointDataFromEEPROM();
 bool writeSetPointDataToNIV();
 
+// Re-selects the atmospheric pressure source (altitude changed); AtmosphericPressure.cpp.
 void updatePatmFromFMTAltitude();
 
 void resetCountersForNewBatch();

@@ -34,6 +34,7 @@
 #include "CloudSync.h"
 #include "PovotoFilesystem.h"
 #include "PovotoGraphScreen.h"
+#include "AtmosphericPressure.h"
 #include <esp_system.h>
 #include <esp_heap_caps.h>
 
@@ -196,7 +197,15 @@ static void handlePovotoEspNow(char type, const char *payload) {
     cloudSyncReceive(payload, espNowSenderMac()); // applied in loop(), SideKick only
   }
   else if (type == ENVTEMPPACKET) {
-    setEnvironmentTemperatureFromPacket(payload);
+    // The SideKick's own thermometer is preferred over the BrewCore's.
+    const uint8_t *sender = espNowSenderMac();
+    bool sidekickMac = false;
+    for (uint8_t i = 0; i < 6; ++i) sidekickMac = sidekickMac || peerSideKick.mac[i] != 0;
+    sidekickMac = sidekickMac && sender && memcmp(sender, peerSideKick.mac, 6) == 0;
+    setEnvironmentTemperatureFromPacket(payload, sidekickMac);
+  }
+  else if (type == ATMPRESSUREPACKET) {
+    setAtmosphericPressureFromPacket(payload);
   }
 }
 
@@ -364,6 +373,7 @@ void setup() {
   
   
   Wire.begin(PINSDA, PINSCL); 
+  atmosphericPressureBegin(); // BMP581 on this bus, if present (docs/atmospheric-pressure.md)
 
   Wire.beginTransmission(FT_ADDR);
   bool touchPresent = (Wire.endTransmission() == 0);
@@ -445,6 +455,7 @@ void loop() {
   }
 
   temperatureControl();
+  atmosphericPressureProcess();
   // While in transfer mode (MODE_BREWING_TRANSFERING), report fermenter temp to BrewCore every 30s
   {
     static unsigned long lastFermReport = 0;

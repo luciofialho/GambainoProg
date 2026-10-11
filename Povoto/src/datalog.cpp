@@ -11,6 +11,7 @@
 #include <math.h>
 #include <IOTK_NTP.h>
 #include <WiFi.h>
+#include "AtmosphericPressure.h"
 
 #define BREWFATHER_SEND_INTERVAL_MS 600000UL  // 10 minutos
 #define BREWFATHER_RETRY_INTERVAL_MS 30000UL  // 15 segundos entre tentativas
@@ -281,6 +282,7 @@ void doDataLog() {
     GLogAddData("DissolvedCO2CriteriaState");
     GLogAddData("OperatingMode");
     GLogAddData("AtmosphericPressure");
+    GLogAddData("AtmosphericPressureSource"); // sensor, sidekick or altitude
     GLogAddData("EnvironmentTemperature");
     // [DAILY-HS] 24-hour headspace average. The tasks (dump included) have
     // their own log, Task.
@@ -333,6 +335,7 @@ void doDataLog() {
     GLogAddData(co2.criteriaState);
     GLogAddData((int)SetPointData.mode);
     GLogAddData(Patm, 6);
+    GLogAddData(atmosphericPressureSourceLabel());
     GLogAddData(isValidTemp(environmentTemp) ? environmentTemp : NAN, 2);
     // [DAILY-HS]
     const DailyHeadspaceLogData dailyHs = getDailyHeadspaceLogData();
@@ -393,6 +396,7 @@ void doReliefDataLog(const ReliefLogData &data) {
     GLogAddData("Temperature");
     GLogAddData("PressureTarget");
     GLogAddData("AtmosphericPressure");
+    GLogAddData("AtmosphericPressureSource");
     GLogAddData("EnvironmentTemperature");
     GLogAddData("TankReferenceTemperature"); // Tref of the expansion tank (docs/expansion-tank-k.md)
     GLogAddData("ReliefVolume");
@@ -462,6 +466,7 @@ void doReliefDataLog(const ReliefLogData &data) {
   GLogAddData(data.temperature, 2);
   GLogAddData(data.targetPressure, 6);
   GLogAddData(data.atmosphericPressure, 6);
+  GLogAddData(data.atmosphericPressureSource ? data.atmosphericPressureSource : "");
   GLogAddData(isValidTemp(data.environmentTemperature) ? data.environmentTemperature : NAN, 2);
   GLogAddData(data.tankReferenceTemperature, 2);
   GLogAddData(data.reliefVolume, 3);

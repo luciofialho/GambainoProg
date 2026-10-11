@@ -120,15 +120,6 @@ CountersData_t CountersData = {
 // =============
 
 
-void updatePatmFromFMTAltitude() {
-  float altitude = FMTData.FMTAltitude;
-  if (altitude < 0.0f) {
-    altitude = 0.0f;
-  }
-
-  Patm = 1.01325f * powf(1.0f - (2.25577e-5f * altitude), 5.25588f);
-}
-
 // Direct per-field NVS access. Schema changes trigger a startup rewrite.
 static bool validCycleMinutes(float value) {
   return isfinite(value) && value >= 0.01f && value <= 1440.0f;

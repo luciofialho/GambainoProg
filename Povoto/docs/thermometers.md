@@ -7,12 +7,12 @@ Código: `DallasSensors.cpp`; resolução das temperaturas em
 | Papel | Com sensor atribuído | Sem sensor atribuído |
 |---|---|---|
 | Fermentador (`dallasTemperature`) | o sensor atribuído | sem leitura: controle de temperatura em IDLE |
-| Ambiente (`environmentTemp`) | o sensor atribuído | o valor do SideKick (ESP-NOW, expira em 10 min), como antes |
+| Ambiente (`environmentTemp`) | o sensor atribuído | o valor recebido por ESP-NOW (pacote `'V'`, expira em 10 min): o do SideKick (Dallas próprio, opcional) antes do do BrewCore |
 | Tanque de expansão (`expansionTankTemp`) | o sensor atribuído | o mesmo valor do ambiente |
 
 - Com sensor atribuído não há fallback: se ele parar de responder, a última
   leitura válida vale por 60 s (a mesma tolerância do fermentador) e depois o
-  valor passa a inválido (`NOTaTEMP`). O ambiente não volta ao SideKick.
+  valor passa a inválido (`NOTaTEMP`). O ambiente não volta ao ESP-NOW.
 - Nada é escolhido automaticamente, nem na atualização a partir do firmware de
   um sensor só: todo papel é atribuído na página. Se o termômetro do fermentador
   falhar, outro sensor (o do ambiente, por exemplo) nunca assume o controle, o
@@ -23,7 +23,10 @@ Código: `DallasSensors.cpp`; resolução das temperaturas em
   LEDs; `docs/alarms.md`). Vale também no modo debug (os 18 °C fictícios
   esconderiam o problema); não toca com a temperatura sobrescrita na página de
   debug.
-- Sem ambiente válido (SideKick ausente há mais de 10 min e sem Dallas de
+- O remetente do `'V'` é reconhecido pelo MAC do peer SideKick; qualquer outro
+  é tratado como BrewCore. O `/getstatus` mostra a fonte em uso (`Dallas`,
+  `SideKick`, `BrewCore` ou `none received`). docs/atmospheric-pressure.md.
+- Sem ambiente válido (nada recebido há mais de 10 min e sem Dallas de
   ambiente), `environmentTemp` e `expansionTankTemp` ficam inválidos: os logs
   ficam vazios e o modelo do tanque usa Tref = Tferm (`docs/expansion-tank-k.md`).
 - `expansionTankTemp` é o "Tamb" do modelo do tanque de expansão

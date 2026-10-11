@@ -664,7 +664,7 @@ static void appendDallasRolesSection(char *html, size_t capacity) {
 
   const char *emptyOption[DALLAS_ROLE_COUNT] = {
     "Not assigned (no temperature control)",
-    "SideKick (received by ESP-NOW)",
+    "Broadcast by ESP-NOW (SideKick, else BrewCore)",
     "Same as environment"};
   const float current[DALLAS_ROLE_COUNT] = {dallasTemperature, environmentTemp, expansionTankTemp};
   const char *source[DALLAS_ROLE_COUNT] = {"Dallas", environmentTempSource(), expansionTankTempSource()};

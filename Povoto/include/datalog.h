@@ -19,6 +19,7 @@ struct ReliefLogData {
   float temperature;
   float targetPressure;
   float atmosphericPressure;
+  const char *atmosphericPressureSource; // "sensor", "sidekick" or "altitude" (docs/atmospheric-pressure.md)
   float environmentTemperature;
   float expansionTankTemperature; // own Dallas, else the environment (docs/thermometers.md)
   float tankReferenceTemperature; // expansion tank Tref, C (docs/expansion-tank-k.md)

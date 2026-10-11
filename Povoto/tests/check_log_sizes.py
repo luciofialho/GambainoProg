@@ -34,6 +34,8 @@ STRING_MAX = {
     "endText": 19,
     "data.co2Mode": 15,                           # "half-life-armed"
     'data.reliefCheck ? data.reliefCheck : ""': 9, # "no-effect"
+    "atmosphericPressureSourceLabel()": 8,        # "sidekick" / "altitude"
+    'data.atmosphericPressureSource ? data.atmosphericPressureSource : ""': 8,
 }
 UNSIGNED_HINTS = ("Millis", "millis()", "reliefNumber",
                   "totalReliefCount", "previousReliefNumber", "valveOpened",

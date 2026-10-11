@@ -15,6 +15,7 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[1]
 read = lambda p: (root / p).read_text(encoding="utf-8").replace("\r\n", "\n")
 povoto, temp, press = read("src/Povoto.cpp"), read("src/TermperatureControl.cpp"), read("src/PressureControl.cpp")
+atmospheric = read("src/AtmosphericPressure.cpp")
 press_h = read("include/PressureControl.h")
 
 PRESSURE_LIMIT = int(re.search(r"PRESSURE_STATUS_SIZE\s*=\s*(\d+)", press_h).group(1)) - 1
@@ -78,6 +79,8 @@ def section(src, signature):
 temperature = section(temp, "char *getTemperatureControlStatus(char *st)")
 pressure = section(press, "char *getPressureControlStatus(char *st)")
 stability = section(press, "static void appendStabilityStatus(")
+# Appended to the pressure section with the same limit (lines built in line[200]).
+pressure += section(atmospheric, "void appendAtmosphericPressureStatus(")
 own = section(povoto, "char * getPovotoStatus(char *st)") + section(povoto, "void handlePovotoStatus(")
 
 t = sum(w for w, _ in temperature)

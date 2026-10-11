@@ -4,8 +4,9 @@ extern bool interruptedCooling;
 extern bool interruptedHeating;
 
 void temperatureControl();
-void setEnvironmentTemperatureFromPacket(const char *payload);
-const char *environmentTempSource();   // "Dallas" or "SideKick"
+// fromSideKick: sent by the SideKick (preferred over the BrewCore's).
+void setEnvironmentTemperatureFromPacket(const char *payload, bool fromSideKick);
+const char *environmentTempSource();   // "Dallas", "SideKick", "BrewCore" or "none received"
 const char *expansionTankTempSource(); // "Dallas" or "environment"
 bool fermenterThermometerAlarmActive(); // target set, no fermenter thermometer (docs/thermometers.md)
 String describeFermenterThermometer();  // several lines, for the alarm e-mail

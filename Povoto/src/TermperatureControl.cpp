@@ -14,25 +14,38 @@
 
 // sensor readigs
 float dallasTemperature = NOTaTEMP; // invalid until the first reading (never 0 C)
-// Environment: its own Dallas when assigned, else the SideKick's. Expansion
+// Environment: its own Dallas when assigned, else the temperature broadcast
+// by ESP-NOW: the SideKick's (its own Dallas) before the BrewCore's. Expansion
 // tank: its own Dallas when assigned, else the environment (docs/thermometers.md).
 float environmentTemp = NOTaTEMP;
 float expansionTankTemp = NOTaTEMP;
 static constexpr unsigned long ENVIRONMENT_TEMP_TIMEOUT_MS = 10UL * 60UL * 1000UL;
-static float sidekickEnvironmentTemp = NOTaTEMP;
-static unsigned long lastEnvironmentTempReceivedMillis = 0;
-static bool environmentTempReceived = false;
+// Broadcast environment temperature, one slot per sender kind.
+struct ReceivedEnvironmentTemp {
+  float value;
+  unsigned long millisStamp;
+  bool valid;
+};
+static ReceivedEnvironmentTemp receivedEnvironment[2] = {{NOTaTEMP, 0, false}, {NOTaTEMP, 0, false}};
+static constexpr uint8_t ENV_FROM_SIDEKICK = 0;
+static constexpr uint8_t ENV_FROM_OTHER = 1; // the BrewCore
+static uint8_t environmentReceivedFrom = ENV_FROM_SIDEKICK;
 bool  debugTemperatureOverride = false;  // when true, ControlData.temperature is not overwritten by Dallas
 
 static void updateEnvironmentTemperatures() {
+  environmentReceivedFrom = receivedEnvironment[ENV_FROM_SIDEKICK].valid ? ENV_FROM_SIDEKICK : ENV_FROM_OTHER;
+  const float received = receivedEnvironment[environmentReceivedFrom].valid
+      ? receivedEnvironment[environmentReceivedFrom].value : NOTaTEMP;
   environmentTemp = dallasRoleAssigned(DALLAS_ROLE_ENVIRONMENT)
-      ? dallasRoleTemperature(DALLAS_ROLE_ENVIRONMENT) : sidekickEnvironmentTemp;
+      ? dallasRoleTemperature(DALLAS_ROLE_ENVIRONMENT) : received;
   expansionTankTemp = dallasRoleAssigned(DALLAS_ROLE_EXPANSION_TANK)
       ? dallasRoleTemperature(DALLAS_ROLE_EXPANSION_TANK) : environmentTemp;
 }
 
 const char *environmentTempSource() {
-  return dallasRoleAssigned(DALLAS_ROLE_ENVIRONMENT) ? "Dallas" : "SideKick";
+  if (dallasRoleAssigned(DALLAS_ROLE_ENVIRONMENT)) return "Dallas";
+  if (!receivedEnvironment[environmentReceivedFrom].valid) return "none received";
+  return environmentReceivedFrom == ENV_FROM_SIDEKICK ? "SideKick" : "BrewCore";
 }
 
 const char *expansionTankTempSource() {
@@ -40,18 +53,19 @@ const char *expansionTankTempSource() {
 }
 
 // ESP-NOW callback: stored here, applied by temperatureControl() in the loop.
-void setEnvironmentTemperatureFromPacket(const char *payload) {
+void setEnvironmentTemperatureFromPacket(const char *payload, bool fromSideKick) {
+  ReceivedEnvironmentTemp &slot = receivedEnvironment[fromSideKick ? ENV_FROM_SIDEKICK : ENV_FROM_OTHER];
   char *end = nullptr;
   const float received = payload ? strtof(payload, &end) : NAN;
   if (!payload || end == payload || *end != '\0' ||
       !isfinite(received) || received == NOTaTEMP || received == 85.0f) {
-    sidekickEnvironmentTemp = NOTaTEMP;
-    environmentTempReceived = false;
+    slot.value = NOTaTEMP;
+    slot.valid = false;
     return;
   }
-  sidekickEnvironmentTemp = received;
-  lastEnvironmentTempReceivedMillis = millis();
-  environmentTempReceived = true;
+  slot.value = received;
+  slot.millisStamp = millis();
+  slot.valid = true;
 }
 
 // FMT control variables
@@ -268,10 +282,11 @@ void temperatureControl() {
     return;
   lastRun = millis();
 
-  if (environmentTempReceived &&
-      (unsigned long)(lastRun - lastEnvironmentTempReceivedMillis) >= ENVIRONMENT_TEMP_TIMEOUT_MS) {
-    sidekickEnvironmentTemp = NOTaTEMP;
-    environmentTempReceived = false;
+  for (ReceivedEnvironmentTemp &slot : receivedEnvironment) {
+    if (slot.valid && (unsigned long)(lastRun - slot.millisStamp) >= ENVIRONMENT_TEMP_TIMEOUT_MS) {
+      slot.value = NOTaTEMP;
+      slot.valid = false;
+    }
   }
   dallasSensorsProcess();
   updateEnvironmentTemperatures();
@@ -577,7 +592,7 @@ char *getTemperatureControlStatus(char *st) {
   // (docs/thermometers.md).
   static const char *const roleNames[DALLAS_ROLE_COUNT] = {"fermenter", "environment", "expansion tank"};
   static const char *const unassignedNotes[DALLAS_ROLE_COUNT] = {
-    "temperature control idle", "using the SideKick", "using the environment"};
+    "temperature control idle", "using the ESP-NOW broadcast", "using the environment"};
   char id[DALLAS_ADDRESS_TEXT_SIZE];
   for (uint8_t r = 0; r < DALLAS_ROLE_COUNT; ++r) {
     if (!dallasRoleAssigned(r)) {
