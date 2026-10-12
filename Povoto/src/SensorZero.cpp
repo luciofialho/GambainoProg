@@ -17,6 +17,8 @@ static constexpr float SENSOR_ZERO_MAX_BLOCK_RANGE_MBAR = 1.0f;
 static constexpr float SENSOR_ZERO_MAX_TREND_MBAR = 0.5f;
 
 static bool active = false;
+// Set by the web handler; the loop aborts (the samples are freed in the loop only).
+static volatile bool abortRequested = false;
 static unsigned long startMillis = 0, durationMs = 0, lastSampleMillis = 0, lastAcquisition = 0;
 static bool startedWarm = false;
 static float *sampleCurrent = nullptr;
@@ -89,12 +91,19 @@ bool startSensorZero(float minutes, char *reason, size_t reasonSize) {
   startedWarm = startMillis >= SENSOR_ZERO_WARMUP_MS;
   sampleCount = rejectedSamples = 0;
   result = {};
+  abortRequested = false;
   active = true;
   showProgress(true);
   return true;
 }
 
+// Web task: only requests it; processSensorZero() aborts in the main loop.
 void abortSensorZero() {
+  if (active) abortRequested = true;
+}
+
+static void abortInLoop() {
+  abortRequested = false;
   if (!active) return;
   active = false;
   releaseSamples();
@@ -179,9 +188,13 @@ static void finishSensorZero() {
 
 void processSensorZero() {
   if (!active) return;
+  if (abortRequested) {
+    abortInLoop();
+    return;
+  }
   if (SetPointData.mode != MODE_OFF || taskWindowType != 0 || !pressureSensorConnected) {
     Serial.println("[SENSOR ZERO] aborted: mode, task or sensor changed");
-    abortSensorZero();
+    abortInLoop();
     return;
   }
   const unsigned long now = millis();
