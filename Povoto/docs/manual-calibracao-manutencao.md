@@ -1,8 +1,11 @@
 # Povoto: manual de calibração e manutenção
 
 Versão 1 (11/10/2026), método de **ventilação direta** (sem tanque de expansão).
-Os passos marcados **(a implementar)** dependem do firmware descrito em
-`docs/sem-te-plano.md`. O método antigo com TE está na tag `te-final-<data>`.
+Firmware: branch `povoto-vent` (`docs/sem-te-plano.md`; detalhes em
+`docs/vent.md`, `docs/venting-test.md`, `docs/keg-volume.md`,
+`docs/valve-cleaning.md`, `docs/pressure-sensor-zero.md`,
+`docs/atmospheric-pressure.md`). O método antigo com TE está na tag
+`te-final-2026-10-11` (binários em `A:\Nuvem\Povoto\Firmware\te-final-2026-10-11`).
 
 Regras gerais:
 
@@ -78,7 +81,7 @@ perdas ficarem sempre < 1%.
 
 ## 3. Procedimentos de calibração
 
-### P1. Zero do sensor de pressão **(a implementar)**
+### P1. Zero do sensor de pressão
 
 Quando: instalação, troca de sensor ou placa, antes de P4b e de P5.
 
@@ -119,8 +122,8 @@ Quando: instalação, troca de sensor; depois, uma vez por ano.
 
 ### P3. Fonte da pressão atmosférica
 
-Prioridade **(a implementar)**: BMP581 no Povoto → SideKick (broadcast, um por
-site) → altitude configurada.
+Prioridade: BMP581 no Povoto → SideKick (broadcast `'A'`, um por site; o
+SideKick precisa do BMP581 nos pinos 27/14) → altitude configurada.
 
 1. Confira no `/getstatus` a fonte em uso e o valor (hPa).
 2. Com duas fontes válidas, a diferença entre elas deve ficar em poucos hPa.
@@ -135,7 +138,7 @@ Quando: fermentador novo. O volume não muda depois. Site principal: 129,6 L.
    cheio). Volume = massa / densidade da água na temperatura medida.
 2. Grave o FMT volume (Settings).
 
-### P4b. Volume do fermentador pelo barril **(a implementar)**
+### P4b. Volume do fermentador pelo barril
 
 Quando: fermentador grande demais para pesar, ou para conferir a pesagem.
 
@@ -149,13 +152,15 @@ Quando: fermentador grande demais para pesar, ou para conferir a pesagem.
    compressor) fica com temperatura própria: o cálculo usa as duas.
 5. Pressurize o fermentador a ~1,9 bar e espere a pressão estabilizar
    (< 0,1 mbar/min).
-6. Calibration → "Keg volume": ela abre a válvula até equalizar, espera
-   estabilizar, lê P2 e as temperaturas, ventila o barril e repete.
+6. Calibration → "Keg volume" (volume do barril e número de reliefs, 4): ela
+   abre a válvula até equalizar, espera estabilizar, lê P2 e as temperaturas,
+   ventila o barril e repete. Nada é gravado: o volume aceito vai para o FMT
+   volume na página Settings.
 7. Repita partindo de ~1,2 bar e de ~0,6 bar.
 8. Resultado: V_F por relief e média. Os três níveis de pressão devem dar o mesmo
    volume dentro de ~0,3–0,5%.
 
-### P5. Ensaio de ventilação **(a implementar)**
+### P5. Ensaio de ventilação
 
 Quando: calibração inicial; manutenção de fim de lote (P8); válvula nova;
 mudança na saída (garrafa, silenciador); qualquer suspeita sobre a válvula.
@@ -165,13 +170,18 @@ mudança na saída (garrafa, silenciador); qualquer suspeita sobre a válvula.
 3. Pressurize a ~1,9 bar e espere ~10 min.
 4. Calibration → "Venting test"; escolha a **etiqueta** (`as-is` /
    `muffler-cleaned` / `valve-cleaned` / `new-valve` / `after-cleaning-cycle`).
-5. O ensaio alterna durações (0,5 a 8 s), repete, mede o tempo real de cada
-   abertura e grava cada liberação no histórico. Não mexa no equipamento.
-6. Resultado: curva τ(P) cúbica, t0 e sua dispersão, deriva entre o começo e o
-   fim do ensaio, e a diferença contra a curva de referência em 1,8 / 1,2 /
-   0,8 bar.
+5. O ensaio alterna durações (2, 0,5, 8, 1, 4, 2 s) em patamares de ~1,9 / 1,5 /
+   1,1 / 0,8 / 0,5 bar, com uma abertura longa entre eles; mede o tempo real
+   de cada abertura e grava cada liberação no histórico (~40–50 min). Não mexa
+   no equipamento.
+6. Resultado: curva τ(P) cúbica, t0 ± erro padrão, resíduo de forma, deriva
+   (por patamar) ± erro padrão, e a diferença contra a curva de referência e a
+   gravada em 1,8 / 1,2 / 0,8 bar. `python tests/venting_fit.py arquivo.csv`
+   refaz o ajuste fora da placa.
 7. Calibração: baixe o CSV, mande para análise e só então grave a curva e o t0
-   (botão). Manutenção: não grave nada; o histórico é o resultado.
+   ("Save curve and t0"); na primeira calibração, grave também a curva de
+   referência ("Save as reference curve"). Manutenção: não grave nada; o
+   histórico é o resultado.
 
 A conversão ar → CO2 (teórica, em função da pressão) e o fator de
 compressibilidade do CO2 são aplicados pelo firmware; não há ensaio com CO2.
@@ -187,7 +197,7 @@ a fermentação estável (pressão e temperatura estáveis há horas).
 3. Anote data/hora, SG medida e a SG calculada pelo Povoto no mesmo momento.
 4. Incerteza típica: ±0,5–1 ponto.
 
-### P7. Ajuste do fator de nível **(a implementar)**
+### P7. Ajuste do fator de nível
 
 Cada 1% de CO2 contado a menos deixa a SG calculada ~0,4 ponto acima da medida
 (cerveja 1,050 → 1,010).
@@ -204,7 +214,7 @@ Exemplo: calculada 1,012, medida 1,010 → 2 pontos → +5%.
   dos últimos 5.
 - Não use leituras feitas em transição de pressão ou temperatura, nem logo depois
   de dry hop.
-- Só entre lotes.
+- Só entre lotes. Campo "Flow level factor" da página Calibration.
 
 ## 4. Procedimentos de manutenção
 
@@ -218,14 +228,15 @@ Siga o segundo fluxograma da seção 1.
 2. Lave com detergente neutro e água morna; álcool 70% se houver resina.
 3. Seque com ar comprimido. Recoloque.
 
-### P10. Ciclo de limpeza da válvula **(a implementar)**
+### P10. Ciclo de limpeza da válvula
 
 1. Modo OFF.
 2. Solte a porta **P** do fermentador e leve-a ao dreno. Retire o silenciador da
    porta **R** e leve-a ao dreno.
 3. Ligue o líquido pressurizado (alguns décimos de bar) **só na porta A**.
 4. Calibration → "Valve cleaning". A válvula alterna energizada (A→P)
-   e desenergizada (A→R), ~4 min por fase.
+   e desenergizada (A→R), 2 s + 2 s, ~4 min por fase; cada fase começa com a
+   confirmação do líquido na porta A.
 5. Fases, trocando o líquido em A a cada confirmação:
    1. detergente neutro;
    2. água;
@@ -255,8 +266,8 @@ Não use soda nem Vanish em pó (corpo de alumínio). Não molhe a bobina.
 | Headspace (FMT1): leitura muda muito ao puxar a sonda 3–4 cm | condução pela haste/poço | isolar melhor a conexão por fora; registrar e avaliar se vale manter atribuído |
 | P4b: volume muda com a pressão inicial | offset do sensor ou pressão residual no barril | repetir P1; ventilar o barril por mais tempo; conferir retenção na saída |
 | P4b: dispersão entre reliefs > 0,5% | pressão não estabilizada | esperar mais antes de P1/P2 |
-| P5: t0 com dispersão > 5 ms ou deriva entre começo e fim | solenoide ou fonte da bobina instável | conferir a tensão; trocar a válvula |
-| P5: resíduo da curva cúbica > 0,5% | leituras sem estabilizar, ou forma diferente | repetir com espera maior; mandar para análise |
+| P5: erro padrão do t0 > 5 ms, ou deriva maior que 2× o seu erro padrão | solenoide ou fonte da bobina instável | conferir a tensão; trocar a válvula |
+| P5: resíduo de forma > 1% | leituras sem estabilizar, ou forma diferente | repetir com espera maior; mandar para análise (com ruído de leitura normal, ~0,15 mbar, ele fica em ~0,5%) |
 | P5: curva > 3% abaixo da referência | sujeira na válvula ou no silenciador | P9 e P10 e repetir; se não voltar, trocar a válvula e registrar `new-valve` |
 | P5: perda < 3% mas volta só com a limpeza | sujeira por lote | manter P10 em todo fim de lote |
 | Líquido na garrafa testemunha | krausen chegando à válvula | registrar; avaliar separador antes da válvula; P10 |
@@ -291,7 +302,8 @@ Uma visita, no intervalo entre lotes, ~3–4 h (a maior parte é o equipamento
 rodando sozinho).
 
 **Antes de sair de casa**
-- [ ] Firmware novo revisado; binário da tag `te-final-<data>` guardado (fallback).
+- [ ] Firmware novo revisado; binário da tag `te-final-2026-10-11` guardado (fallback;
+      `A:\Nuvem\Povoto\Firmware\te-final-2026-10-11`, com `littlefs.bin` das páginas).
 - [ ] Backup das configurações do Povoto (Settings, `povoto-settings.json`).
 - [ ] Garrafa PET preparada (entrada pelo fundo, topo aberto), conexões para a
       porta A, silenciador/filtro para a porta R.
@@ -326,5 +338,6 @@ rodando sozinho).
 - [ ] Iniciar o lote; programar leituras de SG desgaseificada no fim.
 
 **Fallback (se necessário, entre lotes)**
-- [ ] OTA da tag `te-final-<data>`, religar o TE na porta A e o Dallas do TE,
-      conferir kCO2, Vr e o papel do Dallas do TE no Settings.
+- [ ] OTA da tag `te-final-2026-10-11` (firmware e páginas), religar o TE na
+      porta A e o Dallas do TE, conferir kCO2, Vr e o papel do Dallas do TE no
+      Settings (as chaves ficaram gravadas).

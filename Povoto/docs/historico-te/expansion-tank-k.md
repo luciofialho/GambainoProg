@@ -93,5 +93,7 @@ Each relief is a small volume test with CO2. With the beer volume known
 headspace is `FMTVolume - beer`, and `KCO2FromBeerVolume` is the k that makes
 this relief's equalized drop factor (`adjustedEquilibriumPressure /
 pressureOnReliefExtrapolated`) match it, with Tref (gamma 1.29). Diagnostics
-only. With ~30 L of headspace, 0.3 L of beer-volume error is ~1% in k; the
-krausen takes headspace, so use the start or the end of the fermentation.
+only. With ~30 L of headspace, 0.3 L of beer-volume error is ~1% in k. The
+krausen does not take headspace: the liquid of the foam comes out of the beer
+and the gas of its bubbles is headspace (correction of 11/10/2026,
+docs/sem-te-plano.md, section 2).

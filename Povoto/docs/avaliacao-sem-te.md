@@ -24,7 +24,7 @@ pedir: a primeira entrega é a análise e um plano de testes.
 - Headspace: razão de pressões manométricas, V = Vr_ef · f / (1 − f), com
   f = P_equilíbrio / P_antes. Independe da Patm e quase do ganho do sensor.
 - CO2 expelido: pressão do TE no fechamento × Vr/k / RT, com k ≈ 1,08
-  (aquecimento ~1,05 × piso ~1,03) e Tref do TE (`docs/expansion-tank-k.md`).
+  (aquecimento ~1,05 × piso ~1,03) e Tref do TE (`docs/historico-te/expansion-tank-k.md`).
   Quase todo o CO2 sai pelos reliefs (~37 de ~40 g/L numa cerveja 1,050 → 1,010).
 - Sensibilidade: **1% de erro no CO2 expelido ≈ 0,4 ponto de SG** no fim.
 
@@ -70,7 +70,7 @@ pedir: a primeira entrega é a análise e um plano de testes.
   ao fim de um lote antes e depois de limpar a válvula → mede a sujeira.
 - Verificação de cada relief (log Relief: `ReliefDropRatio`, `ReliefCheck`) e
   alarmes (`docs/alarms.md`).
-- Roteiro de calibração de novembro: `docs/calibration-roteiro.md`.
+- Roteiro de calibração de novembro: `docs/historico-te/calibration-roteiro.md`.
 
 ## Perguntas para a avaliação
 
@@ -91,9 +91,9 @@ pedir: a primeira entrega é a análise e um plano de testes.
 
 ## Onde está o resto
 
-- `docs/calibration-speed-evaluation.md`: modelo de escoamento, aquecimento e
+- `docs/historico-te/calibration-speed-evaluation.md`: modelo de escoamento, aquecimento e
   piso; ensaios de velocidade.
-- `docs/expansion-tank-k.md`, `docs/plan-expansion-tank-tref.md`: k e Tref.
+- `docs/historico-te/expansion-tank-k.md`, `docs/historico-te/plan-expansion-tank-tref.md`: k e Tref.
 - `include/GasFlowModel.h`, `src/PressureControl.cpp` (`processPressure`,
   `accountExpansionTankVenting`, ensaios de velocidade).
 - Memórias: `povoto-expansion-tank-k-validation` (calibração de novembro),
