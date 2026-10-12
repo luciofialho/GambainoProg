@@ -192,8 +192,9 @@ def solve(matrix, rhs):
 def fit_venting_test(releases, volume, patm, co2=False, fit_t0=True, default_exponent=1.0):
     """releases: dicts with t (real open s), p1, p_close, p2 (gauge bar), temp_k.
 
-    Weighted least squares on t_i = t0 + sum a_k J_ik with weights 1/t_i^2
-    (relative residuals). Returns dict with a, t0, residuals and exponents."""
+    Weighted least squares on t_i = t0 + sum a_k J_ik with weights P_abs^2
+    (mean of P1 and P2): a pressure reading error is an almost constant error
+    in time. Returns dict with a, t0, residuals and exponents."""
     if len(releases) < (5 if fit_t0 else 4) + 2:
         return None
     rows, ys, ws, exps = [], [], [], []
@@ -203,7 +204,7 @@ def fit_venting_test(releases, volume, patm, co2=False, fit_t0=True, default_exp
         j = release_integrals(volume, r["temp_k"], r["p1"], r["p2"], patm, m, co2)
         rows.append(([1.0] if fit_t0 else []) + j)
         ys.append(r["t"])
-        ws.append(1.0 / max(r["t"], 0.5) ** 2)
+        ws.append((0.5 * (r["p1"] + r["p2"]) + patm) ** 2)
         exps.append(m)
     n = len(rows[0])
     ata = [[sum(w * row[i] * row[k] for row, w in zip(rows, ws)) for k in range(n)] for i in range(n)]
@@ -214,4 +215,9 @@ def fit_venting_test(releases, volume, patm, co2=False, fit_t0=True, default_exp
     t0 = x[0] if fit_t0 else 0.0
     a = x[1:] if fit_t0 else x
     residuals = [y - sum(c * v for c, v in zip(x, row)) for row, y in zip(rows, ys)]
-    return {"a": a, "t0": t0, "residuals": residuals, "exponents": exps}
+    t0_se = float("nan")
+    if fit_t0:
+        first = solve(ata, [1.0] + [0.0] * (n - 1))  # first column of (A'WA)^-1
+        s2 = sum(w * r * r for w, r in zip(ws, residuals)) / (len(rows) - n)
+        t0_se = math.sqrt(max(0.0, s2 * first[0])) if first else float("nan")
+    return {"a": a, "t0": t0, "residuals": residuals, "exponents": exps, "t0_se": t0_se}

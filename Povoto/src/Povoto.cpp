@@ -36,6 +36,7 @@
 #include "PovotoGraphScreen.h"
 #include "AtmosphericPressure.h"
 #include "CalibrationEvents.h"
+#include "VentingTest.h"
 #include <esp_system.h>
 #include <esp_heap_caps.h>
 
@@ -262,6 +263,10 @@ void setup() {
   server.on("/calibration/zero/abort", HTTP_POST, handleSensorZeroAbort);
   server.on("/calibration/zero/save", HTTP_POST, handleSensorZeroSave);
   server.on("/calibration/events.txt", HTTP_GET, handleCalibrationEventsText);
+  server.on("/calibration/venting/start", HTTP_POST, handleVentingTestStart);
+  server.on("/calibration/venting/abort", HTTP_POST, handleVentingTestAbort);
+  server.on("/calibration/venting/save", HTTP_POST, handleVentingTestSave);
+  server.on("/calibration/venting.csv", HTTP_GET, handleVentingTestCSV);
   server.on("/calibration", HTTP_GET, handleCalibrationDataPage);
   server.on("/calibration/refresh-current", HTTP_GET, handleCalibrationCurrentRefresh);
   server.on("/calibration/update", HTTP_POST, handleCalibrationDataUpdate);

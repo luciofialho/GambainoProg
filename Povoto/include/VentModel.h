@@ -203,12 +203,17 @@ struct Release {
   float tempK;     // fermenter at P1
 };
 
-// Weighted least squares t_i = t0 + sum a_k J_ik (weights 1/t_i^2: relative
-// residuals). Fills curve.a and curve.t0 (0 when !fitT0), the per-release
+// Weighted least squares t_i = t0 + sum a_k J_ik. A reading error of the
+// pressure becomes an almost constant error in time, ~tau*sigma_P/P_abs: the
+// weights are P_abs^2 (mean of P1 and P2). On a synthetic test with 0.15 mbar of
+// noise this gives the curve within 0.1-0.2% and t0 within ~4 ms; weights
+// 1/t^2 (relative residuals) gave 0.7-0.9% and 11 ms. Fills curve.a and curve.t0 (0 when !fitT0), the per-release
 // residuals (s) and exponents when given. False with too few releases or a
 // singular system.
+// t0StandardError (s, optional): from the covariance of the fit, s^2 (A'WA)^-1.
 inline bool fitVentingTest(const Release *rel, int count, double volume, double patm, bool co2, bool fitT0,
-                           double defaultExponent, Curve &curve, float *residuals, float *exponents) {
+                           double defaultExponent, Curve &curve, float *residuals, float *exponents,
+                           double *t0StandardError = nullptr) {
   const int n = fitT0 ? 5 : 4;
   if (count < n + 2) return false;
   double m[5][6] = {};
@@ -223,27 +228,37 @@ inline bool fitVentingTest(const Release *rel, int count, double volume, double 
     int c = 0;
     if (fitT0) row[c++] = 1.0;
     for (int k = 0; k < 4; ++k) row[c++] = j[k];
-    const double w = 1.0 / pow(fmax((double)r.seconds, 0.5), 2.0);
+    const double pAbs = 0.5 * (r.p1 + r.p2) + patm;
+    const double w = pAbs * pAbs;
     for (int a = 0; a < n; ++a) {
       for (int b = 0; b < n; ++b) m[a][b] += w * row[a] * row[b];
       m[a][n] += w * row[a] * r.seconds;
     }
   }
-  double x[5];
+  double normal[5][6];
+  for (int a = 0; a < n; ++a)
+    for (int b = 0; b <= n; ++b) normal[a][b] = b < n ? m[a][b] : (a == 0 ? 1.0 : 0.0);
+  double x[5], inverse0[5];
   if (!solveLinear(m, n, x)) return false;
+  const bool covariance = fitT0 && solveLinear(normal, n, inverse0); // first column of (A'WA)^-1
   curve.t0 = fitT0 ? (float)x[0] : 0.0f;
   for (int k = 0; k < 4; ++k) curve.a[k] = (float)x[(fitT0 ? 1 : 0) + k];
-  if (residuals) {
-    for (int i = 0; i < count; ++i) {
-      const Release &r = rel[i];
-      const double e = exponents ? exponents[i] : defaultExponent;
-      double j[4];
-      releaseIntegrals(volume, r.tempK, r.p1, r.p2, patm, e, co2, j);
-      double model = curve.t0;
-      for (int k = 0; k < 4; ++k) model += curve.a[k] * j[k];
-      residuals[i] = (float)(r.seconds - model);
-    }
+  double weightedSquares = 0.0;
+  for (int i = 0; i < count; ++i) {
+    const Release &r = rel[i];
+    const double e = exponents ? exponents[i] : (isfinite(r.pClose) ? releaseExponent(r.p1, r.pClose, r.p2, patm,
+                                                                                   defaultExponent) : defaultExponent);
+    double j[4];
+    releaseIntegrals(volume, r.tempK, r.p1, r.p2, patm, e, co2, j);
+    double model = fitT0 ? x[0] : 0.0;
+    for (int k = 0; k < 4; ++k) model += x[(fitT0 ? 1 : 0) + k] * j[k];
+    const double residual = r.seconds - model;
+    if (residuals) residuals[i] = (float)residual;
+    const double pAbs = 0.5 * (r.p1 + r.p2) + patm;
+    weightedSquares += pAbs * pAbs * residual * residual;
   }
+  if (t0StandardError)
+    *t0StandardError = covariance ? sqrt(fmax(0.0, weightedSquares / (count - n) * inverse0[0])) : NAN;
   return true;
 }
 

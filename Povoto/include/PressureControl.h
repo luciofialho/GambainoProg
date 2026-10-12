@@ -42,8 +42,12 @@ String describeReliefCheck();         // several lines, for the alarm e-mail
 // Valve stuck open: the pressure still falls after a vent closed.
 bool valveStuckOpenAlarmActive();
 String describeValveStuckOpen();
-// Any calibration routine (sensor zero, ...).
+// Any calibration routine (sensor zero, venting test, ...).
 bool calibrationRoutineActive();
+// Opens or closes the valve for a calibration routine (main loop only);
+// returns esp_timer_get_time() taken right after the digitalWrite.
+int64_t routineValve(bool open);
+bool inTheMiddleOfRelief();
 // Three text lines of the calibration panel on the TFT (and the dashboard).
 void showCalibrationPanel(const char *line1, const char *line2, const char *line3);
 void drawCalibrationStatus();

@@ -16,6 +16,7 @@
 #include "AtmosphericPressure.h"
 #include "SensorZero.h"
 #include "PovotoAlarms.h"
+#include "VentingTest.h"
 #include <esp_timer.h>
 #include <math.h>
 #include <algorithm>
@@ -2739,7 +2740,25 @@ void pressureRelief() {
 }
 
 bool calibrationRoutineActive() {
-  return sensorZeroActive();
+  return sensorZeroActive() || ventingTestActive();
+}
+
+// Routines that drive the valve themselves (venting test, ...).
+static bool valveRoutineActive() {
+  return ventingTestActive();
+}
+
+int64_t routineValve(bool open) {
+  digitalWrite(PINTRANSFERVALVE, open ? HIGH : LOW);
+  const int64_t micros = esp_timer_get_time();
+  digitalWrite(PINVENTINGLED, open ? HIGH : LOW);
+  ControlData.transferValve = open;
+  markSolenoidToggle();
+  if (!open) {
+    resetCurrentMedianFilter();
+    noPressureReadUntil = millis() + TRANSFER_CLOSE_PRESSURE_BLOCK_MS;
+  }
+  return micros;
 }
 
 // ===== Pressure stability =====
@@ -2840,8 +2859,13 @@ void pressureControl() {
   if (beerSG == 0) {
     beerSG = BatchData.batchOG;
   }
-  readPressure();
+  // A debug board's routine simulates the pressure itself.
+  if (!(debugging && valveRoutineActive())) readPressure();
   pressureDropFactor = 1.0f - FMTData.ventTargetDropPercent / 100.0f;
+  if (valveRoutineActive()) {
+    processVentingTest();
+    return;
+  }
   processSensorZero();
   processSlowPressureTarget();
   updatePressureStability();

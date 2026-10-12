@@ -25,6 +25,8 @@
 #include "DallasSensors.h"
 #include "SensorZero.h"
 #include "CalibrationEvents.h"
+#include "VentingTest.h"
+#include "AtmosphericPressure.h"
 
 // ========== MAIN MENU ==========
 
@@ -1087,6 +1089,73 @@ static String sensorZeroSectionHtml() {
   return html;
 }
 
+// Venting test (docs/venting-test.md): start form, progress, last result, history.
+static String pct(float fraction) {
+  return isfinite(fraction) ? (fraction >= 0 ? "+" : "") + String(100.0f * fraction, 2) + "%" : String("n/a");
+}
+
+static String ventingTestSectionHtml() {
+  auto num = [](float v, int d) { return isfinite(v) ? String(v, d) : String("n/a"); };
+  String html = "<hr><h3>Venting test</h3><p>Empty fermenter with air, the volume of the test below, the valve outlet "
+    "in its working assembly (witness bottle). Pressurize to ~1.9 bar and wait ~10 min. The test alternates openings of "
+    "2, 0.5, 8, 1, 4 and 2 s at levels of ~1.9, 1.5, 1.1, 0.8 and 0.5 bar (a long opening steps down between levels), "
+    "waits for a stable pressure after each one (0.3 mbar in 30 s, 45-180 s) and measures the real opening time. "
+    "About 40-50 min. Do not touch the equipment.</p>";
+  if (ventingTestActive()) {
+    html += "<p><b>" + ventingTestProgressText() + "</b></p><form action='/calibration/venting/abort' method='POST'>"
+      "<button>Abort</button></form>";
+  } else {
+    const uint8_t preset = defaultVentingTestLabel();
+    html += "<form action='/calibration/venting/start' method='POST'><label>Label <select name='label'>";
+    for (uint8_t i = 0; i < VENTING_LABEL_COUNT; ++i)
+      html += String("<option value='") + i + "'" + (i == preset ? " selected" : "") + ">" + ventingTestLabelName(i) + "</option>";
+    html += "</select></label> <label>Gas <select name='gas'><option value='air'>Air</option><option value='co2'>CO2</option>"
+      "</select></label> <label>Test volume (L) <input type='number' name='volume' step='0.01' min='1' style='width:90px' value='" +
+      String(FMTData.FMTVolume, 2) + "'></label> <button>Venting test</button></form><p>" + ventingTestProgressText() + "</p>";
+  }
+  const uint8_t count = ventingTestHistoryCount();
+  VentingTestSummary s;
+  if (count > 0 && getVentingTestSummary(0, s)) {
+    char when[20];
+    formatLocalEpochISO(s.epoch, when, sizeof(when));
+    html += String("<p><b>Last test</b> (") + (when[0] ? when : "no time") + ", " + ventingTestLabelName(s.label) + ", " +
+      (s.co2 ? "CO2" : "air") + ", " + num(s.volume, 1) + " L, Patm " + num(1000.0f * s.patm, 1) + " hPa " +
+      atmosphericPressureSourceLabel(s.patmSource) + ", " + String(s.releases) + " releases): ";
+    if (s.fitted) {
+      html += "tau(P) = " + num(s.curve.a[0], 3) + " + " + num(s.curve.a[1], 3) + " P + " + num(s.curve.a[2], 3) +
+        " P&sup2; + " + num(s.curve.a[3], 4) + " P&sup3; s (100 L, 20 &deg;C, " + num(s.curve.pMin, 2) + "-" +
+        num(s.curve.pMax, 2) + " bar); <b>t0 " + num(1000.0f * s.curve.t0, 1) + " &plusmn; " + num(s.t0SeMs, 1) +
+        " ms</b>; shape residual " + num(s.shapeRmsPercent, 2) + "% rms; drift " + num(s.driftPercent, 2) + " &plusmn; " +
+        num(s.driftSePercent, 2) + "%.<br>Flow against the reference at 1.8 / 1.2 / 0.8 bar: " + pct(s.vsReference[0]) + " / " + pct(s.vsReference[1]) +
+        " / " + pct(s.vsReference[2]) + "; against the saved curve: " + pct(s.vsSaved[0]) + " / " + pct(s.vsSaved[1]) +
+        " / " + pct(s.vsSaved[2]) + ".</p>";
+      if (!ventingTestActive())
+        html += "<form action='/calibration/venting/save' method='POST'><input type='hidden' name='test' value='0'>"
+          "<button name='target' value='curve'>Save curve and t0</button> "
+          "<button name='target' value='reference'>Save as reference curve</button> (analyse the CSV first)</form>";
+    } else {
+      html += "fit failed.</p>";
+    }
+  }
+  if (count > 0) {
+    html += "<p><a href='/calibration/venting.csv?test=0'>Last test CSV</a> | <a href='/calibration/venting.csv?test=all'>"
+      "All tests CSV</a> (" + String(count) + " in the history; <code>python tests/venting_fit.py file.csv</code> "
+      "redoes the fit)</p><table style='width:100%;font-size:0.85em'><tr><th>#</th><th>Time</th><th>Label</th><th>t0 ms</th>"
+      "<th>vs ref 1.8/1.2/0.8</th><th>Drift</th></tr>";
+    for (uint8_t i = 0; i < count && i < 10; ++i) {
+      if (!getVentingTestSummary(i, s)) continue;
+      char when[20];
+      formatLocalEpochISO(s.epoch, when, sizeof(when));
+      html += "<tr><td><a href='/calibration/venting.csv?test=" + String(i) + "'>" + String(i) + "</a></td><td>" + when +
+        "</td><td>" + ventingTestLabelName(s.label) + "</td><td>" + num(1000.0f * s.curve.t0, 1) + "</td><td>" +
+        pct(s.vsReference[0]) + " " + pct(s.vsReference[1]) + " " + pct(s.vsReference[2]) + "</td><td>" +
+        num(s.driftPercent, 2) + "%</td></tr>";
+    }
+    html += "</table>";
+  }
+  return html;
+}
+
 static void sendCalibrationMessage(AsyncWebServerRequest *request, const char *title, const char *text) {
   String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta http-equiv='refresh' content='3;url=/calibration'>"
     "<style>body{font-family:Arial;text-align:center;margin-top:50px;}</style></head><body><h1>";
@@ -1107,6 +1176,35 @@ void handleSensorZeroStart(AsyncWebServerRequest *request) {
   char reason[100];
   if (!startSensorZero(minutes, reason, sizeof(reason))) {
     sendCalibrationMessage(request, "Sensor zero not started", reason);
+    return;
+  }
+  request->redirect("/calibration");
+}
+
+void handleVentingTestStart(AsyncWebServerRequest *request) {
+  const uint8_t label = request->hasParam("label", true) ? request->getParam("label", true)->value().toInt() : 0;
+  const bool co2 = request->hasParam("gas", true) && request->getParam("gas", true)->value() == "co2";
+  const float volume = request->hasParam("volume", true) ? request->getParam("volume", true)->value().toFloat()
+                                                         : FMTData.FMTVolume;
+  char reason[100];
+  if (!startVentingTest(label, co2, volume, reason, sizeof(reason))) {
+    sendCalibrationMessage(request, "Venting test not started", reason);
+    return;
+  }
+  request->redirect("/calibration");
+}
+
+void handleVentingTestAbort(AsyncWebServerRequest *request) {
+  abortVentingTest();
+  request->redirect("/calibration");
+}
+
+void handleVentingTestSave(AsyncWebServerRequest *request) {
+  const uint8_t index = request->hasParam("test", true) ? request->getParam("test", true)->value().toInt() : 0;
+  const bool reference = request->hasParam("target", true) && request->getParam("target", true)->value() == "reference";
+  char reason[100];
+  if (!saveVentingTestCurve(index, reference, reason, sizeof(reason))) {
+    sendCalibrationMessage(request, "Curve not saved", reason);
     return;
   }
   request->redirect("/calibration");
@@ -1333,9 +1431,9 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   const String actions = String("<div class='container' style='margin-top:20px'><h2>Calibration and maintenance</h2>") +
     "<p>Requirements: mode OFF, no task. Do not press any Save button before analysing the data "
     "(docs/manual-calibracao-manutencao.md).</p>" +
-    sensorZeroSectionHtml() + "</div>";
+    sensorZeroSectionHtml() + ventingTestSectionHtml() + "</div>";
   page.replace("</body>", actions + "</body>");
-  if (sensorZeroActive()) page.replace("<head>", "<head><meta http-equiv='refresh' content='10'>");
+  if (sensorZeroActive() || ventingTestActive()) page.replace("<head>", "<head><meta http-equiv='refresh' content='10'>");
   request->send(200, "text/html", page);
   free(html);
 }
