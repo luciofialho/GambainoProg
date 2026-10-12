@@ -31,6 +31,8 @@ void handleVentingTestAbort(AsyncWebServerRequest *request);
 void handleVentingTestSave(AsyncWebServerRequest *request);
 void handleValveCleaningStart(AsyncWebServerRequest *request);
 void handleValveCleaningAbort(AsyncWebServerRequest *request);
+void handleKegVolumeStart(AsyncWebServerRequest *request);
+void handleKegVolumeAbort(AsyncWebServerRequest *request);
 
 void handleBatchDataPage(AsyncWebServerRequest *request);
 void handleBatchDataUpdate(AsyncWebServerRequest *request);

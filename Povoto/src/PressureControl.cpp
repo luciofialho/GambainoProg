@@ -18,6 +18,7 @@
 #include "PovotoAlarms.h"
 #include "VentingTest.h"
 #include "ValveCleaning.h"
+#include "KegVolume.h"
 #include <esp_timer.h>
 #include <math.h>
 #include <algorithm>
@@ -2741,12 +2742,12 @@ void pressureRelief() {
 }
 
 bool calibrationRoutineActive() {
-  return sensorZeroActive() || ventingTestActive() || valveCleaningActive();
+  return sensorZeroActive() || ventingTestActive() || valveCleaningActive() || kegVolumeActive();
 }
 
 // Routines that drive the valve themselves: no automatic vent meanwhile.
 static bool valveRoutineActive() {
-  return ventingTestActive() || valveCleaningActive();
+  return ventingTestActive() || valveCleaningActive() || kegVolumeActive();
 }
 
 int64_t routineValve(bool open) {
@@ -2866,6 +2867,7 @@ void pressureControl() {
   if (valveRoutineActive()) {
     processVentingTest();
     processValveCleaning();
+    processKegVolume();
     return;
   }
   processSensorZero();

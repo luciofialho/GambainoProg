@@ -27,6 +27,7 @@
 #include "CalibrationEvents.h"
 #include "VentingTest.h"
 #include "ValveCleaning.h"
+#include "KegVolume.h"
 #include "AtmosphericPressure.h"
 
 // ========== MAIN MENU ==========
@@ -1179,6 +1180,33 @@ static String valveCleaningSectionHtml() {
   return html;
 }
 
+// Fermenter volume by a weighed keg (docs/keg-volume.md).
+static String kegVolumeSectionHtml() {
+  String html = "<hr><h3>Keg volume</h3><p>Fermenter volume by a keg of known volume (weighed with water, then emptied and "
+    "dried) on port A, no check valve on the vent. Run the sensor zero first. Keg and fermenter in the shade, in the same "
+    "place. Pressurize the fermenter (~1.9, then ~1.2 and ~0.6 bar) and let it settle. Each relief waits for a stable "
+    "pressure (below 0.1 mbar/min over 2 min, 2-15 min), opens the valve until the pressure is stable again, reads P2 and "
+    "the temperatures, then vents the keg through R before the next one. The volume comes from the full mole balance "
+    "with the fermenter (Dallas) and keg (environment) temperatures and Patm.</p><p><b>" + kegVolumeStatusText() + "</b></p>";
+  if (kegVolumeActive()) {
+    html += "<form action='/calibration/keg/abort' method='POST'><button>Abort</button></form>";
+  } else {
+    html += "<form action='/calibration/keg/start' method='POST'><label>Keg volume (L) <input type='number' name='keg' "
+      "step='0.001' min='0.5' style='width:90px' required></label> <label>Reliefs <input type='number' name='reliefs' "
+      "value='4' min='1' max='8' style='width:60px'></label> <button>Keg volume</button></form>";
+  }
+  const KegVolumeResult r = getKegVolumeResult();
+  if (r.available) {
+    html += "<p>Keg " + String(r.kegVolume, 3) + " L: fermenter <b>" + String(r.mean, 2) + " L</b>" +
+      (isfinite(r.sd) ? " (sd " + String(r.sd, 2) + " L = " + String(100.0f * r.sd / r.mean, 2) + "%)" : String("")) +
+      ", simple formula " + String(r.simpleMean, 2) + " L. Not saved: enter it as FMT volume on the Settings page if "
+      "accepted. <a href='/calibration/keg.csv'>CSV</a></p><table style='width:100%;font-size:0.85em'><tr><th>#</th>"
+      "<th>P1 bar</th><th>P2 bar</th><th>T ferm &deg;C</th><th>T keg &deg;C</th><th>V L</th><th>simple L</th>"
+      "<th>stable</th></tr>" + kegVolumeRowsHtml() + "</table>";
+  }
+  return html;
+}
+
 static void sendCalibrationMessage(AsyncWebServerRequest *request, const char *title, const char *text) {
   String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta http-equiv='refresh' content='3;url=/calibration'>"
     "<style>body{font-family:Arial;text-align:center;margin-top:50px;}</style></head><body><h1>";
@@ -1249,6 +1277,22 @@ void handleValveCleaningStart(AsyncWebServerRequest *request) {
 
 void handleValveCleaningAbort(AsyncWebServerRequest *request) {
   abortValveCleaning();
+  request->redirect("/calibration");
+}
+
+void handleKegVolumeStart(AsyncWebServerRequest *request) {
+  const float keg = request->hasParam("keg", true) ? request->getParam("keg", true)->value().toFloat() : NAN;
+  const int count = request->hasParam("reliefs", true) ? request->getParam("reliefs", true)->value().toInt() : 4;
+  char reason[100];
+  if (!startKegVolume(keg, (uint8_t)constrain(count, 0, 255), reason, sizeof(reason))) {
+    sendCalibrationMessage(request, "Keg volume not started", reason);
+    return;
+  }
+  request->redirect("/calibration");
+}
+
+void handleKegVolumeAbort(AsyncWebServerRequest *request) {
+  abortKegVolume();
   request->redirect("/calibration");
 }
 
@@ -1473,9 +1517,9 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   const String actions = String("<div class='container' style='margin-top:20px'><h2>Calibration and maintenance</h2>") +
     "<p>Requirements: mode OFF, no task. Do not press any Save button before analysing the data "
     "(docs/manual-calibracao-manutencao.md).</p>" +
-    sensorZeroSectionHtml() + ventingTestSectionHtml() + valveCleaningSectionHtml() + "</div>";
+    sensorZeroSectionHtml() + kegVolumeSectionHtml() + ventingTestSectionHtml() + valveCleaningSectionHtml() + "</div>";
   page.replace("</body>", actions + "</body>");
-  if (sensorZeroActive() || ventingTestActive() || valveCleaningRunning()) page.replace("<head>", "<head><meta http-equiv='refresh' content='10'>");
+  if (sensorZeroActive() || ventingTestActive() || valveCleaningRunning() || kegVolumeActive()) page.replace("<head>", "<head><meta http-equiv='refresh' content='10'>");
   request->send(200, "text/html", page);
   free(html);
 }

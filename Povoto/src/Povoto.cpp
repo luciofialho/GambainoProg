@@ -37,6 +37,7 @@
 #include "AtmosphericPressure.h"
 #include "CalibrationEvents.h"
 #include "VentingTest.h"
+#include "KegVolume.h"
 #include <esp_system.h>
 #include <esp_heap_caps.h>
 
@@ -269,6 +270,9 @@ void setup() {
   server.on("/calibration/venting.csv", HTTP_GET, handleVentingTestCSV);
   server.on("/calibration/cleaning/start", HTTP_POST, handleValveCleaningStart);
   server.on("/calibration/cleaning/abort", HTTP_POST, handleValveCleaningAbort);
+  server.on("/calibration/keg/start", HTTP_POST, handleKegVolumeStart);
+  server.on("/calibration/keg/abort", HTTP_POST, handleKegVolumeAbort);
+  server.on("/calibration/keg.csv", HTTP_GET, handleKegVolumeCSV);
   server.on("/calibration", HTTP_GET, handleCalibrationDataPage);
   server.on("/calibration/refresh-current", HTTP_GET, handleCalibrationCurrentRefresh);
   server.on("/calibration/update", HTTP_POST, handleCalibrationDataUpdate);
