@@ -27,7 +27,8 @@ struct VentingTestSummary {
   uint8_t releases;      // used in the fit
   bool fitted;
   VentModel::Curve curve;
-  float shapeRmsPercent; // relative residuals of the releases >= 4 s
+  float shapeRmsPercent; // relative residuals of the releases >= 4 s (information)
+  float chiSquare;       // reduced chi-square: residuals / noise of each reading (~1; above 3: shape off)
   float t0SeMs;          // standard error of the fitted t0
   float driftPercent;    // flow of the last minus the first 2-s release of each level, mean
   float driftSePercent;  // its standard error (reading noise of the short releases)

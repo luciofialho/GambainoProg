@@ -141,6 +141,34 @@ def apparent_headspace(moles, p_on_gauge, p_after_iso_gauge, patm, t_gas_kelvin)
 
 # ----- Venting test fit (VentModel::fitVentingTest) -----
 
+def release_sensitivities(curve, volume, t0_kelvin, p1_gauge, p2_gauge, patm, exponent, co2):
+    """(dt/dP1, -dt/dP2) of the release model, s/bar (releaseSensitivities)."""
+    p1 = p1_gauge + patm
+    p2 = p2_gauge + patm
+    scale = volume / V_REF * math.sqrt(T_REF / t0_kelvin)
+    x = p2 / p1
+    p_abs2 = p1 * x ** exponent
+    g2 = math.sqrt(x ** (exponent - 1.0)) / p_abs2
+    g1 = 1.0 / p1
+    if co2:
+        g2 /= math.sqrt(co2_z(p2, t0_kelvin)) * co2_air_ratio(p_abs2 - patm, patm)
+        g1 /= math.sqrt(co2_z(p1, t0_kelvin)) * co2_air_ratio(p1_gauge, patm)
+    return scale * g1 * tau_ref(curve, p1_gauge), scale * g2 * tau_ref(curve, p_abs2 - patm)
+
+
+def reduced_chi_square(curve, releases, residuals, exponents, volume, patm, co2,
+                       floor_bar=0.00005, timing_seconds=0.002):
+    """sum r^2 / (s1^2 n1^2 + s2^2 n2^2 + st^2) / (n - 5) (reducedChiSquare)."""
+    if len(releases) <= 5:
+        return float("nan")
+    total = 0.0
+    for r, res, m in zip(releases, residuals, exponents):
+        s1, s2 = release_sensitivities(curve, volume, r["temp_k"], r["p1"], r["p2"], patm, m, co2)
+        n1 = max(r.get("noise1", 0.0) if math.isfinite(r.get("noise1", float("nan"))) else 0.0, floor_bar)
+        n2 = max(r.get("noise2", 0.0) if math.isfinite(r.get("noise2", float("nan"))) else 0.0, floor_bar)
+        total += res * res / (s1 * s1 * n1 * n1 + s2 * s2 * n2 * n2 + timing_seconds ** 2)
+    return total / (len(releases) - 5)
+
 def release_exponent(p1_gauge, p_close_gauge, p2_gauge, patm, fallback):
     """Polytropic exponent of one release: ln(Pclose/P1) / ln(P2/P1), absolute."""
     try:

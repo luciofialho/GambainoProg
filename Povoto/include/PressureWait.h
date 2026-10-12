@@ -66,6 +66,21 @@ struct PressureWait {
     return n ? float(sum / n) : NAN;
   }
 
+  // Standard error of mean(windowMs): sample sd / sqrt(n) (the noise of that reading).
+  float meanStandardError(uint32_t windowMs) const {
+    double sum = 0.0, squares = 0.0;
+    uint16_t n = 0;
+    for (uint16_t i = 0; i < count; ++i) {
+      if (lastElapsed - newestElapsed(i) > windowMs) break;
+      sum += newest(i);
+      squares += (double)newest(i) * newest(i);
+      ++n;
+    }
+    if (n < 3) return NAN;
+    const double variance = fmax(0.0, (squares - sum * sum / n) / (n - 1));
+    return float(sqrt(variance / n));
+  }
+
   // Pressure change over the last windowMs (newest minus the sample windowMs
   // before it); NAN without a sample that old.
   float change(uint32_t windowMs) const {

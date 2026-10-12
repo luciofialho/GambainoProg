@@ -6,14 +6,18 @@ Código: `src/VentingTest.cpp`; ajuste em `include/VentModel.h`
 
 ## 1. Sequência
 
-- Só em OFF, sem task nem outra rotina, a partir de ≥ 0,8 bar (o normal é
-  ~1,9 bar, depois de ~10 min de espera). Escolhas: **etiqueta** (`as-is`,
+- Só em OFF, sem task nem outra rotina, a partir de ≥ 0,8 bar. Para calibrar,
+  comece **acima da maior pressão de fermentação + ~3%** (dente de serra):
+  ~2,0–2,05 bar para setpoint de 1,9, depois de ~10 min de espera (o sensor é
+  certificado até 2 bar, mas mede razoavelmente um pouco acima). Escolhas: **etiqueta** (`as-is`,
   `muffler-cleaned`, `valve-cleaned`, `new-valve`, `after-cleaning-cycle`; depois
   de um ciclo de limpeza ela já vem em `after-cleaning-cycle`), gás (ar; CO2
   opcional) e volume do ensaio (padrão: o FMT volume; outro valor com água ou
   garrafas dentro do fermentador).
 - **Patamares**: o primeiro é a pressão de partida; os seguintes, 1,9 / 1,5 /
-  1,1 / 0,8 / 0,5 bar, os que estiverem pelo menos 0,15 bar abaixo da partida.
+  1,1 / 0,8 / 0,5 / **0,25** bar, os que estiverem pelo menos 0,15 bar abaixo
+  da partida. O de 0,25 bar cobre as fermentações a 0,3 bar: abaixo de ~0,4 bar
+  (subsônico) o τ cresce rápido e o valor da ponta superestimaria a vazão.
   Com o fermentador vazio de 130 L um ciclo de 0,5–8 s derruba só ~6% (τ ≈
   210–300 s): sem as descidas, a curva cobriria só 1,55–1,9 bar (decisão de
   11/10/2026).
@@ -27,8 +31,12 @@ Código: `src/VentingTest.cpp`; ajuste em `include/VentModel.h`
   fechar.
 - **Tempo real** de cada abertura: `esp_timer_get_time()` na linha do
   `digitalWrite` de abrir e de fechar (o fechamento é feito no loop).
-- Fim: depois do último patamar, abaixo de 0,3 bar ou com 40 liberações;
-  ~34 liberações, ~40–50 min. Mudança de modo, task ou pressão acima da
+- Fim: depois do último patamar, abaixo de 0,1 bar ou com 48 liberações. Com
+  partida em ~2,0 bar: 6 patamares, 41 liberações, ~55–65 min. A 0,25 bar
+  (τ ≈ 330 s com 130 L) a abertura de 0,5 s derruba só ~1,8 mbar: o ruído pesa
+  mais nas aberturas curtas desse patamar, e os pesos P_abs² já as tratam
+  com menos peso. A espera é a mesma (estável em 0,3 mbar/30 s, 45–180 s);
+  a descida de 0,5 para 0,25 bar é uma abertura de ~55 s. Mudança de modo, task ou pressão acima da
   máxima aborta (o que já foi medido é ajustado e guardado).
 
 ## 2. Ajuste
@@ -45,8 +53,11 @@ t_real − t0 = Σ a_k·J_k,   J_k = (V/100)·√(293,15/T0) ∫ √(T/T0)·P^k 
 Mínimos quadrados lineares em (t0, a0..a3) com **pesos P_abs²**: um erro de
 leitura da pressão vira um erro de tempo quase constante (~τ·σP/P_abs), não
 proporcional à duração. Num ensaio sintético com 0,15 mbar de ruído
-(`python tests/venting_fit.py --selftest`), a curva sai dentro de 0,1–0,2% e o
-t0 dentro de ~4–5 ms; com pesos 1/t² (resíduo relativo) saíam 0,7–0,9% e 11 ms.
+(`python tests/venting_fit.py --selftest`, até 0,25 bar), a curva sai dentro de
+0,1–0,2% (0,14% a 0,3 bar), o t0 dentro de ~5 ms e o qui-quadrado reduzido em
+~0,75; com pesos 1/t² (resíduo relativo) saíam 0,7–0,9% e 11 ms. Um degrau de 3%
+na vazão entre 0,6 e 0,3 bar, que a cúbica não acompanha, leva o qui-quadrado a
+3,5.
 
 Saídas (página, CSV e eventos de calibração):
 
@@ -54,7 +65,8 @@ Saídas (página, CSV e eventos de calibração):
 |---|---|
 | a0..a3, faixa | a curva τ(P) de 100 L de ar a 20 °C, usada só na faixa do ensaio |
 | t0 ± erro padrão | atraso mecânico da válvula (intercepto); o erro padrão sai da covariância do ajuste |
-| resíduo de forma | rms dos resíduos relativos das aberturas ≥ 4 s |
+| qui-quadrado reduzido | Σ resíduo² / (ruído esperado)² / (n − 5): o resíduo de cada liberação convertido para pressão (pela sensibilidade do tempo a P1 e P2) contra o ruído de cada leitura (erro padrão da média de 10 s, medido na própria espera; mínimo 0,05 mbar) e 2 ms de tempo. ~1: a cúbica acompanha os dados dentro do ruído; **> 3: a forma não acompanha** (ou as leituras não estabilizaram) |
+| resíduo de forma | rms dos resíduos relativos das aberturas ≥ 4 s (informação) |
 | deriva ± erro padrão | média, por patamar, da diferença de vazão entre o último e o primeiro 2 s (~8 min de distância). Com o ruído de leitura, o erro padrão é ~0,7%: deriva < ~1,5% num ensaio não é separável do ruído; a deriva entre lotes vem do histórico |
 | contra a referência / a curva gravada | vazão do ensaio ÷ vazão da outra curva − 1 a 1,8 / 1,2 / 0,8 bar |
 
@@ -63,12 +75,12 @@ mede o ruído da leitura, não a repetibilidade do t0: ele aparece só no script
 
 ## 3. Histórico e gravação
 
-- `/venttests.bin` na partição `persist`: os últimos **50 ensaios**, cada um com
-  os dados brutos de cada liberação (tempo pedido e real, P1, P_close, P2, Tferm,
-  espera, patamar, tipo), data/hora NTP, lote, Patm e fonte, Tamb, Tferm, gás,
-  volume, versão do firmware (data de compilação), etiqueta e o ajuste. ~1,3 KB
-  por ensaio, ~66 KB no total (o plano estimava 8 KB com menos liberações).
-  Arquivo novo: a tag `te-final` não o lê.
+- `/venttests.bin` na partição `persist` (magic `VTH2`): os últimos **50
+  ensaios**, cada um com os dados brutos de cada liberação (tempo pedido e real,
+  P1, P_close, P2 e o ruído de P1 e P2, Tferm, espera, patamar, tipo), data/hora
+  NTP, lote, Patm e fonte, Tamb, Tferm, gás, volume, versão do firmware (data de
+  compilação), etiqueta e o ajuste. ~2 KB por ensaio, ~100 KB no total (o plano
+  estimava 8 KB com menos liberações). Arquivo novo: a tag `te-final` não o lê.
 - CSV: `/calibration/venting.csv?test=0` (o último), `?test=N` ou `?test=all`
   (todos, do mais antigo ao mais novo); `;` e vírgula decimal.
 - `python tests/venting_fit.py arquivo.csv` refaz o ajuste fora da placa

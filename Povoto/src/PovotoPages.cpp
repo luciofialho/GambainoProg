@@ -1099,10 +1099,11 @@ static String pct(float fraction) {
 static String ventingTestSectionHtml() {
   auto num = [](float v, int d) { return isfinite(v) ? String(v, d) : String("n/a"); };
   String html = "<hr><h3>Venting test</h3><p>Empty fermenter with air, the volume of the test below, the valve outlet "
-    "in its working assembly (witness bottle). Pressurize to ~1.9 bar and wait ~10 min. The test alternates openings of "
-    "2, 0.5, 8, 1, 4 and 2 s at levels of ~1.9, 1.5, 1.1, 0.8 and 0.5 bar (a long opening steps down between levels), "
-    "waits for a stable pressure after each one (0.3 mbar in 30 s, 45-180 s) and measures the real opening time. "
-    "About 40-50 min. Do not touch the equipment.</p>";
+    "in its working assembly (witness bottle). Pressurize above the highest fermentation pressure + ~3% (2.0-2.05 bar "
+    "for 1.9) and wait ~10 min. The test alternates openings of 2, 0.5, 8, 1, 4 and 2 s at the start pressure and at "
+    "~1.9, 1.5, 1.1, 0.8, 0.5 and 0.25 bar (a long opening steps down between levels), waits for a stable pressure "
+    "after each one (0.3 mbar in 30 s, 45-180 s) and measures the real opening time. About 55-65 min. Vents outside "
+    "the pressure range of the saved curve are flagged. Do not touch the equipment.</p>";
   if (ventingTestActive()) {
     html += "<p><b>" + ventingTestProgressText() + "</b></p><form action='/calibration/venting/abort' method='POST'>"
       "<button>Abort</button></form>";
@@ -1127,7 +1128,9 @@ static String ventingTestSectionHtml() {
       html += "tau(P) = " + num(s.curve.a[0], 3) + " + " + num(s.curve.a[1], 3) + " P + " + num(s.curve.a[2], 3) +
         " P&sup2; + " + num(s.curve.a[3], 4) + " P&sup3; s (100 L, 20 &deg;C, " + num(s.curve.pMin, 2) + "-" +
         num(s.curve.pMax, 2) + " bar); <b>t0 " + num(1000.0f * s.curve.t0, 1) + " &plusmn; " + num(s.t0SeMs, 1) +
-        " ms</b>; shape residual " + num(s.shapeRmsPercent, 2) + "% rms; drift " + num(s.driftPercent, 2) + " &plusmn; " +
+        " ms</b>; reduced chi-square " + (s.chiSquare > 3.0f ? "<b>" + num(s.chiSquare, 2) + " (above 3: the cubic does not "
+        "follow the data)</b>" : num(s.chiSquare, 2)) + " (shape residual " + num(s.shapeRmsPercent, 2) + "% rms); drift " +
+        num(s.driftPercent, 2) + " &plusmn; " +
         num(s.driftSePercent, 2) + "%.<br>Flow against the reference at 1.8 / 1.2 / 0.8 bar: " + pct(s.vsReference[0]) + " / " + pct(s.vsReference[1]) +
         " / " + pct(s.vsReference[2]) + "; against the saved curve: " + pct(s.vsSaved[0]) + " / " + pct(s.vsSaved[1]) +
         " / " + pct(s.vsSaved[2]) + ".</p>";
@@ -1143,7 +1146,7 @@ static String ventingTestSectionHtml() {
     html += "<p><a href='/calibration/venting.csv?test=0'>Last test CSV</a> | <a href='/calibration/venting.csv?test=all'>"
       "All tests CSV</a> (" + String(count) + " in the history; <code>python tests/venting_fit.py file.csv</code> "
       "redoes the fit)</p><table style='width:100%;font-size:0.85em'><tr><th>#</th><th>Time</th><th>Label</th><th>t0 ms</th>"
-      "<th>vs ref 1.8/1.2/0.8</th><th>Drift</th></tr>";
+      "<th>vs ref 1.8/1.2/0.8</th><th>Drift</th><th>chi2</th></tr>";
     for (uint8_t i = 0; i < count && i < 10; ++i) {
       if (!getVentingTestSummary(i, s)) continue;
       char when[20];
@@ -1151,7 +1154,7 @@ static String ventingTestSectionHtml() {
       html += "<tr><td><a href='/calibration/venting.csv?test=" + String(i) + "'>" + String(i) + "</a></td><td>" + when +
         "</td><td>" + ventingTestLabelName(s.label) + "</td><td>" + num(1000.0f * s.curve.t0, 1) + "</td><td>" +
         pct(s.vsReference[0]) + " " + pct(s.vsReference[1]) + " " + pct(s.vsReference[2]) + "</td><td>" +
-        num(s.driftPercent, 2) + "%</td></tr>";
+        num(s.driftPercent, 2) + "%</td><td>" + num(s.chiSquare, 2) + "</td></tr>";
     }
     html += "</table>";
   }

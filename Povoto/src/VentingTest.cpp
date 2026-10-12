@@ -17,12 +17,21 @@
 unsigned long int NTPEpoch(); // IOTK_NTP (not #included: see AtmosphericPressure.cpp)
 
 // docs/venting-test.md
-static const float VT_LEVELS[] = {1.9f, 1.5f, 1.1f, 0.8f, 0.5f};          // gauge bar
+// Gauge bar. Start above the highest fermentation pressure + ~3% (~2.0-2.05 bar
+// for 1.9); end below the lowest one (0.25 bar for fermentations at 0.3 bar:
+// below ~0.4 bar, subsonic, the end value of the curve overestimates the flow).
+static const float VT_LEVELS[] = {1.9f, 1.5f, 1.1f, 0.8f, 0.5f, 0.25f};
 static constexpr uint8_t VT_LEVEL_COUNT = sizeof(VT_LEVELS) / sizeof(VT_LEVELS[0]);
 // Alternating durations at one level; the 2 s at both ends give the drift.
 static const float VT_DURATIONS[] = {2.0f, 0.5f, 8.0f, 1.0f, 4.0f, 2.0f};
 static constexpr uint8_t VT_DURATION_COUNT = sizeof(VT_DURATIONS) / sizeof(VT_DURATIONS[0]);
-static constexpr uint8_t VT_MAX_RELEASES = 40;
+// Start + 6 levels: 7 x 6 openings + 6 steps.
+static constexpr uint8_t VT_MAX_RELEASES = 48;
+static constexpr uint8_t VT_MAX_LEVELS = VT_LEVEL_COUNT + 1;
+static constexpr float VT_END_PRESSURE = 0.1f;            // below it the test ends
+// Reduced chi-square: noise floor of a settled reading and timing noise.
+static constexpr float VT_NOISE_FLOOR_BAR = 0.00005f;
+static constexpr float VT_TIMING_NOISE_S = 0.002f;
 static constexpr float VT_MIN_START_PRESSURE = 0.8f;
 static constexpr float VT_LEVEL_MARGIN = 0.15f;     // a level must be this far below the start
 static constexpr float VT_STEP_MIN_SECONDS = 3.0f, VT_STEP_MAX_SECONDS = 90.0f;
@@ -47,6 +56,7 @@ struct VentReleaseRaw {
   float p1, pClose, p2;       // gauge bar
   float tempK;                // fermenter at P1
   float waitSeconds;          // settling after the release
+  float p1Noise, p2Noise;     // standard error of the P1 / P2 means (bar)
   uint8_t level, kind;
 } __attribute__((packed));
 
@@ -58,6 +68,7 @@ struct VentTestRecord {
   char firmware[24];
   VentModel::Curve curve;
   float shapeRmsPercent, t0SeMs, driftPercent, driftSePercent;
+  float chiSquare;            // reduced chi-square of the fit
   float vsReference[3], vsSaved[3];
   VentReleaseRaw rel[VT_MAX_RELEASES];
 } __attribute__((packed));
@@ -69,7 +80,7 @@ struct VentHistoryHeader {
 } __attribute__((packed));
 
 static constexpr const char *VT_FILE = "/venttests.bin";
-static constexpr uint32_t VT_MAGIC = 0x31485456UL; // "VTH1"
+static constexpr uint32_t VT_MAGIC = 0x32485456UL; // "VTH2" (48 releases, noise, chi-square)
 static constexpr uint8_t VT_HISTORY = 50;
 
 static bool readHeader(File &f, VentHistoryHeader &h) {
@@ -130,11 +141,14 @@ static void fitRecord(VentTestRecord &r) {
   VentModel::Release rel[VT_MAX_RELEASES];
   uint8_t index[VT_MAX_RELEASES];
   float exponents[VT_MAX_RELEASES], residuals[VT_MAX_RELEASES], measured[VT_MAX_RELEASES];
+  float noise1[VT_MAX_RELEASES], noise2[VT_MAX_RELEASES];
   uint8_t n = 0, nm = 0;
   for (uint8_t i = 0; i < r.count; ++i) {
     const VentReleaseRaw &x = r.rel[i];
     if (!(x.seconds > 0.2f) || !(x.p2 > 0.05f) || !(x.p1 > x.p2 + 0.001f) || !(x.tempK > 200.0f)) continue;
     rel[n] = {x.seconds, x.p1, x.pClose, x.p2, x.tempK};
+    noise1[n] = x.p1Noise;
+    noise2[n] = x.p2Noise;
     index[n++] = i;
     if (isfinite(x.pClose)) {
       const double m = VentModel::releaseExponent(x.p1, x.pClose, x.p2, r.patm, NAN);
@@ -172,7 +186,7 @@ static void fitRecord(VentTestRecord &r) {
       ++t0N;
     }
   }
-  for (uint8_t level = 0; level < VT_LEVEL_COUNT; ++level) {
+  for (uint8_t level = 0; level < VT_MAX_LEVELS; ++level) {
     int first = -1, last = -1;
     for (uint8_t i = 0; i < n; ++i) {
       const VentReleaseRaw &x = r.rel[index[i]];
@@ -192,6 +206,10 @@ static void fitRecord(VentTestRecord &r) {
   r.t0SeMs = float(1000.0 * t0Se);
   r.driftPercent = driftN ? float(100.0 * drift / driftN) : NAN;
   r.driftSePercent = driftN ? float(100.0 * shortSd * sqrt(2.0) / (2.0 - curve.t0) / sqrt((double)driftN)) : NAN;
+  // Residuals against the noise of each reading: ~1 when the cubic follows the
+  // data; well above 1 (limit 3), the shape does not follow.
+  r.chiSquare = float(VentModel::reducedChiSquare(curve, rel, noise1, noise2, residuals, exponents, n, r.volume,
+                                                  r.patm, r.co2, VT_NOISE_FLOOR_BAR, VT_TIMING_NOISE_S));
   const float pressures[3] = {1.8f, 1.2f, 0.8f};
   for (uint8_t i = 0; i < 3; ++i) {
     r.vsReference[i] = tauRatioMinusOne(FMTData.ventReferenceCurve, curve, pressures[i]);
@@ -214,6 +232,7 @@ static void summaryFrom(const VentTestRecord &r, VentingTestSummary &s) {
   s.fitted = r.fitted;
   s.curve = r.curve;
   s.shapeRmsPercent = r.shapeRmsPercent;
+  s.chiSquare = r.chiSquare;
   s.t0SeMs = r.t0SeMs;
   s.driftPercent = r.driftPercent;
   s.driftSePercent = r.driftSePercent;
@@ -267,10 +286,11 @@ enum VtStage : uint8_t { VT_IDLE, VT_WAIT_P1, VT_OPEN, VT_SETTLE };
 static VtStage stage = VT_IDLE;
 static VentTestRecord *test = nullptr;  // the running test
 static PressureWait *wait = nullptr;
-static float levelTargets[VT_LEVEL_COUNT];
+static float levelTargets[VT_MAX_LEVELS];
 static uint8_t levelCount = 0, currentLevel = 0, durationIndex = 0;
 static bool stepNext = false;           // the next release steps down to the next level
 static float currentP1 = NAN;
+static float currentP1Noise = NAN; // standard error of the P1 of the next release
 static unsigned long stageMillis = 0, openPlannedMs = 0;
 static int64_t openMicros = 0;
 static float simulatedPressure = NAN;   // debug boards
@@ -343,9 +363,9 @@ static void finishTest(const char *outcome) {
     fitRecord(*test);
     const bool saved = appendRecord(*test);
     char details[200];
-    snprintf(details, sizeof(details), "%s, %s, %u releases, %s; t0 %.1f ms (se %.1f), shape %.2f%%, drift %+.2f%%, "
+    snprintf(details, sizeof(details), "%s, %s, %u releases, %s; t0 %.1f ms (se %.1f), chi2 %.2f, drift %+.2f%%, "
              "vs reference %+.2f/%+.2f/%+.2f%%%s", ventingTestLabelName(test->label), test->co2 ? "CO2" : "air",
-             test->count, outcome, 1000.0f * test->curve.t0, test->t0SeMs, test->shapeRmsPercent, test->driftPercent,
+             test->count, outcome, 1000.0f * test->curve.t0, test->t0SeMs, test->chiSquare, test->driftPercent,
              100.0f * test->vsReference[0], 100.0f * test->vsReference[1], 100.0f * test->vsReference[2],
              saved ? "" : " (history NOT saved)");
     calibrationEventAppend("venting-test", details);
@@ -397,7 +417,7 @@ bool startVentingTest(uint8_t label, bool co2, float volume, char *reason, size_
   // Level 1 is the start pressure; then each table level well below it.
   levelCount = 0;
   levelTargets[levelCount++] = ControlData.pressure;
-  for (uint8_t i = 0; i < VT_LEVEL_COUNT && levelCount < VT_LEVEL_COUNT; ++i)
+  for (uint8_t i = 0; i < VT_LEVEL_COUNT && levelCount < VT_MAX_LEVELS; ++i)
     if (VT_LEVELS[i] < ControlData.pressure - VT_LEVEL_MARGIN) levelTargets[levelCount++] = VT_LEVELS[i];
   currentLevel = 0;
   durationIndex = 0;
@@ -425,7 +445,8 @@ static void openRelease(float p1, unsigned long now) {
   VentReleaseRaw &x = test->rel[test->count];
   memset(&x, 0, sizeof(x));
   x.p1 = p1;
-  x.pClose = x.p2 = NAN;
+  x.p1Noise = currentP1Noise;
+  x.pClose = x.p2 = x.p2Noise = NAN;
   x.tempK = 273.15f + ControlData.temperature;
   x.level = currentLevel;
   if (stepNext) {
@@ -468,6 +489,7 @@ void processVentingTest() {
     wait->sample(now, ControlData.pressure, acquisition, 0);
     if (waitDone()) {
       currentP1 = wait->mean(VT_AVERAGE_MS);
+      currentP1Noise = wait->meanStandardError(VT_AVERAGE_MS);
       openRelease(currentP1, now);
       showProgress(true);
     }
@@ -483,6 +505,7 @@ void processVentingTest() {
     if (waitDone()) {
       x.pClose = wait->first;
       x.p2 = wait->mean(VT_AVERAGE_MS);
+      x.p2Noise = currentP1Noise = wait->meanStandardError(VT_AVERAGE_MS); // the next P1
       x.waitSeconds = wait->lastSampleElapsed() / 1000.0f;
       ++test->count;
       // Next release: the next duration, the step down, or the end.
@@ -497,7 +520,7 @@ void processVentingTest() {
           return;
         }
       }
-      if (test->count >= VT_MAX_RELEASES || x.p2 < 0.3f) {
+      if (test->count >= VT_MAX_RELEASES || x.p2 < VT_END_PRESSURE) {
         finishTest("Completed");
         return;
       }
@@ -549,10 +572,13 @@ static bool appendCsvRow(VentCsvExport &e, String &line) {
   csvNumber(line, x.p2, 6);
   csvNumber(line, x.tempK, 2);
   csvNumber(line, x.waitSeconds, 1);
+  csvNumber(line, 1000.0f * x.p1Noise, 4);
+  csvNumber(line, 1000.0f * x.p2Noise, 4);
   for (uint8_t k = 0; k < 4; ++k) csvNumber(line, r.fitted ? r.curve.a[k] : NAN, 6);
   csvNumber(line, r.fitted ? r.curve.t0 : NAN, 5);
   csvNumber(line, r.t0SeMs, 2);
   csvNumber(line, r.shapeRmsPercent, 3);
+  csvNumber(line, r.chiSquare, 3);
   csvNumber(line, r.driftPercent, 3);
   csvNumber(line, r.driftSePercent, 3);
   for (uint8_t i = 0; i < 3; ++i) csvNumber(line, 100.0f * r.vsReference[i], 3);
@@ -587,7 +613,8 @@ void handleVentingTestCSV(AsyncWebServerRequest *request) {
         if (!e->headerSent) {
           line = "test;date_time;epoch;batch;label;gas;volume_L;patm_bar;patm_source;temp_amb_C;temp_ferm_C;"
                  "firmware;release;level;kind;t_requested_s;t_real_s;P1_bar;P_close_bar;P2_bar;temp_ferm_K;wait_s;"
-                 "fit_a0;fit_a1;fit_a2;fit_a3;fit_t0_s;t0_se_ms;shape_rms_pct;drift_pct;drift_se_pct;"
+                 "P1_noise_mbar;P2_noise_mbar;"
+                 "fit_a0;fit_a1;fit_a2;fit_a3;fit_t0_s;t0_se_ms;shape_rms_pct;chi2_reduced;drift_pct;drift_se_pct;"
                  "vs_ref_1_8_pct;vs_ref_1_2_pct;vs_ref_0_8_pct\n";
           if (line.length() > maxLen) return 0;
           memcpy(buffer, line.c_str(), line.length());

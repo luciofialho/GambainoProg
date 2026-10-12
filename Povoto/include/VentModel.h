@@ -180,6 +180,50 @@ inline void releaseIntegrals(double volume, double t0Kelvin, double p1Gauge, dou
   for (int k = 0; k < 4; ++k) j[k] *= scale * h / 3.0;
 }
 
+struct Release {
+  float seconds;   // real opening time
+  float p1, pClose, p2; // gauge bar; pClose NAN = unknown
+  float tempK;     // fermenter at P1
+};
+
+// Sensitivities of the release time to the settled pressures (s/bar, both
+// positive): dt/dP1 and -dt/dP2 of the model above, for the curve c. They turn
+// a pressure reading error into a time error (reduced chi-square of the fit).
+inline void releaseSensitivities(const Curve &c, double volume, double t0Kelvin, double p1Gauge, double p2Gauge,
+                                 double patm, double exponent, bool co2, double &s1, double &s2) {
+  const double p1 = p1Gauge + patm, p2 = p2Gauge + patm;
+  const double scale = volume / V_REF * sqrt(T_REF / t0Kelvin);
+  const double x = p2 / p1;
+  const double pAbs2 = p1 * pow(x, exponent);         // actual pressure when the settled one is P2
+  double g2 = sqrt(pow(x, exponent - 1.0)) / pAbs2;
+  double g1 = 1.0 / p1;
+  if (co2) {
+    g2 /= sqrt(co2Z(p2, t0Kelvin)) * co2AirRatio(pAbs2 - patm, patm);
+    g1 /= sqrt(co2Z(p1, t0Kelvin)) * co2AirRatio(p1Gauge, patm);
+  }
+  s1 = scale * g1 * tauRef(c, p1Gauge);
+  s2 = scale * g2 * tauRef(c, pAbs2 - patm);
+}
+
+// Reduced chi-square of a fit: sum r_i^2 / (s1^2 n1^2 + s2^2 n2^2 + st^2) / (n - 5),
+// with n1, n2 the noise of each settled reading (bar, at least floorBar) and st
+// the timing noise (s). ~1: the cubic follows the data within the noise.
+inline double reducedChiSquare(const Curve &c, const Release *rel, const float *noise1, const float *noise2,
+                               const float *residuals, const float *exponents, int count, double volume,
+                               double patm, bool co2, double floorBar, double timingSeconds) {
+  if (count <= 5) return NAN;
+  double sum = 0.0;
+  for (int i = 0; i < count; ++i) {
+    double s1, s2;
+    releaseSensitivities(c, volume, rel[i].tempK, rel[i].p1, rel[i].p2, patm, exponents[i], co2, s1, s2);
+    const double n1 = fmax(isfinite(noise1[i]) ? (double)noise1[i] : 0.0, floorBar);
+    const double n2 = fmax(isfinite(noise2[i]) ? (double)noise2[i] : 0.0, floorBar);
+    const double variance = s1 * s1 * n1 * n1 + s2 * s2 * n2 * n2 + timingSeconds * timingSeconds;
+    sum += (double)residuals[i] * residuals[i] / variance;
+  }
+  return sum / (count - 5);
+}
+
 // Gaussian elimination with partial pivoting of an n x n system (n <= 5).
 inline bool solveLinear(double m[5][6], int n, double x[5]) {
   for (int col = 0; col < n; ++col) {
@@ -197,11 +241,6 @@ inline bool solveLinear(double m[5][6], int n, double x[5]) {
   return true;
 }
 
-struct Release {
-  float seconds;   // real opening time
-  float p1, pClose, p2; // gauge bar; pClose NAN = unknown
-  float tempK;     // fermenter at P1
-};
 
 // Weighted least squares t_i = t0 + sum a_k J_ik. A reading error of the
 // pressure becomes an almost constant error in time, ~tau*sigma_P/P_abs: the

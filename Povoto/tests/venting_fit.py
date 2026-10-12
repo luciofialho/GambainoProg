@@ -7,8 +7,10 @@ Usage:
 Reads the CSV of /calibration/venting.csv (';' separated, ',' decimals),
 fits tau(P) cubic + t0 by the same weighted least squares as the firmware
 (tests/vent_model.py mirrors include/VentModel.h) and prints, per test:
-coefficients, t0, the residual of each release, the shape residual, the t0
-dispersion, the drift and the comparison with the firmware's own fit.
+coefficients, t0 and its standard error, the residual of each release (in ms
+and as the equivalent pressure in mbar), the reduced chi-square (residuals
+against the noise of each reading; limit 3), the drift and the comparison
+with the firmware's own fit.
 --selftest builds a synthetic test (known curve, t0, cooling and noise) and
 checks that the fit recovers them.
 """
@@ -37,6 +39,8 @@ def load(path):
                 "requested": number(row["t_requested_s"]), "t": number(row["t_real_s"]),
                 "p1": number(row["P1_bar"]), "p_close": number(row["P_close_bar"]), "p2": number(row["P2_bar"]),
                 "temp_k": number(row["temp_ferm_K"]),
+                "noise1": number(row.get("P1_noise_mbar")) / 1000.0,
+                "noise2": number(row.get("P2_noise_mbar")) / 1000.0,
             })
     return tests
 
@@ -56,7 +60,10 @@ def fit(releases, volume, patm, co2, fit_t0=True):
     return result, valid
 
 
-def summary(result, valid):
+CHI_SQUARE_LIMIT = 3.0
+
+
+def summary(result, valid, volume=None, patm=None, co2=False):
     t0 = result["t0"]
     shape = [res / (r["t"] - t0) for r, res in zip(valid, result["residuals"]) if r["t"] >= 4.0]
     short = [res for r, res in zip(valid, result["residuals"]) if r["t"] <= 2.2]
@@ -74,6 +81,9 @@ def summary(result, valid):
         "drift_pct": 100 * statistics.mean(drifts) if drifts else float("nan"),
         # Each drift is a difference of two short residuals: sd * sqrt(2) / (2 - t0) per level.
         "drift_se_pct": 100 * short_sd * math.sqrt(2) / (2.0 - t0) / math.sqrt(len(drifts)) if drifts else float("nan"),
+        "chi2": vm.reduced_chi_square(vm.make_curve(result["a"], t0, result["p_min"], result["p_max"]), valid,
+                                      result["residuals"], result["exponents"], volume, patm, co2)
+                if volume is not None else float("nan"),
     }
 
 
@@ -91,16 +101,20 @@ def report(name, test, fixed_t0):
     print("tau(P) = %.4f + %.4f P + %.4f P^2 + %.5f P^3 s (100 L air, 20 C), %.2f-%.2f bar"
           % (a[0], a[1], a[2], a[3], result["p_min"], result["p_max"]))
     print("t0 = %.1f ms; exponent of the releases without P_close: %.3f" % (1000 * t0, result["fallback_exponent"]))
-    s = summary(result, valid)
-    print("t0 standard error %.1f ms; shape residual %.3f%% rms (>= 4 s); residual sd of the releases <= 2 s "
-          "%.1f ms; drift %+.3f%% +- %.3f%%" % (s["t0_se_ms"], s["shape_rms_pct"], s["short_sd_ms"], s["drift_pct"],
-                                                s["drift_se_pct"]))
-    print(" rel lvl kind   t_req   t_real      P1     P2   exp  resid_ms  resid%")
+    s = summary(result, valid, volume, patm, co2)
+    print("t0 standard error %.1f ms; reduced chi-square %.2f%s; shape residual %.3f%% rms (>= 4 s); "
+          "residual sd of the releases <= 2 s %.1f ms; drift %+.3f%% +- %.3f%%"
+          % (s["t0_se_ms"], s["chi2"], " (ABOVE %.0f: the cubic does not follow the data)" % CHI_SQUARE_LIMIT
+             if s["chi2"] > CHI_SQUARE_LIMIT else "", s["shape_rms_pct"], s["short_sd_ms"], s["drift_pct"],
+             s["drift_se_pct"]))
+    print(" rel lvl kind   t_req   t_real      P1     P2   exp  resid_ms resid_mbar  noise1  noise2 (mbar)")
     for r, res, m in zip(valid, result["residuals"], result["exponents"]):
-        print("%4d %3d %-5s %6.2f %8.4f %7.4f %6.4f %5.3f %8.1f %7.3f"
+        _, s2 = vm.release_sensitivities(curve, volume, r["temp_k"], r["p1"], r["p2"], patm, m, co2)
+        print("%4d %3d %-5s %6.2f %8.4f %7.4f %6.4f %5.3f %8.1f %10.3f %7.3f %7.3f"
               % (r["release"], r["level"], r["kind"], r["requested"], r["t"], r["p1"], r["p2"], m,
-                 1000 * res, 100 * res / (r["t"] - t0)))
-    print("firmware: t0 standard error %s ms, drift %s +- %s %%" % (meta["t0_se_ms"], meta["drift_pct"], meta["drift_se_pct"]))
+                 1000 * res, 1000 * res / s2, 1000 * r.get("noise1", float("nan")), 1000 * r.get("noise2", float("nan"))))
+    print("firmware: t0 standard error %s ms, chi-square %s, drift %s +- %s %%"
+          % (meta["t0_se_ms"], meta.get("chi2_reduced", ""), meta["drift_pct"], meta["drift_se_pct"]))
     fw = [number(meta[k]) for k in ("fit_a0", "fit_a1", "fit_a2", "fit_a3", "fit_t0_s")]
     if all(math.isfinite(x) for x in fw):
         fw_curve = vm.make_curve(fw[:4], fw[4], result["p_min"], result["p_max"])
@@ -132,14 +146,15 @@ def selftest():
 
     releases, p, n = [], 1.9, 0
     noise = random.gauss(0, 0.00015)  # reading of the current settled pressure
-    for level, target in enumerate([1.5, 1.1, 0.8, 0.5, None]):
+    for level, target in enumerate([1.5, 1.1, 0.8, 0.5, 0.25, None]):
         for d in (2, 0.5, 8, 1, 4, 2):
             p2, pc = release(p, d)
             n += 1
             next_noise = random.gauss(0, 0.00015)
             releases.append({"release": n, "level": level + 1, "kind": "level", "requested": d,
                              "t": d + random.gauss(0, 0.002), "p1": p + noise,
-                             "p_close": pc + random.gauss(0, 0.0005), "p2": p2 + next_noise, "temp_k": temp_k})
+                             "p_close": pc + random.gauss(0, 0.0005), "p2": p2 + next_noise, "temp_k": temp_k,
+                             "noise1": 0.00015, "noise2": 0.00015})
             p, noise = p2, next_noise
         if target is None:
             break
@@ -151,17 +166,19 @@ def selftest():
         n += 1
         next_noise = random.gauss(0, 0.00015)
         releases.append({"release": n, "level": level + 1, "kind": "step", "requested": hi, "t": hi,
-                         "p1": p + noise, "p_close": pc, "p2": p2 + next_noise, "temp_k": temp_k})
+                         "p1": p + noise, "p_close": pc, "p2": p2 + next_noise, "temp_k": temp_k,
+                         "noise1": 0.00015, "noise2": 0.00015})
         p, noise = p2, next_noise
     result, valid = fit(releases, volume, patm, False)
     curve = vm.make_curve(result["a"], result["t0"], 0.0, 3.0)
-    errors = [100 * (vm.tau_ref(curve, q) / vm.tau_ref(truth, q) - 1) for q in (1.8, 1.2, 0.8, 0.5)]
-    s = summary(result, valid)
+    errors = [100 * (vm.tau_ref(curve, q) / vm.tau_ref(truth, q) - 1) for q in (1.8, 1.2, 0.8, 0.5, 0.3)]
+    s = summary(result, valid, volume, patm, False)
     print(f"selftest: {len(valid)} releases from 1.9 to {p:.2f} bar; t0 {1000 * result['t0']:.1f} ms (true 25.0); "
-          f"tau error at 1.8/1.2/0.8/0.5 bar: " + " / ".join(f"{e:+.3f}%" for e in errors) +
+          f"tau error at 1.8/1.2/0.8/0.5/0.3 bar: " + " / ".join(f"{e:+.3f}%" for e in errors) +
           f"; t0 standard error {s['t0_se_ms']:.1f} ms; shape {s['shape_rms_pct']:.3f}% rms; "
-          f"drift {s['drift_pct']:+.3f}% +- {s['drift_se_pct']:.3f}%")
-    ok = abs(1000 * result["t0"] - 25.0) < 15.0 and max(abs(e) for e in errors) < 0.6
+          f"drift {s['drift_pct']:+.3f}% +- {s['drift_se_pct']:.3f}%; reduced chi-square {s['chi2']:.2f}")
+    ok = (abs(1000 * result["t0"] - 25.0) < 15.0 and max(abs(e) for e in errors) < 0.6 and
+          0.3 < s["chi2"] < CHI_SQUARE_LIMIT)
     print("RESULT:", "PASS" if ok else "FAIL")
     return 0 if ok else 1
 

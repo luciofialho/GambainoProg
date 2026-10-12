@@ -175,9 +175,9 @@ mudança na saída (garrafa, silenciador); qualquer suspeita sobre a válvula.
 5. O ensaio alterna durações (2, 0,5, 8, 1, 4, 2 s) em patamares do topo até
    **abaixo da menor pressão de fermentação usada** (com fermentações a 0,3 bar,
    o último patamar fica em ~0,25 bar), com uma abertura longa entre eles; mede o tempo real
-   de cada abertura e grava cada liberação no histórico (~40–50 min). Não mexa
+   de cada abertura e grava cada liberação no histórico (~55–65 min). Não mexa
    no equipamento.
-6. Resultado: curva τ(P) cúbica, t0 ± erro padrão, resíduo de forma, deriva
+6. Resultado: curva τ(P) cúbica, t0 ± erro padrão, qui-quadrado reduzido, deriva
    (por patamar) ± erro padrão, e a diferença contra a curva de referência e a
    gravada em 1,8 / 1,2 / 0,8 bar. `python tests/venting_fit.py arquivo.csv`
    refaz o ajuste fora da placa.
@@ -277,7 +277,7 @@ Não use soda nem Vanish em pó (corpo de alumínio). Não molhe a bobina.
 | P4b: volume muda com a pressão inicial | offset do sensor ou pressão residual no barril | repetir P1; ventilar o barril por mais tempo; conferir retenção na saída |
 | P4b: dispersão entre reliefs > 0,5% | pressão não estabilizada | esperar mais antes de P1/P2 |
 | P5: erro padrão do t0 > 5 ms, ou deriva maior que 2× o seu erro padrão | solenoide ou fonte da bobina instável | conferir a tensão; trocar a válvula |
-| P5: resíduo de forma > 1% | leituras sem estabilizar, ou forma diferente | repetir com espera maior; mandar para análise (com ruído de leitura normal, ~0,15 mbar, ele fica em ~0,5%) |
+| P5: qui-quadrado reduzido > 3 (resíduos bem maiores que o ruído de cada leitura; normal ~1) | leituras sem estabilizar, ou a forma da vazão não é cúbica | repetir com espera maior; mandar para análise (`tests/venting_fit.py` mostra o resíduo de cada liberação em mbar) |
 | Vents marcados fora da faixa calibrada no log | fermentação acima ou abaixo das pressões do último P5 | refazer o P5 cobrindo a faixa (topo ≥ setpoint máximo + 3%; base abaixo do menor setpoint) |
 | P5: curva > 3% abaixo da referência | sujeira na válvula ou no silenciador | P9 e P10 e repetir; se não voltar, trocar a válvula e registrar `new-valve` |
 | P5: perda < 3% mas volta só com a limpeza | sujeira por lote | manter P10 em todo fim de lote |
