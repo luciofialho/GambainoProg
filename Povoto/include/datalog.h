@@ -44,6 +44,8 @@ struct ReliefLogData {
   float ventFlowConstant;          // CO2 (ratio, Z and level included)
   float flowLevelFactor;
   float ventFlowMoles;             // flow model, before the liquid-mass correction
+  float ventFermenterSideMoles;    // settled drop x reference headspace / RT
+  const char *ventOutOfRange;      // "above" / "below" the range of the flow curve, or ""
   const char *ventCounted;         // "flow", "fermenter-side" or "none"
   float ventDropPercent;           // settled drop / pressure at opening
   float ventTargetDropPercent;
@@ -72,8 +74,8 @@ struct ReliefLogData {
   float headSpaceDaily;      // 24-hour average (NAN = no hours)
   uint8_t dailyHours;
   const char *dailyState;    // "valid", "hold" or "ema"
-  float reliefDropRatio;     // measured / expected drop (NAN = not checked, docs/alarms.md)
-  const char *reliefCheck;   // "ok", "no-effect" or "" (not checked)
+  float reliefDropRatio;     // fermenter side / flow model = measured / expected drop (docs/alarms.md)
+  const char *reliefCheck;   // "ok", "partial", "no-effect" or "" (not checked)
 };
 
 // One row of the Task log per finished or cancelled task, sent after the

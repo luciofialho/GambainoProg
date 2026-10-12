@@ -7,7 +7,7 @@ precedência e cuida da sinalização. Cada verificação fica no seu módulo.
 |---|---|---|---|
 | 1 | Sensor de pressão (`checkPressureSensor()`, PressureControl.cpp) | Fermenting ou Conditioning, alvo de pressão definido, leitura inválida há 10 s | 4 por minuto |
 | 2 | Válvula presa aberta (`checkValveStuckOpen()`, PressureControl.cpp) | Fermenting: a pressão caiu mais de 5 mbar nos 30 s depois da leitura de fechamento de um vent | 6 por minuto |
-| 3 | Vent sem efeito (`evaluateVentCheck()`, PressureControl.cpp) | Fermenting: dois vents seguidos com queda < 0,25× a esperada | 5 por minuto |
+| 3 | Vent sem efeito (`evaluateVentCheck()`, PressureControl.cpp) | Fermenting: dois vents seguidos com razão < 0,25 (lado do fermentador / vazão) | 5 por minuto |
 | 4 | Termômetro do fermentador (`fermenterThermometerAlarm()`, TermperatureControl.cpp) | Fermenting ou Conditioning, alvo de temperatura definido, termômetro não atribuído ou sem leitura válida há 60 s | 3 por minuto |
 
 Com mais de um ativo, sinaliza só o de maior precedência. O `/getstatus` mostra o
@@ -16,18 +16,21 @@ estado de cada um ("Pressure sensor check", "Vent check ... stuck open" e
 
 ## Verificação de cada vent
 
-A queda assentada de cada vent (de `pressureOnReliefExtrap` à pressão assentada
-pelo expoente 1,29, em P/Z) é comparada com a esperada pelos mols contados pelo
-modelo de vazão no headspace **aplicado** (média de 24 h, referência congelada;
-antes dela, o inicial): razão = queda medida / queda esperada = Vh de referência
-/ Vh aparente (docs/vent.md).
+Cada vent é contado de dois jeitos (docs/vent.md): pelo modelo de vazão e pelo
+lado do fermentador (queda assentada de P/Z, de `pressureOnReliefExtrap` à
+pressão assentada pelo expoente 1,29, × headspace **aplicado** — média de 24 h,
+referência congelada; antes dela, o inicial — / RT). A razão lado do
+fermentador / vazão é a queda medida / esperada (= Vh de referência / Vh
+aparente) e vai para o log em todo vent.
 
-- **Vent sem efeito** (< 0,25×): a válvula não abriu, a saída está obstruída ou
-  o TE foi religado por engano. O vent **não é contado** pelo modelo de vazão
-  (contaria mols que não saíram): o CO2 dele é a perda do lado do fermentador
-  (queda × headspace de referência / RT; ~0 se a válvula não abriu) e ele não
-  alimenta a EMA, a média de 24 h nem as amostras iniciais. Dois seguidos
-  disparam o alarme; um vent normal o apaga.
+- **Razão < 0,5** (`partial`): a saída passou bem menos que a curva diz (saída
+  parcialmente obstruída, por exemplo). O vent é contado pelo lado do
+  fermentador e não alimenta a EMA, a média de 24 h nem as amostras iniciais.
+  Sem alarme.
+- **Vent sem efeito** (< 0,25, `no-effect`): a válvula não abriu, a saída está
+  obstruída ou o TE foi religado por engano. Contado do mesmo jeito (~0 se a
+  válvula não abriu). Dois seguidos disparam o alarme; um vent normal (≥ 0,5) o
+  apaga.
 - A verificação de queda grande do TE (vazamento entre a válvula e o tanque)
   saiu: sem TE não há causa no equipamento para ela.
 - Não avalia: fora de Fermenting, janelas de task, alarme do sensor de pressão
@@ -35,8 +38,9 @@ antes dela, o inicial): razão = queda medida / queda esperada = Vh de referênc
   referência da subida de pressão. Avalia desde o primeiro vent (o headspace
   inicial vem do volume de cerveja informado; com ar no headspace a vazão real
   é maior que a do CO2 e a razão fica perto de 1,27, longe de 0,25).
-- Log Relief: colunas `ReliefDropRatio` (medida/esperada) e `ReliefCheck` (ok,
-  no-effect ou vazio) e `VentCounted` (`flow` ou `fermenter-side`).
+- Log Relief: `ReliefDropRatio` (lado do fermentador / vazão, em todo vent),
+  `ReliefCheck` (ok, partial, no-effect ou vazio), `VentFlowMols`,
+  `VentFermenterSideMols` e `VentCounted` (`flow` ou `fermenter-side`).
 
 ## Válvula presa aberta
 

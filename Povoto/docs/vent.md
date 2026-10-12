@@ -80,8 +80,23 @@ mols  = C_ar(P̄)·razão(P̄)/√Z(P̄)·nível · P̄/√T_gás · fator · (t
 - **T_gás**: o Dallas do headspace se atribuído e válido; senão Tferm
   (`docs/thermometers.md`). Henry e o CO2 dissolvido continuam com a do líquido.
 - Correção de massa líquida (`liquidMassInGasVentingPercent`) aplicada depois.
-- Só em Fermenting (`VentCounted` = `flow`); nos outros modos o vent controla a
-  pressão sem contar (`none`).
+- Só em Fermenting; nos outros modos o vent controla a pressão sem contar
+  (`VentCounted` = `none`).
+- **Duas contagens, sempre**: a do modelo de vazão (`VentFlowMols`) e a do lado
+  do fermentador (`VentFermenterSideMols` = queda assentada de P/Z × headspace de
+  referência / RT, o aplicado: média de 24 h). A razão lado do fermentador /
+  vazão (`ReliefDropRatio`, = queda medida / esperada) vai para o log Relief em
+  todo vent. **Razão < 0,5**: a saída passou bem menos que a curva diz (válvula
+  que não abriu, saída parcial ou totalmente obstruída, TE religado por engano):
+  o vent é contado pelo lado do fermentador (`VentCounted` = `fermenter-side`) e
+  não alimenta o Vh. Contado pela vazão, uma queda de 60% da esperada seria
+  contada 67% a mais. A troca só vale onde a verificação vale (docs/alarms.md).
+- **Fora da faixa calibrada**: se `P_on` passa da pressão máxima do ensaio
+  (`pMax` da curva) ou a leitura de fechamento fica abaixo da mínima (`pMin`),
+  com 5 mbar de tolerância, a curva usou o valor da ponta: coluna
+  `VentOutOfRange` (`above` / `below`) e contagem em `/ventstatus`. Na ponta
+  alta o erro é pequeno (sônico); na baixa (subsônico, < ~0,4 bar) o valor da
+  ponta superestima a vazão: refazer o ensaio cobrindo a faixa (manual, P5).
 - **Bench** (`python tests/vent_bench.py`): contra uma simulação com o gás real
   expandindo pelo politrópico que define o 1,29, a vazão instantânea e o t0, a
   contagem erra ≤ 0,11% a 0,5 / 1,0 / 1,9 bar com Vh de 20 / 30 / 50 L. Com uma
@@ -112,10 +127,10 @@ subida pela fermentação durante a abertura, como antes) e a pressão assentada
 
 ## 6. Verificações (docs/alarms.md)
 
-- **Vent sem efeito**: queda assentada < 0,25× a esperada pelos mols contados e
-  pelo headspace de referência. Não é contado pelo modelo de vazão: os mols são a
-  perda do lado do fermentador (queda × Vh de referência / RT; ~0 se a válvula
-  não abriu) e o Vh não é alimentado. Dois seguidos: alarme.
+- **Razão < 0,5** (`ReliefCheck` = `partial`): contado pelo lado do fermentador,
+  sem alimentar o Vh, sem alarme.
+- **Vent sem efeito**, razão < 0,25 (`no-effect`): o mesmo, e dois seguidos dão
+  alarme.
 - **Válvula presa aberta**: 30 s depois da leitura de fechamento, a pressão caiu
   mais de 5 mbar (a recuperação térmica e a fermentação só sobem a pressão):
   alarme na hora.
@@ -139,7 +154,8 @@ O nome da planilha continua **Relief**. Colunas novas: `GasTemperature`,
 `GasTemperatureSource`, `VentEstimatedSeconds`, `VentSafetySeconds`,
 `VentPlannedSeconds`, `VentLimit`, `VentHeadspaceForTime`, `VentRealSeconds`,
 `VentT0Seconds`, `VentMeanPressure`, `VentCoolingFactor`, `VentFlowConstant`,
-`FlowLevelFactor`, `VentFlowMols`, `VentCounted`, `VentDropPercent`,
+`FlowLevelFactor`, `VentFlowMols`, `VentFermenterSideMols`, `VentOutOfRange`,
+`VentCounted`, `VentDropPercent`,
 `VentTargetDropPercent`, `HeadSpaceApparent`. Saíram as do TE
 (`TankReferenceTemperature`, `ReliefVolume`, `AdjustedEquilibriumPressure`,
 `TankPressureAtClose`, `GasVentingResidual`, `PreviousTank*`,

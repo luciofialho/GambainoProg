@@ -39,6 +39,7 @@ STRING_MAX = {
     'data.gasTemperatureSource ? data.gasTemperatureSource : ""': 9,  # "headspace"
     'data.ventLimit ? data.ventLimit : ""': 8,                          # "estimate"
     'data.ventCounted ? data.ventCounted : ""': 14,                     # "fermenter-side"
+    'data.ventOutOfRange ? data.ventOutOfRange : ""': 5,                # "above" / "below"
     'data.ventHeadspaceStatus ? data.ventHeadspaceStatus : ""': 32,     # longest status is 31
 }
 UNSIGNED_HINTS = ("Millis", "millis()", "reliefNumber",

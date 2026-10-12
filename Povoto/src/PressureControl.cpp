@@ -346,12 +346,19 @@ struct VentResult {
   float cooling;
   float flowConstant;      // CO2, with ratio, Z and level
   float flowMoles;         // flow model, before the liquid-mass correction
-  float countedMoles;      // flow model, or fermenter side for a vent without effect
+  float fermenterSideMoles; // settled drop x reference headspace / RT (NAN = not available)
+  float ratio;             // fermenter side / flow model (= measured / expected drop)
+  float countedMoles;      // flow model, or fermenter side when the ratio is below 0.5
   const char *counted;     // "flow", "fermenter-side" or "none" (not Fermenting)
+  const char *outOfRange;  // "above" / "below" the pressure range of the flow curve, or 
   float apparentHeadspace; // flow moles / isothermal drop (NAN = not available)
   float dropPercent;       // isothermal drop / P_on extrapolated
 };
-static VentResult ventResult = {NAN, NAN, NAN, NAN, NAN, "none", NAN, NAN};
+static VentResult ventResult = {NAN, NAN, NAN, NAN, NAN, NAN, NAN, "none", "", NAN, NAN};
+// Vents outside the pressure range of the flow curve since the boot (status).
+static uint32_t ventOutOfRangeCount = 0;
+static uint32_t ventOutOfRangeLastEpoch = 0;
+static const char *ventOutOfRangeLastSide = "";
 
 static float ventGasKelvin() {
   float t = gasTemperature();
@@ -2074,20 +2081,22 @@ String describePressureSensor() {
 }
 
 // ===== Vent check (docs/alarms.md) =====
-// The isothermal drop of each fermentation vent against the drop expected
-// from the CO2 counted by the flow model and the applied headspace (24-hour
-// average, frozen reference). Below 0.25x the vent had (almost) no effect:
-// valve not opening, outlet blocked, or the expansion tank reconnected by
-// mistake. Such a vent is not counted by the flow model (it would count moles
-// that did not leave): its CO2 is the fermenter-side loss over the reference
-// headspace, and it does not feed the headspace. Two in a row raise the
-// alarm; a normal vent clears it.
+// Each vent is counted twice: by the flow model and on the fermenter side
+// (settled drop of P/Z x applied headspace, the 24-hour average as a frozen
+// reference, / RT). Their ratio is the measured / expected drop. Below 0.5
+// the outlet passed much less than the curve says (partly or fully blocked,
+// valve not opening, expansion tank reconnected by mistake): the vent is
+// counted on the fermenter side and does not feed the headspace (counted by
+// the flow, a 60% drop would be counted 40% too high). Below 0.25 twice in a
+// row: alarm; a normal vent clears it.
 static constexpr float RELIEF_NO_EFFECT_DROP_RATIO = 0.25f;
+static constexpr float VENT_FERMENTER_SIDE_RATIO = 0.5f;
 static constexpr uint8_t RELIEF_CHECK_CONSECUTIVE = 2;
 static constexpr float RELIEF_CHECK_MIN_PRESSURE = 0.1f; // bar
 static constexpr uint8_t RELIEF_CHECK_SKIPPED = 0;
 static constexpr uint8_t RELIEF_CHECK_OK = 1;
 static constexpr uint8_t RELIEF_CHECK_NO_EFFECT = 3; // value kept from the expansion-tank check
+static constexpr uint8_t RELIEF_CHECK_PARTIAL = 4;   // ratio 0.25-0.5: counted on the fermenter side
 static uint8_t reliefCheckLast = RELIEF_CHECK_SKIPPED;  // last evaluated vent
 static uint8_t reliefCheckRun = 0;                      // consecutive vents without effect
 static bool reliefCheckAlarm = false;
@@ -2101,38 +2110,47 @@ static const char *reliefCheckLabel(uint8_t check) {
   switch (check) {
     case RELIEF_CHECK_OK: return "ok";
     case RELIEF_CHECK_NO_EFFECT: return "no-effect";
+    case RELIEF_CHECK_PARTIAL: return "partial";
     default: return "";
   }
 }
 
-// flowMoles: CO2 counted by the flow model for this vent; tKelvin: gas.
-static uint8_t evaluateVentCheck(double flowMoles, double tKelvin, bool taskWindow) {
+// Fermenter-side moles of the vent: settled drop of P/Z over the reference
+// headspace (NAN without the pressures or the headspace).
+static double fermenterSideMoles(double tKelvin) {
+  const float reference = CountersData.headSpaceVolume;
+  if (!isfinite(pressureOnReliefExtrap) || !isfinite(adjustedPressureAfterRelief) ||
+      !isfinite(reference) || !(reference > 0.0f)) return NAN;
+  const double pOn = pressureOnReliefExtrap + Patm, pAfter = adjustedPressureAfterRelief + Patm;
+  return (pOn / VentModel::co2Z(pOn, tKelvin) - pAfter / VentModel::co2Z(pAfter, tKelvin)) *
+         reference / (CONST_R * tKelvin);
+}
+
+// ratio: fermenter side / flow model for this vent (computed by the caller).
+static uint8_t evaluateVentCheck(float ratio, bool taskWindow) {
   const float reference = CountersData.headSpaceVolume;
   const bool applicable = ventCountsCO2() && !taskWindow && !pressureSensorAlarm &&
-      !(debugging && debugPressureOverride) && isfinite(reference) && reference > 0.0f &&
-      isfinite(flowMoles) && flowMoles > 0.0 &&
-      isfinite(pressureOnReliefExtrap) && pressureOnReliefExtrap >= RELIEF_CHECK_MIN_PRESSURE &&
-      isfinite(adjustedPressureAfterRelief);
-  reliefCheckDropRatio = NAN;
+      !(debugging && debugPressureOverride) && isfinite(ratio) &&
+      isfinite(pressureOnReliefExtrap) && pressureOnReliefExtrap >= RELIEF_CHECK_MIN_PRESSURE;
+  reliefCheckDropRatio = ratio;
   uint8_t result = RELIEF_CHECK_SKIPPED;
   if (applicable) {
-    // Isothermal drops of P/Z (real gas): measured, and expected from the
-    // counted moles in the reference headspace.
-    const double pOn = pressureOnReliefExtrap + Patm, pAfter = adjustedPressureAfterRelief + Patm;
-    const double measured = pOn / VentModel::co2Z(pOn, tKelvin) - pAfter / VentModel::co2Z(pAfter, tKelvin);
-    const double expected = flowMoles * CONST_R * tKelvin / reference;
-    reliefCheckDropRatio = float(measured / expected);
     reliefCheckMeasuredDrop = pressureOnReliefExtrap - adjustedPressureAfterRelief;
-    reliefCheckExpectedDrop = float(reliefCheckMeasuredDrop / reliefCheckDropRatio);
+    reliefCheckExpectedDrop = float(reliefCheckMeasuredDrop / ratio);
     reliefCheckPressure = pressureOnReliefExtrap;
     reliefCheckReference = reference;
-    result = reliefCheckDropRatio < RELIEF_NO_EFFECT_DROP_RATIO ? RELIEF_CHECK_NO_EFFECT : RELIEF_CHECK_OK;
+    result = ratio < RELIEF_NO_EFFECT_DROP_RATIO ? RELIEF_CHECK_NO_EFFECT
+           : ratio < VENT_FERMENTER_SIDE_RATIO ? RELIEF_CHECK_PARTIAL : RELIEF_CHECK_OK;
   }
   if (result == RELIEF_CHECK_NO_EFFECT) {
     reliefCheckRun = reliefCheckLast == RELIEF_CHECK_NO_EFFECT ? reliefCheckRun + 1 : 1;
     if (reliefCheckRun >= RELIEF_CHECK_CONSECUTIVE) reliefCheckAlarm = true;
     Serial.printf("[VENT] without effect: drop %.4f bar, expected %.4f bar (%.2fx), run %u\n",
                   reliefCheckMeasuredDrop, reliefCheckExpectedDrop, reliefCheckDropRatio, reliefCheckRun);
+  } else if (result == RELIEF_CHECK_PARTIAL) {
+    reliefCheckRun = 0;
+    Serial.printf("[VENT] partial: drop %.4f bar, expected %.4f bar (%.2fx): counted on the fermenter side\n",
+                  reliefCheckMeasuredDrop, reliefCheckExpectedDrop, ratio);
   } else if (result == RELIEF_CHECK_OK) {
     reliefCheckRun = 0;
     reliefCheckAlarm = false;
@@ -2471,17 +2489,28 @@ void processPressure(bool afterRelief) {
         : NAN;
     ventResult.dropPercent = isfinite(instantPressureDropFactor) ? 100.0f * (1.0f - instantPressureDropFactor) : NAN;
 
+    // Both counts, always; the fermenter side replaces the flow model when
+    // their ratio is below 0.5 (docs/vent.md).
+    const double fermenterSide = fermenterSideMoles(ventGasK);
+    ventResult.fermenterSideMoles = fermenterSide;
+    ventResult.ratio = (isfinite(fermenterSide) && count.moles > 0.0) ? float(fermenterSide / count.moles) : NAN;
+    // Outside the pressure range of the curve the end value was used (docs/vent.md).
+    const VentModel::Curve &curve = FMTData.ventCurve;
+    ventResult.outOfRange = pressureOnReliefMeas > curve.pMax + 0.005f ? "above"
+                          : pressureAfterRelief < curve.pMin - 0.005f ? "below" : "";
+    if (ventResult.outOfRange[0] && ventCountsCO2()) {
+      ++ventOutOfRangeCount;
+      ventOutOfRangeLastEpoch = NTPEpoch();
+      ventOutOfRangeLastSide = ventResult.outOfRange;
+    }
     const bool skipTaskWindow = reliefOpenedDuringTask || taskWindowType != 0;
-    reliefCheckResult = evaluateVentCheck(count.moles, ventGasK, skipTaskWindow);
-    const bool noEffect = reliefCheckResult == RELIEF_CHECK_NO_EFFECT;
+    reliefCheckResult = evaluateVentCheck(ventResult.ratio, skipTaskWindow);
+    const bool noEffect = reliefCheckResult == RELIEF_CHECK_NO_EFFECT || reliefCheckResult == RELIEF_CHECK_PARTIAL;
     double moles = count.moles;
     ventResult.counted = "flow";
     if (noEffect) {
-      // Fermenter-side loss over the reference headspace (about nothing when
-      // the valve did not open).
-      const double pOn = pressureOnReliefExtrap + Patm, pAfter = adjustedPressureAfterRelief + Patm;
-      moles = fmax(0.0, (pOn / VentModel::co2Z(pOn, ventGasK) - pAfter / VentModel::co2Z(pAfter, ventGasK)) *
-                        CountersData.headSpaceVolume / (CONST_R * ventGasK));
+      // About nothing when the valve did not open.
+      moles = fmax(0.0, fermenterSide);
       ventResult.counted = "fermenter-side";
     }
     if (!ventCountsCO2()) {
@@ -2596,6 +2625,8 @@ void processPressure(bool afterRelief) {
     reliefLog.ventFlowConstant = ventResult.flowConstant;
     reliefLog.flowLevelFactor = FMTData.flowLevelFactor;
     reliefLog.ventFlowMoles = ventResult.flowMoles;
+    reliefLog.ventFermenterSideMoles = ventResult.fermenterSideMoles;
+    reliefLog.ventOutOfRange = ventResult.outOfRange;
     reliefLog.ventCounted = ventResult.counted;
     reliefLog.ventDropPercent = ventResult.dropPercent;
     reliefLog.ventTargetDropPercent = FMTData.ventTargetDropPercent;
@@ -2624,7 +2655,7 @@ void processPressure(bool afterRelief) {
     reliefLog.headSpaceDaily = dailyHsValue;
     reliefLog.dailyHours = dailyHsHours;
     reliefLog.dailyState = dailyHsStateLabel();
-    reliefLog.reliefDropRatio = reliefCheckResult != RELIEF_CHECK_SKIPPED ? reliefCheckDropRatio : NAN;
+    reliefLog.reliefDropRatio = ventResult.ratio; // logged also when the check does not apply
     reliefLog.reliefCheck = reliefCheckLabel(reliefCheckResult);
     doReliefDataLog(reliefLog);
 
