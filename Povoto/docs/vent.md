@@ -138,10 +138,13 @@ subida pela fermentação durante a abertura, como antes) e a pressão assentada
 
 ## 7. Diagnóstico: `/ventstatus`
 
-Página própria (link na página Calibration), fora do `/getstatus`: o buffer
-do `/getstatus` é de 8 KB na pilha da task web a cada requisição
-(`MAXSTATUSLEN`, IOTK_ESPAsyncServer) e fica com ≥ 10% de folga
-(`tests/check_status_sizes.py`). Mostra os parâmetros e as curvas, a Patm e a
+Página própria (link na página Calibration), fora do `/getstatus`: o Povoto
+monta o `/getstatus` no seu próprio handler, num buffer **estático** de
+`MAXSTATUSLEN` + 1 (8193 B, `webStatusBuffer` em `Povoto.cpp`; o handler da
+biblioteca, com o buffer na pilha, não é usado pelo Povoto), e a página fica
+com ≥ 10% de folga (`tests/check_status_sizes.py`). Aumentar o `MAXSTATUSLEN`
+custaria RAM estática no Povoto e pilha da task web nos firmwares que usam o
+handler da biblioteca. Mostra os parâmetros e as curvas, a Patm e a
 T_gás em uso, o próximo vent (tempo, Vh, Vh mínimo plausível, aviso de fora da
 faixa), o último vent (tempos estimado/segurança/planejado/real, pressões,
 P̄, resfriamento, constante de vazão, as duas contagens e a razão, o que foi

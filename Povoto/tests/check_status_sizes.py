@@ -90,8 +90,8 @@ o = sum(w for w, _ in own)
 widest = max(pressure + stability, key=lambda x: x[0])
 page = o + t + p + GLOG_MAX + PEERS_MAX
 
-# The whole page keeps at least 10% of MAXSTATUSLEN free (the buffer is on the
-# stack of the web task, per request): vent diagnostics are on /ventstatus.
+# The whole page keeps at least 10% of MAXSTATUSLEN free (Povoto's own handler
+# writes it into the static webStatusBuffer): vent diagnostics are on /ventstatus.
 PAGE_BUDGET = int(PAGE_LIMIT * 0.9)
 checks = [
     ("temperature section", t, TEMP_LIMIT),
