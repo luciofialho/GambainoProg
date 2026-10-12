@@ -167,11 +167,14 @@ mudança na saída (garrafa, silenciador); qualquer suspeita sobre a válvula.
 
 1. Fermentador **vazio**, ar, volume correto no Settings, OFF.
 2. Porta A para a atmosfera pela garrafa testemunha (montagem de uso).
-3. Pressurize a ~1,9 bar e espere ~10 min.
+3. Pressurize **acima da maior pressão de fermentação mais a margem do dente de
+   serra** (~3%): para setpoint de 1,9 bar, ~2,0–2,05 bar. O sensor é certificado
+   até 2 bar, mas mede razoavelmente um pouco acima. Espere ~10 min.
 4. Calibration → "Venting test"; escolha a **etiqueta** (`as-is` /
    `muffler-cleaned` / `valve-cleaned` / `new-valve` / `after-cleaning-cycle`).
-5. O ensaio alterna durações (2, 0,5, 8, 1, 4, 2 s) em patamares de ~1,9 / 1,5 /
-   1,1 / 0,8 / 0,5 bar, com uma abertura longa entre eles; mede o tempo real
+5. O ensaio alterna durações (2, 0,5, 8, 1, 4, 2 s) em patamares do topo até
+   **abaixo da menor pressão de fermentação usada** (com fermentações a 0,3 bar,
+   o último patamar fica em ~0,25 bar), com uma abertura longa entre eles; mede o tempo real
    de cada abertura e grava cada liberação no histórico (~40–50 min). Não mexa
    no equipamento.
 6. Resultado: curva τ(P) cúbica, t0 ± erro padrão, resíduo de forma, deriva
@@ -182,6 +185,13 @@ mudança na saída (garrafa, silenciador); qualquer suspeita sobre a válvula.
    ("Save curve and t0"); na primeira calibração, grave também a curva de
    referência ("Save as reference curve"). Manutenção: não grave nada; o
    histórico é o resultado.
+
+**Faixa calibrada.** A curva só vale entre a maior e a menor pressão do ensaio.
+Um vent fora dessa faixa usa o valor da ponta e fica marcado no log. Na ponta
+alta o erro é pequeno (no sônico o τ varia devagar); na ponta baixa (abaixo de
+~0,4 bar, regime subsônico) o τ cresce rápido e o valor da ponta superestima a
+vazão. Se for fermentar fora da faixa calibrada, refaça o P5 cobrindo-a antes do
+lote.
 
 A conversão ar → CO2 (teórica, em função da pressão) e o fator de
 compressibilidade do CO2 são aplicados pelo firmware; não há ensaio com CO2.
@@ -268,6 +278,7 @@ Não use soda nem Vanish em pó (corpo de alumínio). Não molhe a bobina.
 | P4b: dispersão entre reliefs > 0,5% | pressão não estabilizada | esperar mais antes de P1/P2 |
 | P5: erro padrão do t0 > 5 ms, ou deriva maior que 2× o seu erro padrão | solenoide ou fonte da bobina instável | conferir a tensão; trocar a válvula |
 | P5: resíduo de forma > 1% | leituras sem estabilizar, ou forma diferente | repetir com espera maior; mandar para análise (com ruído de leitura normal, ~0,15 mbar, ele fica em ~0,5%) |
+| Vents marcados fora da faixa calibrada no log | fermentação acima ou abaixo das pressões do último P5 | refazer o P5 cobrindo a faixa (topo ≥ setpoint máximo + 3%; base abaixo do menor setpoint) |
 | P5: curva > 3% abaixo da referência | sujeira na válvula ou no silenciador | P9 e P10 e repetir; se não voltar, trocar a válvula e registrar `new-valve` |
 | P5: perda < 3% mas volta só com a limpeza | sujeira por lote | manter P10 em todo fim de lote |
 | Líquido na garrafa testemunha | krausen chegando à válvula | registrar; avaliar separador antes da válvula; P10 |

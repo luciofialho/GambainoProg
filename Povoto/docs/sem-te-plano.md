@@ -149,9 +149,11 @@ Regras:
   continua no loop (o atraso do loop só aumenta a queda). Timer de hardware:
   opcional, só para o controle.
 - **Contagem** (sem Vh e sem ler o sensor durante o transiente): mols =
-  C_CO2(P̄)·P̄/√T_gás·Z·fator_resfriamento·flowLevelFactor·(t_real − t0), com P̄ a
-  média logarítmica de P_abs,on e da pressão logo após o fechamento (a leitura de
-  0,4 s com a extrapolação e o expoente 1,29 que já existem).
+  C_CO2(P̄)·P̄/√(Z·T_gás)·fator_resfriamento·flowLevelFactor·(t_real − t0), com P̄
+  a média logarítmica de P_abs,on e da pressão logo após o fechamento (a leitura de
+  0,4 s com a extrapolação e o expoente 1,29 que já existem). A vazão molar de um
+  gás real num bocal é ∝ P/√(Z·T): o fator é 1/√Z (corrigido em 12/10/2026; antes
+  estava "·Z·").
 - **Vh aparente** de cada vent (mols × RT ÷ queda isotérmica): alimenta a média de
   24 h (mesmas regras de janela de task de hoje) e a coluna do monitor passivo.
 - **Queda pequena** (manter o `ReliefCheck` `RELIEF_CHECK_NO_EFFECT` que já
@@ -176,7 +178,8 @@ Regras:
 - Curva τ(P) (ou taxa = 1/τ) **cúbica** na pressão manométrica, ajustada
   integrando cada liberação do ensaio (não pela taxa no ponto médio).
 - Conversão ar → CO2 pela razão do bocal ideal em função da pressão.
-- Z do CO2 na vazão e nos mols do headspace.
+- Z do CO2 na vazão (1/√Z: vazão molar ∝ P/√(Z·T)) e nos mols do headspace
+  (1/Z inteiro: n = P·V/(Z·R·T)). Corrigido em 12/10/2026.
 - Resfriamento durante o vent calculado pela queda (expoente 1,29).
 - t0 descontado.
 

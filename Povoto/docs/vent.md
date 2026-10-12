@@ -104,6 +104,11 @@ subida pela fermentação durante a abertura, como antes) e a pressão assentada
 - O atraso da leitura (0,4–0,8 s, recuperação térmica já começando) deixa o Vh
   aparente 0,2–0,5% alto no bench, mas o 1,29 foi ajustado com essa mesma
   leitura.
+- O Vh aparente **herda o nível da vazão**: ele é proporcional aos mols contados,
+  então mudar o `flowLevelFactor` (ajuste pela SG) desloca o Vh aparente, a média
+  de 24 h e o headspace aplicado na mesma proporção; uma curva de vazão errada
+  aparece também como um Vh errado. O significado de `HeadSpaceMeasured` não
+  mudou (o valor de cada vent que alimentou a média).
 
 ## 6. Verificações (docs/alarms.md)
 
