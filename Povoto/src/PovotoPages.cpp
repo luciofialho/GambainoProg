@@ -50,7 +50,7 @@ void handleMainMenu(AsyncWebServerRequest *request) {
   html += "body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; }";
   html += ".container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); }";
   html += "h1 { color: #333; text-align: center; margin-bottom: 30px; font-size: 28px; }";
-  html += ".brand{display:flex;align-items:center;justify-content:center;gap:14px}.brand img{width:78px;height:78px;object-fit:contain}";
+  html += ".brand{display:flex;align-items:center;justify-content:space-between;gap:14px}.brand-name{display:flex;align-items:center;gap:14px}.brand img{width:78px;height:78px;object-fit:contain}";
   html += ".signature{text-align:center;margin-top:26px}.signature img{display:block;width:220px;max-width:65%;height:auto;margin:0 auto}";
   html += ".status-box { background: #f7f7ff; border: 1px solid #e0e0ff; padding: 14px 18px; border-radius: 10px; margin-bottom: 20px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: 18px; }";
   html += ".status-item { color: #333; }";
@@ -68,8 +68,9 @@ void handleMainMenu(AsyncWebServerRequest *request) {
   html += "@media (max-width: 500px) { .menu-grid { grid-template-columns: 1fr; } }";
   html += "</style></head><body>";
   html += "<div class='container'>";
-  html += "<h1 class='brand'><img src='/assets/povoto.svg' alt='Povoto logo'>Povoto " +
-          String(FMTData.PovotoNum) + "</h1>";
+  // Logo and name on the left, the fermenter on the right.
+  html += "<h1 class='brand'><span class='brand-name'><img src='/assets/povoto.svg' alt='Povoto logo'>Povoto</span>"
+          "<span>FMT " + String(FMTData.PovotoNum) + "</span></h1>";
   html += "<div class='status-box'>";
   html += "<div class='status-item'><strong>Temperature:</strong> " + String(ControlData.temperature, 1) + " °C</div>";
   html += "<div class='status-item'><strong>Pressure:</strong> " + String(ControlData.pressure, 2) + " bar</div>";

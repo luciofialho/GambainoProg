@@ -79,11 +79,17 @@ void handleFactoryReset(AsyncWebServerRequest *request) {
   request->send(200, "text/plain", "Factory defaults restored.");
 }
 
+const char *resetReasonToString(esp_reset_reason_t reason); // IOTK_ESPAsyncServer
+
+// Own handler (static buffer, not the library's): it must carry the header
+// lines of the library's status too (uptime, reset reason).
 void handlePovotoStatus(AsyncWebServerRequest *request) {
+  char uptime[16];
   snprintf(webStatusBuffer, sizeof(webStatusBuffer),
-    "Povoto<br>Network: %s<br>Signal strength: %d<br>",
+    "Povoto<br>Network: %s<br>Signal strength: %d (uptime: %s)<br>Reset reason: %s<br>",
     WiFi.status() == WL_CONNECTED ? WiFi.SSID().c_str() : "not connected",
-    WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0);
+    WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0, formatedUptime(uptime),
+    resetReasonToString(esp_reset_reason()));
   getPovotoStatus(webStatusBuffer);
   request->send(200, "text/html; charset=utf-8", webStatusBuffer);
 }
@@ -118,12 +124,9 @@ char * getPovotoStatus(char *st) {
            unsigned(graphHistoryCount()));
   strnncat(st, buf, MAXSTATUSLEN);
 
-  // incluir informações da tamperatura atual, setpoint e estado dos relés
-  snprintf(buf,199,"<br>Current Temp: %.2f C<br>Considered temperature: %.2f C<br>",dallasTemperature, ControlData.temperature);
-
-  strnncat(st,buf,MAXSTATUSLEN);      
-  snprintf(buf,199,"Current Pressure: %.3f bar<br>",ControlData.pressure);
-  strnncat(st,buf,MAXSTATUSLEN);
+  snprintf(buf, 199, "<br>Temp: %.2f C (considered %.2f C); pressure %.3f bar<br>",
+           dallasTemperature, ControlData.temperature, ControlData.pressure);
+  strnncat(st, buf, MAXSTATUSLEN);
   buf[0] = '\0';
   getTemperatureControlStatus(buf);
   strnncat(st,buf,MAXSTATUSLEN);
@@ -151,16 +154,16 @@ char * getPovotoStatus(char *st) {
     unsigned long now = millis();
     if (taskWindowEndTime > now) {
       long secsLeft = (long)((taskWindowEndTime - now) / 1000UL);
-      snprintf(buf, 199, "<b>Window end time:</b> %lu ms (daqui a %ld segundos)<br>", taskWindowEndTime, secsLeft);
+      snprintf(buf, 199, "<b>Window end time:</b> %lu ms (in %ld s)<br>", taskWindowEndTime, secsLeft);
     } else {
-      snprintf(buf, 199, "<b>Window end time:</b> %lu ms (expirada)<br>", taskWindowEndTime);
+      snprintf(buf, 199, "<b>Window end time:</b> %lu ms (expired)<br>", taskWindowEndTime);
     }
     strnncat(st, buf, MAXSTATUSLEN);
   }
 
   // Estado atual dos pinos digitais
   snprintf(buf, 199,
-    "<br><b>Pins:</b> Chiller=%d LedChiller=%d Heater=%d LedHeater=%d TransferValve=%d ReliefValve=%d Buzzer=%d Led=%d<br>",
+    "<br><b>Pins:</b> Chiller=%d LedChiller=%d Heater=%d LedHeater=%d Valve=%d VentLed=%d Buzzer=%d Led=%d<br>",
     digitalRead(PINCHILLER), digitalRead(PINLEDCHILLER), digitalRead(PINHEATER), digitalRead(PINLEDHEATER),
     digitalRead(PINTRANSFERVALVE), digitalRead(PINVENTINGLED), digitalRead(PINBUZZER), digitalRead(PINLED));
   strnncat(st, buf, MAXSTATUSLEN);
