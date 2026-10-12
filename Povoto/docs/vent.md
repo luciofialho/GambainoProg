@@ -136,7 +136,21 @@ subida pela fermentação durante a abertura, como antes) e a pressão assentada
   alarme na hora.
 - A antiga verificação de queda grande (vazamento entre válvula e TE) saiu.
 
-## 7. Parâmetros (página Calibration)
+## 7. Diagnóstico: `/ventstatus`
+
+Página própria (link na página Calibration), fora do `/getstatus`: o buffer
+do `/getstatus` é de 8 KB na pilha da task web a cada requisição
+(`MAXSTATUSLEN`, IOTK_ESPAsyncServer) e fica com ≥ 10% de folga
+(`tests/check_status_sizes.py`). Mostra os parâmetros e as curvas, a Patm e a
+T_gás em uso, o próximo vent (tempo, Vh, Vh mínimo plausível, aviso de fora da
+faixa), o último vent (tempos estimado/segurança/planejado/real, pressões,
+P̄, resfriamento, constante de vazão, as duas contagens e a razão, o que foi
+contado, Vh aparente, queda, fora da faixa), as verificações (razão, alarme,
+válvula presa aberta, vents fora da faixa desde o boot) e o estágio do ciclo da
+válvula. Atualiza a cada 10 s. O `/getstatus` fica com uma linha: os dois
+alarmes do vent e a contagem de vents fora da faixa.
+
+## 8. Parâmetros (página Calibration)
 
 | Parâmetro | Chave NVS | Padrão |
 |---|---|---|
@@ -148,7 +162,7 @@ subida pela fermentação durante a abertura, como antes) e a pressão assentada
 | Curva de referência (blob) | `ventRefCurve` | nenhuma |
 | Massa líquida na ventilação (%) | `liquidGasMass` | 0,6 |
 
-## 8. Log Relief
+## 9. Log Relief
 
 O nome da planilha continua **Relief**. Colunas novas: `GasTemperature`,
 `GasTemperatureSource`, `VentEstimatedSeconds`, `VentSafetySeconds`,

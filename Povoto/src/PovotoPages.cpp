@@ -1028,7 +1028,7 @@ static String ventSettingsHtml() {
   html += field("liquidMassInGasVentingPercent", "Liquid mass in gas venting (%)", FMTData.liquidMassInGasVentingPercent, 3,
                 "min='0' max='100'");
   html += "<p><b>Flow curve:</b> " + curveText(FMTData.ventCurve) + "<br><b>Reference curve:</b> " +
-    curveText(FMTData.ventReferenceCurve) + "</p>";
+    curveText(FMTData.ventReferenceCurve) + "<br>Last vents: <a href='/ventstatus'>/ventstatus</a></p>";
   // Opening times with the current headspace and the gas temperature.
   const float headspace = CountersData.headSpaceVolume > 0.0f ? CountersData.headSpaceVolume
       : FMTData.FMTVolume - BatchData.initialBeerVolume;
@@ -1519,7 +1519,7 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   page.replace("<button type='submit'>Save</button>", ventSettingsHtml() + "<button type='submit'>Save</button>");
   const String actions = String("<div class='container' style='margin-top:20px'><h2>Calibration and maintenance</h2>") +
     "<p>Requirements: mode OFF, no task. Do not press any Save button before analysing the data "
-    "(docs/manual-calibracao-manutencao.md).</p>" +
+    "(docs/manual-calibracao-manutencao.md). Vent diagnostics: <a href='/ventstatus'>/ventstatus</a>.</p>" +
     sensorZeroSectionHtml() + kegVolumeSectionHtml() + ventingTestSectionHtml() + valveCleaningSectionHtml() + "</div>";
   page.replace("</body>", actions + "</body>");
   if (sensorZeroActive() || ventingTestActive() || valveCleaningRunning() || kegVolumeActive()) page.replace("<head>", "<head><meta http-equiv='refresh' content='10'>");

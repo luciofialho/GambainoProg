@@ -11,8 +11,9 @@ precedência e cuida da sinalização. Cada verificação fica no seu módulo.
 | 4 | Termômetro do fermentador (`fermenterThermometerAlarm()`, TermperatureControl.cpp) | Fermenting ou Conditioning, alvo de temperatura definido, termômetro não atribuído ou sem leitura válida há 60 s | 3 por minuto |
 
 Com mais de um ativo, sinaliza só o de maior precedência. O `/getstatus` mostra o
-estado de cada um ("Pressure sensor check", "Vent check ... stuck open" e
-"fermenter thermometer alarm").
+estado de cada um ("Pressure sensor check", "Vent alarms: no effect ..., stuck
+open ..." e "fermenter thermometer alarm"); os detalhes do vent estão em
+`/ventstatus` (docs/vent.md).
 
 ## Verificação de cada vent
 

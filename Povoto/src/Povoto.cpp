@@ -358,6 +358,7 @@ void setup() {
   server.on("/net", HTTP_GET, handleReconnectNetwork);
   server.on("/factoryreset", HTTP_POST, handleFactoryReset);
   server.on("/getstatus", HTTP_GET, handlePovotoStatus);
+  server.on("/ventstatus", HTTP_GET, handleVentStatus);
   server.on("/restart", HTTP_GET, ESPRestart);
   povotoWiFiRegisterRoutes();
 

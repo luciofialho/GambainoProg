@@ -3021,29 +3021,10 @@ char *getPressureControlStatus(char *st) {
     strnncat(st, tmp, PRESSURE_STATUS_SIZE);
     snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;CO2 buffers at boot: %s<br>", co2BufferStatus);
     strnncat(st, tmp, PRESSURE_STATUS_SIZE);
-    {
-      // docs/vent.md: the next opening at the threshold and the last vent (the
-      // parameters and the curve are on the Calibration page).
-      const VentModel::Curve &curve = FMTData.ventCurve;
-      const float threshold = expansionPressureThreshold();
-      const double tK = ventGasKelvin();
-      const float headspace = ventHeadspaceForTime();
-      snprintf(tmp, sizeof(tmp),
-               "&nbsp;&nbsp;&nbsp;&nbsp;Next vent at %.3f bar: %.2f s (Vh %.2f L, gas %.2f C %s)%s<br>",
-               threshold, VentModel::ventSeconds(curve, FMTData.flowLevelFactor, headspace, threshold,
-                   threshold * (1.0 - FMTData.ventTargetDropPercent / 100.0), Patm, tK, FMTData.FMTEffectiveVentingExponent),
-               headspace, tK - 273.15, gasTemperatureSource(), curve.epoch ? "" : "; default curve");
-      strnncat(st, tmp, PRESSURE_STATUS_SIZE);
-      snprintf(tmp, sizeof(tmp),
-               "&nbsp;&nbsp;&nbsp;&nbsp;Last: %.2f s (%s), real %.3f s; Pm %.3f bar; %.4f mol %s; Vh %.2f L; drop %.2f%%<br>",
-               ventPlan.plannedSeconds, ventPlan.limit, ventRealSeconds, ventResult.pMeanGauge,
-               ventResult.countedMoles, ventResult.counted, ventResult.apparentHeadspace, ventResult.dropPercent);
-      strnncat(st, tmp, PRESSURE_STATUS_SIZE);
-    }
 
     snprintf(tmp, sizeof(tmp),
-             "<br>Volumes:<br>&nbsp;&nbsp;&nbsp;&nbsp;Headspace volume: %.2f L<br>&nbsp;&nbsp;&nbsp;&nbsp;Beer volume: %.2f L<br>&nbsp;&nbsp;&nbsp;&nbsp;Dumped volume: %.2f L<br>&nbsp;&nbsp;&nbsp;&nbsp;Vent pressure factor (%%): %.3f<br>",
-             CountersData.headSpaceVolume, beerVolume, CountersData.dumpedVolume, pressureDropFactor * 100);
+             "<br>Volumes:<br>&nbsp;&nbsp;&nbsp;&nbsp;Headspace volume: %.2f L<br>&nbsp;&nbsp;&nbsp;&nbsp;Beer volume: %.2f L<br>&nbsp;&nbsp;&nbsp;&nbsp;Dumped volume: %.2f L<br>",
+             CountersData.headSpaceVolume, beerVolume, CountersData.dumpedVolume);
     strnncat(st, tmp, PRESSURE_STATUS_SIZE);
     // [DAILY-HS] Where the applied headspace comes from.
     snprintf(tmp, sizeof(tmp),
@@ -3075,35 +3056,99 @@ char *getPressureControlStatus(char *st) {
            pressureSensorCurrentLow(), pressureSensorCurrentHigh(),
            pressureSensorAlarm ? "ACTIVE" : "off");
   strnncat(st, tmp, PRESSURE_STATUS_SIZE);
-  snprintf(tmp, sizeof(tmp), "Vent check: %s, drop %.4f/%.4f bar (%.2fx), run %u, alarm %s; stuck open %s (fall %.4f bar)<br>",
-           reliefCheckLast == RELIEF_CHECK_SKIPPED ? "none" : reliefCheckLabel(reliefCheckLast),
-           reliefCheckMeasuredDrop, reliefCheckExpectedDrop, reliefCheckDropRatio, reliefCheckRun,
-           reliefCheckAlarmActive() ? "ON" : "off", valveStuckOpenAlarmActive() ? "ALARM" : "no", stuckOpenLastFall);
+  // The vent diagnostics are on /ventstatus (getVentStatusHtml).
+  snprintf(tmp, sizeof(tmp), "Vent alarms: no effect %s, stuck open %s; %lu out of range (/ventstatus)<br>",
+           reliefCheckAlarmActive() ? "ON" : "off",
+           valveStuckOpenAlarmActive() ? "ON" : "off", (unsigned long)ventOutOfRangeCount);
   strnncat(st, tmp, PRESSURE_STATUS_SIZE);
-
-  // --- Diagnóstico de relés ---
-  unsigned long now = millis();
-  strnncat(st, "<br>--- Relay cycle ---<br>", PRESSURE_STATUS_SIZE);
-  if (!inTheMiddleOfRelief()) {
-    strnncat(st, "Cycle: IDLE<br>", PRESSURE_STATUS_SIZE);
-  } else {
-    strnncat(st, "Cycle: ACTIVE<br>", PRESSURE_STATUS_SIZE);
-    if (timeToStartExpansion) {
-      snprintf(tmp, sizeof(tmp), "Stage: waiting to open the valve (in %ld ms)<br>",
-               (long)(timeToStartExpansion - now));
-    } else if (timeToFinishExpansion) {
-      snprintf(tmp, sizeof(tmp), "Stage: valve OPEN - closes in %ld ms<br>",
-               (long)(timeToFinishExpansion - now));
-    } else if (timeToRegisterPressure) {
-      snprintf(tmp, sizeof(tmp), "Stage: valve CLOSED - measuring pressure in %ld ms<br>",
-               (long)(timeToRegisterPressure - now));
-    }
-    strnncat(st, tmp, PRESSURE_STATUS_SIZE);
-  }
 
   return st;
 }
 
+
+// ===== /ventstatus (docs/vent.md) =====
+// Vent diagnostics, out of /getstatus (its buffer is on the stack of the web
+// task, 8 KB): parameters and curves, the next opening, the last vent with
+// both counts, the checks and the valve cycle.
+String getVentStatusHtml() {
+  auto num = [](double v, int d) { return isfinite(v) ? String(v, d) : String("n/a"); };
+  auto curveText = [&num](const VentModel::Curve &c) -> String {
+    if (!VentModel::validCurve(c)) return String("none");
+    char when[20];
+    formatLocalEpochISO(c.epoch, when, sizeof(when));
+    return "a " + num(c.a[0], 4) + " " + num(c.a[1], 4) + " " + num(c.a[2], 4) + " " + num(c.a[3], 5) + ", t0 " +
+           num(1000.0 * c.t0, 1) + " ms, " + num(c.pMin, 3) + "-" + num(c.pMax, 3) + " bar, " +
+           (when[0] ? String(when) : String("default (18/09)"));
+  };
+  const unsigned long now = millis();
+  String html;
+  html.reserve(4096);
+  html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta http-equiv='refresh' content='10'>"
+         "<title>Vent status</title><style>body{font-family:Arial,sans-serif;margin:16px}</style></head><body>"
+         "<h2>Vent status</h2><p><a href='/calibration'>Calibration</a> | <a href='/getstatus'>Status</a></p>";
+  html += "<h3>Parameters</h3><p>Target drop " + num(FMTData.ventTargetDropPercent, 2) + "%, minimum opening " +
+          num(FMTData.ventMinSeconds, 2) + " s, safety drop " + num(FMTData.ventSafetyDropPercent, 1) +
+          "%, level factor " + num(FMTData.flowLevelFactor, 4) + ", liquid mass " +
+          num(FMTData.liquidMassInGasVentingPercent, 2) + "%, exponent " + num(FMTData.FMTEffectiveVentingExponent, 3) +
+          "<br>Flow curve: " + curveText(FMTData.ventCurve) + "<br>Reference curve: " +
+          curveText(FMTData.ventReferenceCurve) + "<br>Patm " + num(1000.0 * Patm, 2) + " hPa (" +
+          atmosphericPressureSourceLabel() + "); gas " + num(ventGasKelvin() - 273.15, 2) + " C (" +
+          gasTemperatureSource() + ")</p>";
+  {
+    const VentModel::Curve &curve = FMTData.ventCurve;
+    const float threshold = expansionPressureThreshold();
+    const double tK = ventGasKelvin();
+    const float headspace = ventHeadspaceForTime();
+    html += "<h3>Next vent</h3><p>At " + num(threshold, 4) + " bar: " +
+            num(VentModel::ventSeconds(curve, FMTData.flowLevelFactor, headspace, threshold,
+                threshold * (1.0 - FMTData.ventTargetDropPercent / 100.0), Patm, tK,
+                FMTData.FMTEffectiveVentingExponent), 3) +
+            " s with Vh " + num(headspace, 2) + " L (smallest plausible " + num(ventSmallestHeadspace(), 2) + " L)" +
+            (threshold > curve.pMax || threshold * (1.0 - FMTData.ventTargetDropPercent / 100.0) < curve.pMin
+                 ? String("; <b>outside the pressure range of the flow curve</b>") : String("")) + "</p>";
+  }
+  html += "<h3>Last vent</h3><p>Opening: estimated " + num(ventPlan.estimatedSeconds, 3) + " s, safety " +
+          num(ventPlan.safetySeconds, 3) + " s, planned " + num(ventPlan.plannedSeconds, 3) + " s (" + ventPlan.limit +
+          "), <b>real " + num(ventRealSeconds, 4) + " s</b>; Vh for the time " + num(ventPlan.headspace, 2) +
+          " L<br>Pressures: on " + num(pressureOnReliefMeas, 4) + " bar (extrapolated " + num(pressureOnReliefExtrap, 4) +
+          "), after closing " + num(pressureAfterRelief, 4) + ", settled " + num(adjustedPressureAfterRelief, 4) +
+          " bar; mean " + num(ventResult.pMeanGauge, 4) + " bar; cooling " + num(ventResult.cooling, 5) +
+          "; flow constant " + num(ventResult.flowConstant, 5) + "<br>Counts: flow model " +
+          num(ventResult.flowMoles, 5) + " mol, fermenter side " + num(ventResult.fermenterSideMoles, 5) +
+          " mol, ratio <b>" + num(ventResult.ratio, 3) + "</b>; counted " + num(ventResult.countedMoles, 5) + " mol (" +
+          ventResult.counted + ")<br>Apparent headspace " + num(ventResult.apparentHeadspace, 3) + " L; drop " +
+          num(ventResult.dropPercent, 3) + "% (target " + num(FMTData.ventTargetDropPercent, 2) + "%); headspace update: " +
+          ventHeadspaceStatus + (ventResult.outOfRange[0] ? String("; <b>") + ventResult.outOfRange +
+                                 " the range of the flow curve</b>" : String("")) + "</p>";
+  char when[20];
+  formatLocalEpochISO(ventOutOfRangeLastEpoch, when, sizeof(when));
+  html += "<h3>Checks</h3><p>Vent check: last " +
+          String(reliefCheckLast == RELIEF_CHECK_SKIPPED ? "none" : reliefCheckLabel(reliefCheckLast)) + ", drop " +
+          num(reliefCheckMeasuredDrop, 5) + " / expected " + num(reliefCheckExpectedDrop, 5) + " bar (ratio " +
+          num(reliefCheckDropRatio, 3) + "; fermenter side below 0.5, alarm below 0.25 twice), run " +
+          String(reliefCheckRun) + ", alarm " + (reliefCheckAlarmActive() ? "ON" : "off") +
+          "<br>Valve stuck open: " + (valveStuckOpenAlarmActive() ? "<b>ALARM</b>" : "no") + " (last fall " +
+          num(stuckOpenLastFall, 5) + " bar in " + String(STUCK_OPEN_CHECK_MS / 1000UL) + " s; alarm above " +
+          num(STUCK_OPEN_FALL_BAR, 3) + ")<br>Vents outside the curve range since boot: " +
+          String(ventOutOfRangeCount) + (ventOutOfRangeCount ? String(", last ") + ventOutOfRangeLastSide + " at " +
+                                         (when[0] ? String(when) : String("no time")) : String("")) + "</p>";
+  html += "<h3>Valve cycle</h3><p>";
+  if (!inTheMiddleOfRelief()) {
+    html += "Idle";
+  } else if (timeToStartExpansion) {
+    html += "Waiting to open the valve (in " + String((long)(timeToStartExpansion - now)) + " ms)";
+  } else if (timeToFinishExpansion) {
+    html += "Valve OPEN, closes in " + String((long)(timeToFinishExpansion - now)) + " ms";
+  } else {
+    html += "Valve closed, reading the pressure in " + String((long)(timeToRegisterPressure - now)) + " ms";
+  }
+  html += "; relief count " + String((unsigned long)CountersData.totalReliefCount) + "</p></body></html>";
+  return html;
+}
+
+void handleVentStatus(AsyncWebServerRequest *request) {
+  request->send(200, "text/html; charset=utf-8", getVentStatusHtml());
+}
 
 /*Implementar redução por purga
 Implementar tasks de adição de volume o de intercenção em gás

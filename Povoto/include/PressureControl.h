@@ -42,6 +42,9 @@ String describeReliefCheck();         // several lines, for the alarm e-mail
 // Valve stuck open: the pressure still falls after a vent closed.
 bool valveStuckOpenAlarmActive();
 String describeValveStuckOpen();
+// /ventstatus: vent diagnostics (docs/vent.md), out of /getstatus.
+String getVentStatusHtml();
+void handleVentStatus(AsyncWebServerRequest *request);
 // Any calibration routine (sensor zero, venting test, ...).
 bool calibrationRoutineActive();
 // Opens or closes the valve for a calibration routine (main loop only);

@@ -16,7 +16,7 @@ O método antigo, com tanque de expansão (TE), está na tag `te-final-2026-10-1
 - Termômetros Dallas (fermentador, ambiente, headspace; papéis na página Settings): `docs/thermometers.md`.
 - Alarmes de equipamento (sensor de pressão, válvula presa aberta, vent sem efeito, termômetro; bipes, tela, LEDs, attention LED): `docs/alarms.md`.
 - Modo Conditioning (geladeira simples, balanço congelado, tasks bloqueadas): `docs/conditioning.md`.
-- Taxa gCO2/L/d: `docs/gco2-rate.md`. Ao acrescentar colunas de log ou linhas no /getstatus, rodar `python tests/check_log_sizes.py` e `python tests/check_status_sizes.py` (limites de buffer; a página está perto do limite de 8192).
+- Taxa gCO2/L/d: `docs/gco2-rate.md`. Ao acrescentar colunas de log ou linhas no /getstatus, rodar `python tests/check_log_sizes.py` e `python tests/check_status_sizes.py` (limites de buffer; o /getstatus guarda ≥ 10% de folga do MAXSTATUSLEN, que fica na pilha da task web: diagnósticos novos do vent vão para o `/ventstatus`).
 - Benches do vent: `python tests/vent_bench.py` (contagem contra simulação) e `python tests/venting_fit.py --selftest` (ajuste do ensaio).
 
 ## Regras de trabalho

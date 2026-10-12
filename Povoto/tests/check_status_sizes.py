@@ -6,7 +6,7 @@ is a pessimistic bound. Checked limits:
 - temperature section: strnncat(..., 2048) in getTemperatureControlStatus()
 - pressure section: PRESSURE_STATUS_SIZE (include/PressureControl.h)
 - each pressure status line: tmp[] in PressureControl.cpp
-- whole page: MAXSTATUSLEN (IOTK_ESPAsyncServer.h, 8192), with GLog <= 512 and peers <= 1000
+- whole page: 90% of MAXSTATUSLEN (IOTK_ESPAsyncServer.h, 8192), with GLog <= 512 and peers <= 1000
 Run: python tests/check_status_sizes.py
 """
 import re
@@ -90,11 +90,14 @@ o = sum(w for w, _ in own)
 widest = max(pressure + stability, key=lambda x: x[0])
 page = o + t + p + GLOG_MAX + PEERS_MAX
 
+# The whole page keeps at least 10% of MAXSTATUSLEN free (the buffer is on the
+# stack of the web task, per request): vent diagnostics are on /ventstatus.
+PAGE_BUDGET = int(PAGE_LIMIT * 0.9)
 checks = [
     ("temperature section", t, TEMP_LIMIT),
     ("pressure section", p, PRESSURE_LIMIT),
     ("widest pressure line", widest[0], TMP_LIMIT),
-    ("whole page", page, PAGE_LIMIT),
+    ("whole page (90%)", page, PAGE_BUDGET),
 ]
 ok = True
 for name, value, limit in checks:
