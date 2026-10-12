@@ -7,7 +7,6 @@ void temperatureControl();
 // fromSideKick: sent by the SideKick (preferred over the BrewCore's).
 void setEnvironmentTemperatureFromPacket(const char *payload, bool fromSideKick);
 const char *environmentTempSource();   // "Dallas", "SideKick", "BrewCore" or "none received"
-const char *expansionTankTempSource(); // "Dallas" or "environment"
 // Gas temperature (headspace thermometer when assigned and valid, else the
 // fermenter's) and its origin, "headspace" or "liquid"; docs/thermometers.md.
 float gasTemperature();

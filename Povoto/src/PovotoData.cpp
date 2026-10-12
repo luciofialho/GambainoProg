@@ -4,7 +4,6 @@
 #include "PovotoCommon.h"
 #include "PovotoData.h"
 #include "PressureControl.h"
-#include "GasFlowModel.h"
 #include "AutoSetpoints.h"
 #include "PovotoTasks.h"
 #include "TemperatureControl.h"
@@ -17,20 +16,16 @@ FMTData_t FMTData = {
   .nvsSchemaVersion = 0, // Missing version must trigger the first rewrite.
   .PovotoNum = 0,
   .FMTVolume = 120.0,
-  .FMTReliefVolume = 2.0,
   .FMTAltitude = 0.0,
   .dataLogIntervalSeconds = DEFAULT_DATA_LOG_INTERVAL_SECONDS,
   .FMTEffectiveVentingExponent = 1.2900f,
-  .expansionTimeCoefficientA = 0.0200f,
-  .expansionTimeCoefficientB = 0.0010f,
-  .targetResidualAfterReliefPercent = 1.0f,
   .liquidMassInGasVentingPercent = 0.6f,
-  .expansionTankKCO2 = EXPANSION_TANK_K_DEFAULT,
-  .expansionTankKAir = EXPANSION_TANK_K_DEFAULT,
-  .flowFactorCO2Air = FLOW_FACTOR_CO2_AIR_DEFAULT,
-  .ventingResidualCoefficientA = 0.0f,
-  .ventingResidualCoefficientB = 0.0f,
-  .ventingResidualCoefficientC = 0.8729f,
+  .ventTargetDropPercent = 6.0f,
+  .ventMinSeconds = 1.5f,
+  .ventSafetyDropPercent = 12.0f,
+  .flowLevelFactor = 1.0f,
+  .ventCurve = VentModel::defaultCurve(),
+  .ventReferenceCurve = {},
   .pressure0Current = 4.5,
   .pressure1Bar = 0.5,
   .pressure1Current = 8.5,
@@ -147,8 +142,6 @@ bool readFMTDataFromEEPROM() {
   FMTData.PovotoNum = store.getUChar("number", defaultFMTData.PovotoNum);
   FMTData.FMTVolume = store.getFloat("volume", defaultFMTData.FMTVolume);
   if (!isfinite(FMTData.FMTVolume)) FMTData.FMTVolume = defaultFMTData.FMTVolume;
-  FMTData.FMTReliefVolume = store.getFloat("reliefVolume", defaultFMTData.FMTReliefVolume);
-  if (!isfinite(FMTData.FMTReliefVolume)) FMTData.FMTReliefVolume = defaultFMTData.FMTReliefVolume;
   FMTData.FMTAltitude = store.getFloat("altitude", defaultFMTData.FMTAltitude);
   if (!isfinite(FMTData.FMTAltitude)) FMTData.FMTAltitude = defaultFMTData.FMTAltitude;
   FMTData.dataLogIntervalSeconds = store.getInt("logInterval", defaultFMTData.dataLogIntervalSeconds);
@@ -156,45 +149,25 @@ bool readFMTDataFromEEPROM() {
     FMTData.dataLogIntervalSeconds = defaultFMTData.dataLogIntervalSeconds;
   FMTData.FMTEffectiveVentingExponent = store.getFloat("ventExponent", defaultFMTData.FMTEffectiveVentingExponent);
   if (!isfinite(FMTData.FMTEffectiveVentingExponent)) FMTData.FMTEffectiveVentingExponent = defaultFMTData.FMTEffectiveVentingExponent;
-  FMTData.expansionTimeCoefficientA = store.getFloat("expTimeA", defaultFMTData.expansionTimeCoefficientA);
-  FMTData.expansionTimeCoefficientB = store.getFloat("expTimeB", defaultFMTData.expansionTimeCoefficientB);
-  FMTData.targetResidualAfterReliefPercent = store.getFloat("targetResidual", defaultFMTData.targetResidualAfterReliefPercent);
   FMTData.liquidMassInGasVentingPercent = store.getFloat("liquidGasMass", defaultFMTData.liquidMassInGasVentingPercent);
-  FMTData.expansionTankKCO2 = store.getFloat("kCO2", defaultFMTData.expansionTankKCO2);
-  if (!isValidExpansionTankK(FMTData.expansionTankKCO2)) FMTData.expansionTankKCO2 = defaultFMTData.expansionTankKCO2;
-  FMTData.expansionTankKAir = store.getFloat("kAir", defaultFMTData.expansionTankKAir);
-  if (!isValidExpansionTankK(FMTData.expansionTankKAir)) FMTData.expansionTankKAir = defaultFMTData.expansionTankKAir;
-  FMTData.flowFactorCO2Air = store.getFloat("flowCO2Air", defaultFMTData.flowFactorCO2Air);
-  if (!isValidFlowFactor(FMTData.flowFactorCO2Air)) FMTData.flowFactorCO2Air = defaultFMTData.flowFactorCO2Air;
-  const float legacyVentingFactor = store.getFloat("ventResidual", 0.8729f);
-  const float factorAt18Bar = store.isKey("ventResidual18")
-      ? store.getFloat("ventResidual18", legacyVentingFactor) : legacyVentingFactor;
-  const float factorAt05Bar = store.isKey("ventResidual05")
-      ? store.getFloat("ventResidual05", legacyVentingFactor) : legacyVentingFactor;
-  if (store.isKey("ventResidualA")) {
-    FMTData.ventingResidualCoefficientA = store.getFloat("ventResidualA", 0.0f);
-    FMTData.ventingResidualCoefficientB = store.getFloat("ventResidualB", 0.0f);
-    FMTData.ventingResidualCoefficientC = store.getFloat("ventResidualC", legacyVentingFactor);
-  } else {
-    // Migrate the previous two-point straight line into the parabola model.
-    FMTData.ventingResidualCoefficientA = 0.0f;
-    FMTData.ventingResidualCoefficientB = (factorAt18Bar - factorAt05Bar) / 1.3f;
-    FMTData.ventingResidualCoefficientC = factorAt05Bar - 0.5f * FMTData.ventingResidualCoefficientB;
-  }
-  if (!GasFlow::validExpansionParameters(FMTData.expansionTimeCoefficientA, FMTData.expansionTimeCoefficientB, FMTData.maximumPressure) ||
-      !(FMTData.targetResidualAfterReliefPercent > 0.0f && FMTData.targetResidualAfterReliefPercent < 100.0f) ||
-      !(FMTData.liquidMassInGasVentingPercent >= 0.0f && FMTData.liquidMassInGasVentingPercent <= 100.0f) ||
-      !GasFlow::validVentingResidualCoefficients(FMTData.ventingResidualCoefficientA,
-                                                  FMTData.ventingResidualCoefficientB,
-                                                  FMTData.ventingResidualCoefficientC)) {
-    FMTData.expansionTimeCoefficientA = defaultFMTData.expansionTimeCoefficientA;
-    FMTData.expansionTimeCoefficientB = defaultFMTData.expansionTimeCoefficientB;
-    FMTData.targetResidualAfterReliefPercent = defaultFMTData.targetResidualAfterReliefPercent;
+  if (!(FMTData.liquidMassInGasVentingPercent >= 0.0f && FMTData.liquidMassInGasVentingPercent <= 100.0f))
     FMTData.liquidMassInGasVentingPercent = defaultFMTData.liquidMassInGasVentingPercent;
-    FMTData.ventingResidualCoefficientA = 0.0f;
-    FMTData.ventingResidualCoefficientB = 0.0f;
-    FMTData.ventingResidualCoefficientC = 0.8729f;
-  }
+  FMTData.ventTargetDropPercent = store.getFloat("ventDrop", defaultFMTData.ventTargetDropPercent);
+  if (!isValidVentTargetDrop(FMTData.ventTargetDropPercent)) FMTData.ventTargetDropPercent = defaultFMTData.ventTargetDropPercent;
+  FMTData.ventMinSeconds = store.getFloat("ventMinSec", defaultFMTData.ventMinSeconds);
+  if (!isValidVentMinSeconds(FMTData.ventMinSeconds)) FMTData.ventMinSeconds = defaultFMTData.ventMinSeconds;
+  FMTData.ventSafetyDropPercent = store.getFloat("ventSafeDrop", defaultFMTData.ventSafetyDropPercent);
+  if (!isValidVentSafetyDrop(FMTData.ventSafetyDropPercent)) FMTData.ventSafetyDropPercent = defaultFMTData.ventSafetyDropPercent;
+  FMTData.flowLevelFactor = store.getFloat("flowLevel", defaultFMTData.flowLevelFactor);
+  if (!isValidFlowLevelFactor(FMTData.flowLevelFactor)) FMTData.flowLevelFactor = defaultFMTData.flowLevelFactor;
+  // A blob of another size or an invalid curve keeps the default (18/09) curve
+  // and no reference.
+  if (store.getBytesLength("ventCurve") == sizeof(FMTData.ventCurve))
+    store.getBytes("ventCurve", &FMTData.ventCurve, sizeof(FMTData.ventCurve));
+  if (!VentModel::validCurve(FMTData.ventCurve)) FMTData.ventCurve = defaultFMTData.ventCurve;
+  if (store.getBytesLength("ventRefCurve") == sizeof(FMTData.ventReferenceCurve))
+    store.getBytes("ventRefCurve", &FMTData.ventReferenceCurve, sizeof(FMTData.ventReferenceCurve));
+  if (!VentModel::validCurve(FMTData.ventReferenceCurve)) FMTData.ventReferenceCurve = defaultFMTData.ventReferenceCurve;
   if (store.getBytesLength("cooling") == sizeof(FMTData.coolingCycle))
     store.getBytes("cooling", &FMTData.coolingCycle, sizeof(FMTData.coolingCycle));
   for (const auto &point : FMTData.coolingCycle) {
@@ -218,8 +191,6 @@ bool readFMTDataFromEEPROM() {
     store.getBytes("dallasFerm", FMTData.dallasAddress[DALLAS_ROLE_FERMENTER], 8);
   if (store.getBytesLength("dallasEnv") == 8)
     store.getBytes("dallasEnv", FMTData.dallasAddress[DALLAS_ROLE_ENVIRONMENT], 8);
-  if (store.getBytesLength("dallasExpTank") == 8)
-    store.getBytes("dallasExpTank", FMTData.dallasAddress[DALLAS_ROLE_EXPANSION_TANK], 8);
   if (store.getBytesLength("dallasHeadspace") == 8)
     store.getBytes("dallasHeadspace", FMTData.dallasAddress[DALLAS_ROLE_HEADSPACE], 8);
   store.end();
@@ -233,19 +204,16 @@ bool writeFMTDataToNIV() {
     return false;
   }
   bool saved = true;
-  saved = (store.putFloat("expTimeA", FMTData.expansionTimeCoefficientA) == sizeof(float)) && saved;
-  saved = (store.putFloat("expTimeB", FMTData.expansionTimeCoefficientB) == sizeof(float)) && saved;
-  saved = (store.putFloat("targetResidual", FMTData.targetResidualAfterReliefPercent) == sizeof(float)) && saved;
   saved = (store.putFloat("liquidGasMass", FMTData.liquidMassInGasVentingPercent) == sizeof(float)) && saved;
-  saved = (store.putFloat("kCO2", FMTData.expansionTankKCO2) == sizeof(float)) && saved;
-  saved = (store.putFloat("kAir", FMTData.expansionTankKAir) == sizeof(float)) && saved;
-  saved = (store.putFloat("flowCO2Air", FMTData.flowFactorCO2Air) == sizeof(float)) && saved;
-  saved = (store.putFloat("ventResidualA", FMTData.ventingResidualCoefficientA) == sizeof(float)) && saved;
-  saved = (store.putFloat("ventResidualB", FMTData.ventingResidualCoefficientB) == sizeof(float)) && saved;
-  saved = (store.putFloat("ventResidualC", FMTData.ventingResidualCoefficientC) == sizeof(float)) && saved;
+  saved = (store.putFloat("ventDrop", FMTData.ventTargetDropPercent) == sizeof(float)) && saved;
+  saved = (store.putFloat("ventMinSec", FMTData.ventMinSeconds) == sizeof(float)) && saved;
+  saved = (store.putFloat("ventSafeDrop", FMTData.ventSafetyDropPercent) == sizeof(float)) && saved;
+  saved = (store.putFloat("flowLevel", FMTData.flowLevelFactor) == sizeof(float)) && saved;
+  saved = (store.putBytes("ventCurve", &FMTData.ventCurve, sizeof(FMTData.ventCurve)) == sizeof(FMTData.ventCurve)) && saved;
+  saved = (store.putBytes("ventRefCurve", &FMTData.ventReferenceCurve, sizeof(FMTData.ventReferenceCurve)) ==
+           sizeof(FMTData.ventReferenceCurve)) && saved;
   saved = (store.putUChar("number", FMTData.PovotoNum) == sizeof(FMTData.PovotoNum)) && saved;
   saved = (store.putFloat("volume", FMTData.FMTVolume) == sizeof(FMTData.FMTVolume)) && saved;
-  saved = (store.putFloat("reliefVolume", FMTData.FMTReliefVolume) == sizeof(FMTData.FMTReliefVolume)) && saved;
   saved = (store.putFloat("altitude", FMTData.FMTAltitude) == sizeof(FMTData.FMTAltitude)) && saved;
   saved = (store.putInt("logInterval", FMTData.dataLogIntervalSeconds) == sizeof(FMTData.dataLogIntervalSeconds)) && saved;
   saved = (store.putFloat("ventExponent", FMTData.FMTEffectiveVentingExponent) == sizeof(FMTData.FMTEffectiveVentingExponent)) && saved;
@@ -253,7 +221,6 @@ bool writeFMTDataToNIV() {
   saved = (store.putBytes("heater", &FMTData.heater, sizeof(FMTData.heater)) == sizeof(FMTData.heater)) && saved;
   saved = (store.putBytes("dallasFerm", FMTData.dallasAddress[DALLAS_ROLE_FERMENTER], 8) == 8) && saved;
   saved = (store.putBytes("dallasEnv", FMTData.dallasAddress[DALLAS_ROLE_ENVIRONMENT], 8) == 8) && saved;
-  saved = (store.putBytes("dallasExpTank", FMTData.dallasAddress[DALLAS_ROLE_EXPANSION_TANK], 8) == 8) && saved;
   saved = (store.putBytes("dallasHeadspace", FMTData.dallasAddress[DALLAS_ROLE_HEADSPACE], 8) == 8) && saved;
   saved = (store.putFloat("p0Current", FMTData.pressure0Current) == sizeof(FMTData.pressure0Current)) && saved;
   saved = (store.putFloat("p1Bar", FMTData.pressure1Bar) == sizeof(FMTData.pressure1Bar)) && saved;
@@ -593,6 +560,46 @@ bool resetPovotoDataToFactoryDefaults() {
   return saved;
 }
 
+// Keys of the te-final tag (expansion tank) that this firmware no longer uses.
+// They are kept in pvt_settings so that a fallback to the tag finds its
+// calibration (docs/sem-te-plano.md, section 1): a schema rewrite clears the
+// namespace, so they are copied back after it.
+static const char *const LEGACY_FLOAT_KEYS[] = {
+  "expTimeA", "expTimeB", "targetResidual", "kCO2", "kAir", "flowCO2Air",
+  "ventResidualA", "ventResidualB", "ventResidualC", "reliefVolume"};
+static constexpr size_t LEGACY_FLOAT_COUNT = sizeof(LEGACY_FLOAT_KEYS) / sizeof(LEGACY_FLOAT_KEYS[0]);
+struct LegacySettings {
+  bool hasFloat[LEGACY_FLOAT_COUNT];
+  float value[LEGACY_FLOAT_COUNT];
+  bool hasExpTank;
+  uint8_t expTank[8];
+};
+
+static void readLegacySettings(LegacySettings &legacy) {
+  legacy = {};
+  Preferences store;
+  if (!store.begin("pvt_settings", true)) return;
+  for (size_t i = 0; i < LEGACY_FLOAT_COUNT; ++i) {
+    legacy.hasFloat[i] = store.isKey(LEGACY_FLOAT_KEYS[i]);
+    if (legacy.hasFloat[i]) legacy.value[i] = store.getFloat(LEGACY_FLOAT_KEYS[i], 0.0f);
+  }
+  legacy.hasExpTank = store.getBytesLength("dallasExpTank") == 8 &&
+      store.getBytes("dallasExpTank", legacy.expTank, 8) == 8;
+  store.end();
+}
+
+static bool writeLegacySettings(const LegacySettings &legacy) {
+  Preferences store;
+  if (!store.begin("pvt_settings", false)) return false;
+  bool saved = true;
+  for (size_t i = 0; i < LEGACY_FLOAT_COUNT; ++i)
+    if (legacy.hasFloat[i])
+      saved = (store.putFloat(LEGACY_FLOAT_KEYS[i], legacy.value[i]) == sizeof(float)) && saved;
+  if (legacy.hasExpTank) saved = (store.putBytes("dallasExpTank", legacy.expTank, 8) == 8) && saved;
+  store.end();
+  return saved;
+}
+
 // All data must already be loaded in RAM. Peers, Wi-Fi and other namespaces
 // are outside this operation. Interrupted rewrites may lose unsaved values.
 static void rewriteNVSIfSchemaChanged() {
@@ -600,7 +607,10 @@ static void rewriteNVSIfSchemaChanged() {
   Serial.printf("NVS: rewriting schema %lu -> %lu\n",
     (unsigned long)FMTData.nvsSchemaVersion, (unsigned long)PVT_NVS_SCHEMA_VERSION);
   FMTData.nvsSchemaVersion = 0; // Keep retrying until the entire rewrite succeeds.
+  LegacySettings legacy;
+  readLegacySettings(legacy);
   bool saved = clearPovotoNamespace("pvt_settings");
+  saved = writeLegacySettings(legacy) && saved;
   saved = clearPovotoNamespace("pvt_user") && saved;
   saved = clearPovotoNamespace("pvt_batch") && saved;
   saved = clearPovotoNamespace("pvt_setpoint") && saved;

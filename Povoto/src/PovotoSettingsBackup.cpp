@@ -4,7 +4,6 @@
 #include <string.h>
 
 #include "PovotoData.h"
-#include "GasFlowModel.h"
 #include "DallasSensors.h"
 
 static void appendNumber(String &json, const char *name, double value,
@@ -25,7 +24,24 @@ static void appendBool(String &json, const char *name, bool value) {
 
 // Dallas role addresses: XX-XX-XX-XX-XX-XX-XX-XX, "" = not assigned.
 static const char *const DALLAS_BACKUP_KEYS[DALLAS_ROLE_COUNT] = {
-  "dallasFermenter", "dallasEnvironment", "dallasExpansionTank", "dallasHeadspace"};
+  "dallasFermenter", "dallasEnvironment", "dallasHeadspace"};
+
+// Flow curve (docs/vent.md): coefficients, t0, pressure range and test time.
+static void appendCurve(String &json, const char *prefix, const VentModel::Curve &curve) {
+  char key[32];
+  for (uint8_t k = 0; k < 4; ++k) {
+    snprintf(key, sizeof(key), "%sA%u", prefix, k);
+    appendNumber(json, key, curve.a[k], 6);
+  }
+  snprintf(key, sizeof(key), "%sT0", prefix);
+  appendNumber(json, key, curve.t0, 6);
+  snprintf(key, sizeof(key), "%sPMin", prefix);
+  appendNumber(json, key, curve.pMin, 6);
+  snprintf(key, sizeof(key), "%sPMax", prefix);
+  appendNumber(json, key, curve.pMax, 6);
+  snprintf(key, sizeof(key), "%sEpoch", prefix);
+  appendNumber(json, key, curve.epoch, 0);
+}
 
 static void appendDallasAddress(String &json, const char *name, const uint8_t *address) {
   char text[DALLAS_ADDRESS_TEXT_SIZE];
@@ -43,17 +59,13 @@ String savePovotoSettingsBackup() {
   json = "{\n  \"format\": \"povoto-settings\",\n  \"version\": 1,\n";
   appendNumber(json, "PovotoNum", FMTData.PovotoNum, 0);
   appendNumber(json, "FMTVolume", FMTData.FMTVolume, 6);
-  appendNumber(json, "expansionTimeCoefficientA", FMTData.expansionTimeCoefficientA, 6);
-  appendNumber(json, "expansionTimeCoefficientB", FMTData.expansionTimeCoefficientB, 6);
-  appendNumber(json, "targetResidualAfterReliefPercent", FMTData.targetResidualAfterReliefPercent, 6);
   appendNumber(json, "liquidMassInGasVentingPercent", FMTData.liquidMassInGasVentingPercent, 6);
-  appendNumber(json, "ventingResidualCoefficientA", FMTData.ventingResidualCoefficientA, 6);
-  appendNumber(json, "ventingResidualCoefficientB", FMTData.ventingResidualCoefficientB, 6);
-  appendNumber(json, "ventingResidualCoefficientC", FMTData.ventingResidualCoefficientC, 6);
-  appendNumber(json, "FMTReliefVolume", FMTData.FMTReliefVolume, 6);
-  appendNumber(json, "expansionTankKCO2", FMTData.expansionTankKCO2, 6);
-  appendNumber(json, "expansionTankKAir", FMTData.expansionTankKAir, 6);
-  appendNumber(json, "flowFactorCO2Air", FMTData.flowFactorCO2Air, 6);
+  appendNumber(json, "ventTargetDropPercent", FMTData.ventTargetDropPercent, 6);
+  appendNumber(json, "ventMinSeconds", FMTData.ventMinSeconds, 6);
+  appendNumber(json, "ventSafetyDropPercent", FMTData.ventSafetyDropPercent, 6);
+  appendNumber(json, "flowLevelFactor", FMTData.flowLevelFactor, 6);
+  appendCurve(json, "ventCurve", FMTData.ventCurve);
+  appendCurve(json, "ventReferenceCurve", FMTData.ventReferenceCurve);
   appendNumber(json, "FMTAltitude", FMTData.FMTAltitude, 6);
   appendNumber(json, "dataLogIntervalSeconds", FMTData.dataLogIntervalSeconds, 0);
   appendNumber(json, "FMTEffectiveVentingExponent", FMTData.FMTEffectiveVentingExponent, 6);
@@ -152,6 +164,37 @@ static bool readBool(const char *json, const char *name, bool &value) {
   return false;
 }
 
+// Optional curve: absent keeps the current one; present must be complete and valid.
+static bool readCurve(const char *json, const char *prefix, VentModel::Curve &curve, bool allowEmpty) {
+  char key[32];
+  snprintf(key, sizeof(key), "%sA0", prefix);
+  if (!hasKey(json, key)) return true;
+  VentModel::Curve loaded = {};
+  float value = 0.0f; // the curve is packed: no references to its fields
+  for (uint8_t k = 0; k < 4; ++k) {
+    snprintf(key, sizeof(key), "%sA%u", prefix, k);
+    if (!readFloat(json, key, value)) return false;
+    loaded.a[k] = value;
+  }
+  double epoch = 0.0;
+  snprintf(key, sizeof(key), "%sT0", prefix);
+  if (!readFloat(json, key, value)) return false;
+  loaded.t0 = value;
+  snprintf(key, sizeof(key), "%sPMin", prefix);
+  if (!readFloat(json, key, value)) return false;
+  loaded.pMin = value;
+  snprintf(key, sizeof(key), "%sPMax", prefix);
+  if (!readFloat(json, key, value)) return false;
+  loaded.pMax = value;
+  snprintf(key, sizeof(key), "%sEpoch", prefix);
+  if (!readNumber(json, key, epoch) || epoch < 0.0 || epoch > 4294967295.0) return false;
+  loaded.epoch = (uint32_t)epoch;
+  const bool empty = loaded.pMin == 0.0f && loaded.pMax == 0.0f && loaded.a[0] == 0.0f;
+  if (!(allowEmpty && empty) && !VentModel::validCurve(loaded)) return false;
+  curve = loaded;
+  return true;
+}
+
 bool loadPovotoSettingsBackup(const String &settings) {
   if (settings.length() == 0 || settings.length() > 4096) return false;
   const char *json = settings.c_str();
@@ -188,42 +231,18 @@ bool loadPovotoSettingsBackup(const String &settings) {
   povotoNumber = loadedFmt.PovotoNum;
   if (hasKey(json, "PovotoNum") && !readInt(json, "PovotoNum", povotoNumber)) return false;
   READ_BACKUP_FLOAT("FMTVolume", loadedFmt.FMTVolume);
-  READ_BACKUP_FLOAT("expansionTimeCoefficientA", loadedFmt.expansionTimeCoefficientA);
-  READ_BACKUP_FLOAT("expansionTimeCoefficientB", loadedFmt.expansionTimeCoefficientB);
-  READ_BACKUP_FLOAT("targetResidualAfterReliefPercent", loadedFmt.targetResidualAfterReliefPercent);
+  // Expansion-tank fields of older files (te-final tag) are ignored.
   READ_BACKUP_FLOAT("liquidMassInGasVentingPercent", loadedFmt.liquidMassInGasVentingPercent);
-  if (hasKey(json, "ventingResidualCoefficientA")) {
-    READ_BACKUP_FLOAT("ventingResidualCoefficientA", loadedFmt.ventingResidualCoefficientA);
-    READ_BACKUP_FLOAT("ventingResidualCoefficientB", loadedFmt.ventingResidualCoefficientB);
-    READ_BACKUP_FLOAT("ventingResidualCoefficientC", loadedFmt.ventingResidualCoefficientC);
-  } else {
-    float factorAt18Bar = loadedFmt.ventingResidualCoefficientC;
-    float factorAt05Bar = loadedFmt.ventingResidualCoefficientC;
-    if (hasKey(json, "ventingResidualFactorAt18Bar")) {
-      READ_BACKUP_FLOAT("ventingResidualFactorAt18Bar", factorAt18Bar);
-      READ_BACKUP_FLOAT("ventingResidualFactorAt05Bar", factorAt05Bar);
-    } else {
-      READ_BACKUP_FLOAT("ventingResidualFactor", factorAt18Bar);
-      factorAt05Bar = factorAt18Bar;
-    }
-    loadedFmt.ventingResidualCoefficientA = 0.0f;
-    loadedFmt.ventingResidualCoefficientB = (factorAt18Bar - factorAt05Bar) / 1.3f;
-    loadedFmt.ventingResidualCoefficientC = factorAt05Bar - 0.5f * loadedFmt.ventingResidualCoefficientB;
-  }
-  if (!GasFlow::validExpansionParameters(loadedFmt.expansionTimeCoefficientA, loadedFmt.expansionTimeCoefficientB, loadedFmt.maximumPressure) ||
-      !(loadedFmt.targetResidualAfterReliefPercent > 0.0f && loadedFmt.targetResidualAfterReliefPercent < 100.0f) ||
-      !(loadedFmt.liquidMassInGasVentingPercent >= 0.0f && loadedFmt.liquidMassInGasVentingPercent <= 100.0f) ||
-      !GasFlow::validVentingResidualCoefficients(loadedFmt.ventingResidualCoefficientA,
-                                                  loadedFmt.ventingResidualCoefficientB,
-                                                  loadedFmt.ventingResidualCoefficientC)) return false;
-  READ_BACKUP_FLOAT("FMTReliefVolume", loadedFmt.FMTReliefVolume);
-  // Optional: older backups keep the current values.
-  READ_BACKUP_FLOAT("expansionTankKCO2", loadedFmt.expansionTankKCO2);
-  READ_BACKUP_FLOAT("expansionTankKAir", loadedFmt.expansionTankKAir);
-  READ_BACKUP_FLOAT("flowFactorCO2Air", loadedFmt.flowFactorCO2Air);
-  if (!isValidFlowFactor(loadedFmt.flowFactorCO2Air)) return false;
-  if (!isValidExpansionTankK(loadedFmt.expansionTankKCO2) ||
-      !isValidExpansionTankK(loadedFmt.expansionTankKAir)) return false;
+  READ_BACKUP_FLOAT("ventTargetDropPercent", loadedFmt.ventTargetDropPercent);
+  READ_BACKUP_FLOAT("ventMinSeconds", loadedFmt.ventMinSeconds);
+  READ_BACKUP_FLOAT("ventSafetyDropPercent", loadedFmt.ventSafetyDropPercent);
+  READ_BACKUP_FLOAT("flowLevelFactor", loadedFmt.flowLevelFactor);
+  if (!(loadedFmt.liquidMassInGasVentingPercent >= 0.0f && loadedFmt.liquidMassInGasVentingPercent <= 100.0f) ||
+      !isValidVentTargetDrop(loadedFmt.ventTargetDropPercent) || !isValidVentMinSeconds(loadedFmt.ventMinSeconds) ||
+      !isValidVentSafetyDrop(loadedFmt.ventSafetyDropPercent) || !isValidFlowLevelFactor(loadedFmt.flowLevelFactor))
+    return false;
+  if (!readCurve(json, "ventCurve", loadedFmt.ventCurve, false) ||
+      !readCurve(json, "ventReferenceCurve", loadedFmt.ventReferenceCurve, true)) return false;
   READ_BACKUP_FLOAT("FMTAltitude", loadedFmt.FMTAltitude);
   READ_BACKUP_INT("dataLogIntervalSeconds", loadedFmt.dataLogIntervalSeconds);
   if (!isValidDataLogIntervalSeconds(loadedFmt.dataLogIntervalSeconds)) return false;

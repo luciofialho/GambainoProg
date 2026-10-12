@@ -20,12 +20,19 @@ docs/dissolved-co2.md.
 FMTData.co2TransferTime and the supersaturation fields were removed without a
 schema change: their keys (`co2TransferTime`, `supersatTauD`, `supersatTauA`,
 `co2Supersat`) may stay unused in NVS.
-FMTData.expansionTankKCO2 / expansionTankKAir (keys `kCO2`, `kAir`, 1.0-1.5,
-default 1.08) are the expansion-tank filling factors; see
-docs/expansion-tank-k.md.
+The expansion-tank fields of the te-final tag were removed without a schema
+change: their keys (`expTimeA`, `expTimeB`, `targetResidual`, `kCO2`, `kAir`,
+`flowCO2Air`, `ventResidualA`..`C`, `reliefVolume`, `dallasExpTank`) stay in
+pvt_settings, unused, for a fallback to the tag (docs/sem-te-plano.md, section 1).
+A schema rewrite copies them back after clearing the namespace. Never reuse
+these keys with another meaning.
+Direct vent (docs/vent.md): `ventDrop`, `ventMinSec`, `ventSafeDrop`,
+`flowLevel` (floats) and the blobs `ventCurve` / `ventRefCurve`
+(VentModel::Curve, 28 bytes: a0..a3, t0, pMin, pMax, epoch); a blob of another
+size or an invalid curve keeps the default (18/09) curve and no reference.
 FMTData.dallasAddress holds the Dallas ROM address of each thermometer role,
 one 8-byte blob per role: `dallasFerm` (fermenter), `dallasEnv` (environment),
-`dallasExpTank` (expansion tank), `dallasHeadspace` (headspace); zeros = not assigned. A missing key or a
+`dallasHeadspace` (headspace); zeros = not assigned (`dallasExpTank` is kept, unused). A missing key or a
 different size reads as not assigned, so roles can be added or retired without
 touching the others. See docs/thermometers.md.
 CountersData.co2CorrectionDebt (key `co2Debt`, double) keeps the debt of the

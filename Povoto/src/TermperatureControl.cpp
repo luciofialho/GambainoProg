@@ -15,10 +15,9 @@
 // sensor readigs
 float dallasTemperature = NOTaTEMP; // invalid until the first reading (never 0 C)
 // Environment: its own Dallas when assigned, else the temperature broadcast
-// by ESP-NOW: the SideKick's (its own Dallas) before the BrewCore's. Expansion
-// tank: its own Dallas when assigned, else the environment (docs/thermometers.md).
+// by ESP-NOW: the SideKick's (its own Dallas) before the BrewCore's
+// (docs/thermometers.md).
 float environmentTemp = NOTaTEMP;
-float expansionTankTemp = NOTaTEMP;
 static constexpr unsigned long ENVIRONMENT_TEMP_TIMEOUT_MS = 10UL * 60UL * 1000UL;
 // Broadcast environment temperature, one slot per sender kind.
 struct ReceivedEnvironmentTemp {
@@ -38,18 +37,12 @@ static void updateEnvironmentTemperatures() {
       ? receivedEnvironment[environmentReceivedFrom].value : NOTaTEMP;
   environmentTemp = dallasRoleAssigned(DALLAS_ROLE_ENVIRONMENT)
       ? dallasRoleTemperature(DALLAS_ROLE_ENVIRONMENT) : received;
-  expansionTankTemp = dallasRoleAssigned(DALLAS_ROLE_EXPANSION_TANK)
-      ? dallasRoleTemperature(DALLAS_ROLE_EXPANSION_TANK) : environmentTemp;
 }
 
 const char *environmentTempSource() {
   if (dallasRoleAssigned(DALLAS_ROLE_ENVIRONMENT)) return "Dallas";
   if (!receivedEnvironment[environmentReceivedFrom].valid) return "none received";
   return environmentReceivedFrom == ENV_FROM_SIDEKICK ? "SideKick" : "BrewCore";
-}
-
-const char *expansionTankTempSource() {
-  return dallasRoleAssigned(DALLAS_ROLE_EXPANSION_TANK) ? "Dallas" : "environment";
 }
 
 // Headspace thermometer when assigned and with a valid reading (held 60 s),
@@ -593,12 +586,11 @@ char *getTemperatureControlStatus(char *st) {
       : "non-parasitic";
 
   char buf[2048];  
-    sprintf(buf, "<br>-------TEMPERATURE CONTROL<br>Dallas sensor: %s<br>Dallas power mode: %s<br>Temperature: %.2f C<br>Environment Temp: %.2f C (%s)<br>Expansion tank Temp: %.2f C (%s)<br>Target temp: %.2f C<br>Mode: %s<br>Chill: %s<br>Interrupted cooling: %s<br>Heat: %s<br>Interrupted heating: %s<br>Total chill time: %ld s<br>Total heat time: %ld s<br>",
+    sprintf(buf, "<br>-------TEMPERATURE CONTROL<br>Dallas sensor: %s<br>Dallas power mode: %s<br>Temperature: %.2f C<br>Environment Temp: %.2f C (%s)<br>Target temp: %.2f C<br>Mode: %s<br>Chill: %s<br>Interrupted cooling: %s<br>Heat: %s<br>Interrupted heating: %s<br>Total chill time: %ld s<br>Total heat time: %ld s<br>",
           (dallasTemperature == NOTaTEMP || dallasTemperature == 85) ? "NOT DETECTED" : "OK",
           dallasPowerMode,
           ControlData.temperature,
           environmentTemp, environmentTempSource(),
-          expansionTankTemp, expansionTankTempSource(),
           SetPointData.setPointTemp,
           getTemperatureModeLabel(),
           chillControl ? "ON" : "OFF",
@@ -611,9 +603,9 @@ char *getTemperatureControlStatus(char *st) {
 
   // Each Dallas role, then the sensors of the last scan without a role
   // (docs/thermometers.md).
-  static const char *const roleNames[DALLAS_ROLE_COUNT] = {"fermenter", "environment", "expansion tank", "headspace"};
+  static const char *const roleNames[DALLAS_ROLE_COUNT] = {"fermenter", "environment", "headspace"};
   static const char *const unassignedNotes[DALLAS_ROLE_COUNT] = {
-    "temperature control idle", "using the ESP-NOW broadcast", "using the environment", "gas = fermenter"};
+    "temperature control idle", "using the ESP-NOW broadcast", "gas = fermenter"};
   char id[DALLAS_ADDRESS_TEXT_SIZE];
   for (uint8_t r = 0; r < DALLAS_ROLE_COUNT; ++r) {
     if (!dallasRoleAssigned(r)) {

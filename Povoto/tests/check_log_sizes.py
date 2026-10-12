@@ -36,6 +36,10 @@ STRING_MAX = {
     'data.reliefCheck ? data.reliefCheck : ""': 9, # "no-effect"
     "atmosphericPressureSourceLabel()": 8,        # "sidekick" / "altitude"
     'data.atmosphericPressureSource ? data.atmosphericPressureSource : ""': 8,
+    'data.gasTemperatureSource ? data.gasTemperatureSource : ""': 9,  # "headspace"
+    'data.ventLimit ? data.ventLimit : ""': 8,                          # "estimate"
+    'data.ventCounted ? data.ventCounted : ""': 14,                     # "fermenter-side"
+    'data.ventHeadspaceStatus ? data.ventHeadspaceStatus : ""': 32,     # longest status is 31
 }
 UNSIGNED_HINTS = ("Millis", "millis()", "reliefNumber",
                   "totalReliefCount", "previousReliefNumber", "valveOpened",

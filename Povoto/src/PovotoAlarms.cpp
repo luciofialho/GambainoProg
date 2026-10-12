@@ -25,12 +25,12 @@ static const ErrorScreenText PRESSURE_OUT_OF_RANGE_SCREEN = {
   "PRESSURE", "SENSOR", "PRESSURE SENSOR CURRENT OUT OF RANGE", "PRESSURE READING UNRELIABLE",
   "Check the 4-20 mA sensor and the INA226 wiring"};
 
-static const ErrorScreenText RELIEF_LEAK_SCREEN = {
-  "RELIEF", "LEAK", "PRESSURE DROP TOO LARGE IN THE RELIEFS", "LEAK BETWEEN VALVE AND TANK?",
-  "Check the hoses and fittings of the expansion tank"};
 static const ErrorScreenText RELIEF_NO_EFFECT_SCREEN = {
-  "RELIEF", "FAILED", "RELIEFS DO NOT LOWER THE PRESSURE", "VALVE NOT OPENING OR TANK NOT VENTING?",
-  "Check the transfer valve and the tank vent"};
+  "VENT", "FAILED", "VENTS DO NOT LOWER THE PRESSURE", "VALVE NOT OPENING OR OUTLET BLOCKED?",
+  "Check the valve, its outlet and the witness bottle"};
+static const ErrorScreenText VALVE_STUCK_OPEN_SCREEN = {
+  "VALVE", "OPEN", "PRESSURE FALLS AFTER THE VENT", "VALVE STUCK OPEN?",
+  "Close the line by hand and check the valve"};
 
 static PovotoAlarm activeAlarm = ALARM_NONE;
 
@@ -70,9 +70,13 @@ static void sendAlarmMail(PovotoAlarm alarm, unsigned long activeMs) {
       break;
     case ALARM_RELIEF:
       body += describeReliefCheck();
-      body += reliefCheckAlarmIsLeak()
-          ? "\nThe reliefs remove much more gas than the expansion tank holds: check the hoses and fittings between the valve and the tank.\n"
-          : "\nThe reliefs do not lower the pressure: check the transfer valve and the tank vent.\n";
+      body += "\nThe vents do not lower the pressure: check the valve, its outlet and the witness bottle "
+              "(and that the expansion tank was not reconnected). These vents are not counted by the flow model.\n";
+      break;
+    case ALARM_VALVE_STUCK_OPEN:
+      body += describeValveStuckOpen();
+      body += "\nThe pressure keeps falling after the vent closed: the valve may be stuck open. "
+              "Close the line by hand and check or clean the valve.\n";
       break;
     default:
       body += describeFermenterThermometer();
@@ -91,7 +95,8 @@ static void sendAlarmMail(PovotoAlarm alarm, unsigned long activeMs) {
 const char *povotoAlarmLabel(PovotoAlarm alarm) {
   switch (alarm) {
     case ALARM_PRESSURE_SENSOR: return "pressure sensor";
-    case ALARM_RELIEF: return reliefCheckAlarmIsLeak() ? "relief leak" : "relief without effect";
+    case ALARM_RELIEF: return "vent without effect";
+    case ALARM_VALVE_STUCK_OPEN: return "valve stuck open";
     case ALARM_FERMENTER_THERMOMETER: return "fermenter thermometer";
     default: return "none";
   }
@@ -110,7 +115,8 @@ static const ErrorScreenText *alarmScreen(PovotoAlarm alarm) {
   switch (alarm) {
     case ALARM_PRESSURE_SENSOR:
       return pressureSensorNotResponding() ? &PRESSURE_NOT_RESPONDING_SCREEN : &PRESSURE_OUT_OF_RANGE_SCREEN;
-    case ALARM_RELIEF: return reliefCheckAlarmIsLeak() ? &RELIEF_LEAK_SCREEN : &RELIEF_NO_EFFECT_SCREEN;
+    case ALARM_RELIEF: return &RELIEF_NO_EFFECT_SCREEN;
+    case ALARM_VALVE_STUCK_OPEN: return &VALVE_STUCK_OPEN_SCREEN;
     case ALARM_FERMENTER_THERMOMETER: return &THERMOMETER_SCREEN;
     default: return nullptr;
   }
@@ -119,6 +125,7 @@ static const ErrorScreenText *alarmScreen(PovotoAlarm alarm) {
 void processPovotoAlarms() {
   checkPressureSensor();
   const PovotoAlarm alarm = pressureSensorAlarmActive() ? ALARM_PRESSURE_SENSOR
+      : valveStuckOpenAlarmActive() ? ALARM_VALVE_STUCK_OPEN
       : reliefCheckAlarmActive() ? ALARM_RELIEF
       : fermenterThermometerAlarmActive() ? ALARM_FERMENTER_THERMOMETER : ALARM_NONE;
   const unsigned long now = millis();
@@ -139,7 +146,7 @@ void processPovotoAlarms() {
     }
   }
   // Also follows a change of the problem (pressure: not responding / out of
-  // range; relief: leak / no effect).
+  // range).
   showErrorScreen(alarmScreen(alarm));
 
   if (alarm != ALARM_NONE && now - lastMail >= ALARM_MAIL_INTERVAL_MS) {
@@ -151,7 +158,8 @@ void processPovotoAlarms() {
   if (alarm != ALARM_NONE && (lastBeeps == 0 || now - lastBeeps >= ALARM_BEEP_INTERVAL_MS)) {
     lastBeeps = now | 1;
     if (!debugging)
-      buzzerBeepRequest = alarm == ALARM_PRESSURE_SENSOR ? 4 : alarm == ALARM_RELIEF ? 5 : 3;
+      buzzerBeepRequest = alarm == ALARM_PRESSURE_SENSOR ? 4 : alarm == ALARM_VALVE_STUCK_OPEN ? 6
+          : alarm == ALARM_RELIEF ? 5 : 3;
   }
 
   const bool alarmBlink = (now % ALARM_BLINK_PERIOD_MS) < ALARM_BLINK_PERIOD_MS / 2;

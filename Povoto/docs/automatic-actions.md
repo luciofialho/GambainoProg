@@ -33,7 +33,7 @@ Cada grandeza tem um estado e um horário ("stable since"), persistidos em `coun
 
 ### Pressão
 
-Com f = `pressureDropFactor` (headspace / (headspace + tanque de expansão), 0 < f < 1): o relief dispara em alvo/√f e leva a pressão a alvo·√f.
+Com f = `pressureDropFactor` (1 − queda alvo do vent, 0,94 com 6%; docs/vent.md): o relief dispara em alvo/√f e leva a pressão a alvo·√f.
 
 - Entra em `STABLE` (sem rampa em andamento): alvo·√f ≤ P ≤ alvo/√f — o próprio ciclo do relief.
 - Sai (`UNSTABLE`): P < min(alvo·f, alvo − 0,05) ou P > max(alvo/f, alvo + 0,05).

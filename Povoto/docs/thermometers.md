@@ -8,7 +8,6 @@ Código: `DallasSensors.cpp`; resolução das temperaturas em
 |---|---|---|
 | Fermentador (`dallasTemperature`) | o sensor atribuído | sem leitura: controle de temperatura em IDLE |
 | Ambiente (`environmentTemp`) | o sensor atribuído | o valor recebido por ESP-NOW (pacote `'V'`, expira em 10 min): o do SideKick (Dallas próprio, opcional) antes do do BrewCore |
-| Tanque de expansão (`expansionTankTemp`) | o sensor atribuído | o mesmo valor do ambiente |
 | Headspace (`gasTemperature()`) | o sensor atribuído, enquanto tiver leitura válida (60 s); depois, o do fermentador | o do fermentador |
 
 - Com sensor atribuído não há fallback: se ele parar de responder, a última
@@ -28,12 +27,12 @@ Código: `DallasSensors.cpp`; resolução das temperaturas em
   é tratado como BrewCore. O `/getstatus` mostra a fonte em uso (`Dallas`,
   `SideKick`, `BrewCore` ou `none received`). docs/atmospheric-pressure.md.
 - Sem ambiente válido (nada recebido há mais de 10 min e sem Dallas de
-  ambiente), `environmentTemp` e `expansionTankTemp` ficam inválidos: os logs
-  ficam vazios e o modelo do tanque usa Tref = Tferm (`docs/expansion-tank-k.md`).
-- `expansionTankTemp` é o "Tamb" do modelo do tanque de expansão
-  (`docs/expansion-tank-k.md`): Tref, k, volume da rotina de volume e
-  kCO2FromBeerVolume. `environmentTemp` continua nos logs
-  (EnvironmentTemperature), no Brewfather (`ext_temp`) e no teste de velocidade.
+  ambiente), `environmentTemp` fica inválido e as colunas ficam vazias.
+  `environmentTemp` vai para os logs (EnvironmentTemperature) e para o
+  Brewfather (`ext_temp`).
+- O papel "tanque de expansão" da tag `te-final` saiu com o TE: a chave
+  `dallasExpTank` fica gravada, sem uso (no fallback, religar o Dallas junto com
+  o TE).
 - **Headspace** (opcional; por ora só no FMT1: sonda de 15 cm em poço longo pela
   porta tri-clamp, ponta no gás, sem tocar o líquido nem o krausen alto): a
   temperatura do gás, `gasTemperature()`. Sem chave de configuração: atribuído e
@@ -46,10 +45,9 @@ Código: `DallasSensors.cpp`; resolução das temperaturas em
   sonda 3–4 cm num dia com o ambiente bem diferente da cerveja e isolar a
   conexão por fora. Log Cold: coluna `HeadspaceTemperature` (vazia sem sensor
   ou sem leitura). `/getstatus`: o papel, a leitura e "Gas temperature: ...
-  (headspace / liquid)".
-- Logs: coluna `ExpansionTankTemperature` no fim do Cold e do Relief. O CSV da
-  rotina de volume trocou `temperatura_ambiente` por
-  `temperatura_tanque_expansao` (é a temperatura usada no cálculo).
+  (headspace / liquid)". O vent usa essa temperatura na vazão e nos mols do
+  headspace (`docs/vent.md`; colunas `GasTemperature` e `GasTemperatureSource`
+  do Relief).
 
 ## Configuração
 
@@ -71,13 +69,14 @@ O `/getstatus` mostra cada papel (ID, OK / NO READING, leitura, se apareceu na
 
 ## Persistência
 
-`FMTData.dallasAddress[4][8]` (índices `DALLAS_ROLE_*`), em `pvt_settings`, um
+`FMTData.dallasAddress[3][8]` (índices `DALLAS_ROLE_*`), em `pvt_settings`, um
 blob de 8 bytes por papel: `dallasFerm` (fermentador), `dallasEnv` (ambiente),
-`dallasExpTank` (tanque de expansão), `dallasHeadspace` (headspace); zeros = não
-atribuído. Chave ausente ou de
+`dallasHeadspace` (headspace); zeros = não atribuído. `dallasExpTank` fica no
+NVS sem uso. Chave ausente ou de
 outro tamanho = não atribuído: incluir um papel novo é acrescentar uma chave, e
 retirar um papel deixa a chave dele sem uso, sem afetar os demais. No `povoto-settings.json`:
-`dallasFermenter`, `dallasEnvironment`, `dallasExpansionTank`, `dallasHeadspace`
+`dallasFermenter`, `dallasEnvironment`, `dallasHeadspace` (um
+`dallasExpansionTank` de arquivos antigos é ignorado)
 (`XX-XX-XX-XX-XX-XX-XX-XX`, "" = não atribuído; aceita também 16 dígitos hex sem
 hífen). Os endereços são do hardware: ao carregar o backup em outra placa,
 os papéis apontam para sensores ausentes até serem reatribuídos.

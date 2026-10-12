@@ -5,10 +5,10 @@ Implementação em `src/PressureControl.cpp` (bloco `CO2DissolvedState`, `recomp
 O CO2 dissolvido (`CountersData.CO2InSolution`, D) entra no balanço que dá a densidade e o gCO2/L/d:
 
 ```
-total = totalMolsEjected + CO2InSolution + headSpaceCO2Mols + expansionTankInventoryMoles()
+total = totalMolsEjected + CO2InSolution + headSpaceCO2Mols
 ```
 
-A fase gasosa medida é `G = totalMolsEjected + headSpaceCO2Mols + expansionTankInventoryMoles()` (`gasPhaseCO2Mols()`), que não depende do modelo de D. H é o equilíbrio de Henry de `CO2DissolvedMols(P, SG, T, volume)`.
+A fase gasosa medida é `G = totalMolsEjected + headSpaceCO2Mols` (`gasPhaseCO2Mols()`), que não depende do modelo de D. H é o equilíbrio de Henry de `CO2DissolvedMols(P, SG, T, volume)`.
 
 ## 1. Estados
 

@@ -29,7 +29,6 @@ extern TFT_eSPI tft;
 extern float dallasTemperature;
 extern bool  debugTemperatureOverride;
 extern float environmentTemp;
-extern float expansionTankTemp; // its own Dallas, else environmentTemp
 extern byte DisplayMode;
 extern bool  soundAlarm;
 extern volatile uint8_t buzzerBeepRequest; // number of short beeps to play (loop() consumes it)

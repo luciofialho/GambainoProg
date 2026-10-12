@@ -43,10 +43,6 @@ void handleAutoSetpointImport(AsyncWebServerRequest *request);
 
 void handleControlDataPage(AsyncWebServerRequest *request);
 void handleControlDataUpdate(AsyncWebServerRequest *request);
-void handleStartSpeedCalibration(AsyncWebServerRequest *request);
-void handleStartVolume(AsyncWebServerRequest *request);
-void handleSaveVolumeK(AsyncWebServerRequest *request);
-void handleSaveSpeedCalibration(AsyncWebServerRequest *request);
 void handleControlAuto(AsyncWebServerRequest *request);
 void handleControlReliefOnce(AsyncWebServerRequest *request);
 void handleDebugParamsPage(AsyncWebServerRequest *request);

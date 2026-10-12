@@ -3,6 +3,7 @@
 
 #include <arduino.h>
 #include <ESPAsyncWebServer.h>
+#include "VentModel.h"
 
 // Fermenter operating modes
 #define MODE_OFF                 0
@@ -34,37 +35,31 @@ struct HeaterCycle_t {
 // Increment to clear/rewrite the active Povoto namespaces after loading them.
 constexpr uint32_t PVT_NVS_SCHEMA_VERSION = 3;
 
-// FMT data struct
+// FMT data struct. The expansion-tank fields of the te-final tag (keys
+// expTimeA, expTimeB, targetResidual, kCO2, kAir, flowCO2Air, ventResidualA..C,
+// reliefVolume, dallasExpTank) are no longer read or written: they stay in NVS
+// for a fallback to the tag (docs/sem-te-plano.md, section 1).
 struct FMTData_t {
   uint32_t nvsSchemaVersion;
   byte PovotoNum;
   float FMTVolume;
-  float FMTReliefVolume;
   float FMTAltitude;
   int dataLogIntervalSeconds;
   float FMTEffectiveVentingExponent;
-  // t(R,P) = -ln(R) / (a - b*P), with P in gauge bar and R as a fraction.
-  float expansionTimeCoefficientA;
-  float expansionTimeCoefficientB;
-  float targetResidualAfterReliefPercent;
   float liquidMassInGasVentingPercent;
-  // Filling factor k of the expansion tank: in a short expansion the gas
-  // compressed into the tank is warmer than the fermenter, so it holds fewer
-  // moles at the same pressure. The mole accounting uses FMTReliefVolume / k;
-  // valve timing and the gas-flow model keep the physical volume
-  // (docs/expansion-tank-k.md). kCO2: fermentation; kAir: fast volume
-  // determination (empty fermenter).
-  float expansionTankKCO2;
-  float expansionTankKAir;
-  // Molar flow of CO2 / air through the valves (critical flow ~ sqrt(gamma/M),
-  // 0.79). The speed tests run with air; their flow and venting results are
-  // converted to CO2 with it (docs/calibration-speed-evaluation.md).
-  float flowFactorCO2Air;
-  // F(P) = c*P^2 + d*P + e: residual fraction after 20 s of venting at
-  // gauge pressure P (bar).
-  float ventingResidualCoefficientA;
-  float ventingResidualCoefficientB;
-  float ventingResidualCoefficientC;
+  // Direct vent (docs/vent.md): drop of the gauge pressure aimed at by each
+  // vent, minimum opening, and the drop that the opening may give at most
+  // with the smallest plausible headspace (the minimum opening wins).
+  float ventTargetDropPercent;
+  float ventMinSeconds;
+  float ventSafetyDropPercent;
+  // Level of the flow curve converted to CO2, adjusted between batches by the
+  // degassed SG (manual P7).
+  float flowLevelFactor;
+  // Valve flow curve and t0 saved from a venting test (air), and the fixed
+  // reference curve the tests are compared with (all zero = none).
+  VentModel::Curve ventCurve;
+  VentModel::Curve ventReferenceCurve;
   float pressure0Current;
   float pressure1Bar;
   float pressure1Current;
@@ -76,30 +71,26 @@ struct FMTData_t {
   CoolingCyclePoint_t coolingCycle[3]; // Fixed rows: 20, 10 and 0 degrees C.
   // ROM address of the Dallas thermometer of each role (DALLAS_ROLE_*),
   // all zeros = not assigned; one NVS key per role (docs/thermometers.md).
-  uint8_t dallasAddress[4][8];
+  uint8_t dallasAddress[3][8];
 } __attribute__((packed));
 
 // Thermometer roles on the Dallas bus. Unassigned: the fermenter has no
 // reading (never chosen automatically), the environment comes from the
-// ESP-NOW broadcast, the expansion tank follows the environment and the gas
-// temperature is the fermenter's (no headspace thermometer).
+// ESP-NOW broadcast and the gas temperature is the fermenter's (no headspace
+// thermometer). The expansion-tank role of the te-final tag is gone; its key
+// dallasExpTank stays in NVS, unused.
 constexpr uint8_t DALLAS_ROLE_FERMENTER = 0;
 constexpr uint8_t DALLAS_ROLE_ENVIRONMENT = 1;
-constexpr uint8_t DALLAS_ROLE_EXPANSION_TANK = 2;
-constexpr uint8_t DALLAS_ROLE_HEADSPACE = 3; // gas in the headspace (docs/thermometers.md)
-constexpr uint8_t DALLAS_ROLE_COUNT = 4;
+constexpr uint8_t DALLAS_ROLE_HEADSPACE = 2; // gas in the headspace (docs/thermometers.md)
+constexpr uint8_t DALLAS_ROLE_COUNT = 3;
 
 
 extern FMTData_t FMTData;
 
-constexpr float EXPANSION_TANK_K_DEFAULT = 1.08f; // fast volume test 20/09 and batch 160 SG
-inline bool isValidExpansionTankK(float k) {
-  return isfinite(k) && k >= 1.0f && k <= 1.5f;
-}
-constexpr float FLOW_FACTOR_CO2_AIR_DEFAULT = 0.79f;
-inline bool isValidFlowFactor(float factor) {
-  return isfinite(factor) && factor >= 0.5f && factor <= 1.2f;
-}
+inline bool isValidVentTargetDrop(float percent) { return isfinite(percent) && percent >= 1.0f && percent <= 15.0f; }
+inline bool isValidVentMinSeconds(float seconds) { return isfinite(seconds) && seconds >= 0.2f && seconds <= 10.0f; }
+inline bool isValidVentSafetyDrop(float percent) { return isfinite(percent) && percent >= 2.0f && percent <= 30.0f; }
+inline bool isValidFlowLevelFactor(float factor) { return isfinite(factor) && factor >= 0.5f && factor <= 1.5f; }
 
 struct UserConfigurationData_t {
   int screensaverTime;

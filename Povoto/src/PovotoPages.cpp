@@ -6,7 +6,7 @@
 #include "PovotoData.h"
 #include "PovotoCommon.h"
 #include "PressureControl.h"
-#include "GasFlowModel.h"
+#include "VentModel.h"
 #include "TemperatureControl.h"
 #include "GambainoCommon.h"
 #include "IOTK_GLog.h"
@@ -66,21 +66,6 @@ void handleMainMenu(AsyncWebServerRequest *request) {
   html += "<div class='container'>";
   html += "<h1 class='brand'><img src='/assets/povoto.svg' alt='Povoto logo'>Povoto " +
           String(FMTData.PovotoNum) + "</h1>";
-  if (isVolumeDeterminationActive()) {
-    const uint16_t iter = getVolumeDeterminationIteration();
-    const float partialVolume = getVolumeDeterminationCalculatedSoFar();
-    html += "<div class='volume-progress'>";
-    html += "<strong>Fermenter volume determination in progress</strong>";
-    html += "Iteraction: " + String((unsigned int)iter) + "<br>";
-    if (isnan(partialVolume)) {
-      html += "Volume calculated so far: N/A";
-    } else {
-      snprintf(volumeProgressBuf, sizeof(volumeProgressBuf), "%.3f L", partialVolume);
-      html += "Volume calculated so far: ";
-      html += volumeProgressBuf;
-    }
-    html += "</div>";
-  }
   html += "<div class='status-box'>";
   html += "<div class='status-item'><strong>Temperature:</strong> " + String(ControlData.temperature, 1) + " °C</div>";
   html += "<div class='status-item'><strong>Pressure:</strong> " + String(ControlData.pressure, 2) + " bar</div>";
@@ -621,9 +606,9 @@ void handleDebugParamsUpdate(AsyncWebServerRequest *request) {
 // Thermometers on the Dallas bus and their roles (docs/thermometers.md). The
 // list is the last scan, made in the main loop (boot or "Rescan bus").
 static const char *const DALLAS_ROLE_FIELDS[DALLAS_ROLE_COUNT] = {
-  "dallasFermenter", "dallasEnvironment", "dallasExpansionTank", "dallasHeadspace"};
+  "dallasFermenter", "dallasEnvironment", "dallasHeadspace"};
 static const char *const DALLAS_ROLE_LABELS[DALLAS_ROLE_COUNT] = {
-  "Fermenter", "Environment", "Expansion tank", "Headspace"};
+  "Fermenter", "Environment", "Headspace"};
 
 static void dallasTemperatureText(float t, char *out, size_t size) {
   if (isfinite(t) && t != NOTaTEMP && t != 85.0f) snprintf(out, size, "%.2f &deg;C", t);
@@ -667,10 +652,9 @@ static void appendDallasRolesSection(char *html, size_t capacity) {
   const char *emptyOption[DALLAS_ROLE_COUNT] = {
     "Not assigned (no temperature control)",
     "Broadcast by ESP-NOW (SideKick, else BrewCore)",
-    "Same as environment",
     "Not assigned (gas temperature = fermenter)"};
-  const float current[DALLAS_ROLE_COUNT] = {dallasTemperature, environmentTemp, expansionTankTemp, gasTemperature()};
-  const char *source[DALLAS_ROLE_COUNT] = {"Dallas", environmentTempSource(), expansionTankTempSource(), gasTemperatureSource()};
+  const float current[DALLAS_ROLE_COUNT] = {dallasTemperature, environmentTemp, gasTemperature()};
+  const char *source[DALLAS_ROLE_COUNT] = {"Dallas", environmentTempSource(), gasTemperatureSource()};
   for (uint8_t r = 0; r < DALLAS_ROLE_COUNT; ++r) {
     dallasTemperatureText(current[r], reading, sizeof(reading));
     snprintf(buffer, sizeof(buffer),
@@ -782,27 +766,6 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "</div>", remaining);
 
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='form-group'>"
-               "<label for='FMTReliefVolume'>Relief Volume (L):</label>", remaining);
-  sprintf(buffer, "<input type='number' id='FMTReliefVolume' name='FMTReliefVolume' value='%.2f' step='0.01'>", FMTData.FMTReliefVolume);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, buffer, remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div>", remaining);
-
-  // Filling factors k of the expansion tank (docs/expansion-tank-k.md).
-  snprintf(buffer, sizeof(buffer),
-           "<div class='form-group'><label for='expansionTankKCO2'>Expansion tank k, CO2:</label>"
-           "<input type='number' id='expansionTankKCO2' name='expansionTankKCO2' value='%.3f' min='1' max='1.5' step='0.001'></div>",
-           FMTData.expansionTankKCO2);
-  strncat(html, buffer, BUFFER_SIZE - strlen(html) - 1);
-  snprintf(buffer, sizeof(buffer),
-           "<div class='form-group'><label for='expansionTankKAir'>Expansion tank k, air (fast volume test):</label>"
-           "<input type='number' id='expansionTankKAir' name='expansionTankKAir' value='%.3f' min='1' max='1.5' step='0.001'></div>",
-           FMTData.expansionTankKAir);
-  strncat(html, buffer, BUFFER_SIZE - strlen(html) - 1);
-  
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<h2>Cooling cycle</h2><table style='width:100%;table-layout:fixed'>"
     "<thead><tr><th>Temperature (&deg;C)</th><th>On time (min)</th><th>Rest time (min)</th></tr></thead><tbody>", remaining);
@@ -942,25 +905,6 @@ void handleFMTDataUpdate(AsyncWebServerRequest *request) {
   if (request->hasParam("FMTVolume", true)) {
     FMTData.FMTVolume = request->getParam("FMTVolume", true)->value().toFloat();
   }
-  if (request->hasParam("FMTReliefVolume", true)) {
-    const float relief = request->getParam("FMTReliefVolume", true)->value().toFloat();
-    const float volume = request->hasParam("FMTVolume", true) ? request->getParam("FMTVolume", true)->value().toFloat() : FMTData.FMTVolume;
-    if (!(relief > 0.0f && relief < 0.1f * volume)) {
-      request->send(400, "text/plain", "Relief volume must be greater than zero and less than 10% of FMT total volume.");
-      return;
-    }
-    FMTData.FMTReliefVolume = relief;
-  }
-  for (const char *name : {"expansionTankKCO2", "expansionTankKAir"}) {
-    if (!request->hasParam(name, true)) continue;
-    const float k = request->getParam(name, true)->value().toFloat();
-    if (!isValidExpansionTankK(k)) {
-      request->send(400, "text/plain", "Expansion tank k must be from 1.0 to 1.5.");
-      return;
-    }
-    if (strcmp(name, "expansionTankKCO2") == 0) FMTData.expansionTankKCO2 = k;
-    else FMTData.expansionTankKAir = k;
-  }
   if (request->hasParam("FMTAltitude", true)) {
     FMTData.FMTAltitude = request->getParam("FMTAltitude", true)->value().toFloat();
   }
@@ -1050,6 +994,51 @@ void handleCalibrationCurrentRefresh(AsyncWebServerRequest *request) {
   const float avgCurrent = measureCurrentAverage(30000UL, 100UL);
   String target = "/calibration?avgCurrent=" + String(avgCurrent, 2);
   request->redirect(target);
+}
+
+// Vent parameters and flow curves (docs/vent.md), inside the calibration form.
+static String curveText(const VentModel::Curve &curve) {
+  if (!VentModel::validCurve(curve)) return "none";
+  char when[20];
+  formatLocalEpochISO(curve.epoch, when, sizeof(when));
+  return String("tau(P) = ") + String(curve.a[0], 3) + " + " + String(curve.a[1], 3) + " P + " + String(curve.a[2], 3) +
+    " P&sup2; + " + String(curve.a[3], 4) + " P&sup3; s (100 L of air, 20 &deg;C), t0 " + String(1000.0f * curve.t0, 1) +
+    " ms, " + String(curve.pMin, 2) + "-" + String(curve.pMax, 2) + " bar, " +
+    (when[0] ? String("test of ") + when : String("default: venting test of 18/09, t0 not measured"));
+}
+
+static String ventSettingsHtml() {
+  auto field = [](const char *name, const char *label, float value, int decimals, const char *range) {
+    return String("<div class='form-group'><label for='") + name + "'>" + label + "</label><input type='number' id='" + name +
+      "' name='" + name + "' step='any' " + range + " required value='" + String(value, decimals) + "'></div>";
+  };
+  String html = "<h2>Vent</h2><p>The valve vents the fermenter to the atmosphere for a time estimated from the flow curve "
+    "and the headspace; the CO2 is counted from the real opening time (docs/vent.md).</p>";
+  html += field("ventTargetDropPercent", "Target drop of the gauge pressure per vent (%)", FMTData.ventTargetDropPercent, 2,
+                "min='1' max='15'");
+  html += field("ventMinSeconds", "Minimum opening (s)", FMTData.ventMinSeconds, 2, "min='0.2' max='10'");
+  html += field("ventSafetyDropPercent", "Safety drop with the smallest plausible headspace (%)", FMTData.ventSafetyDropPercent, 1,
+                "min='2' max='30'");
+  html += field("flowLevelFactor", "Flow level factor (degassed SG, between batches only)", FMTData.flowLevelFactor, 4,
+                "min='0.5' max='1.5'");
+  html += field("liquidMassInGasVentingPercent", "Liquid mass in gas venting (%)", FMTData.liquidMassInGasVentingPercent, 3,
+                "min='0' max='100'");
+  html += "<p><b>Flow curve:</b> " + curveText(FMTData.ventCurve) + "<br><b>Reference curve:</b> " +
+    curveText(FMTData.ventReferenceCurve) + "</p>";
+  // Opening times with the current headspace and the gas temperature.
+  const float headspace = CountersData.headSpaceVolume > 0.0f ? CountersData.headSpaceVolume
+      : FMTData.FMTVolume - BatchData.initialBeerVolume;
+  const float t = gasTemperature();
+  const double tK = (isfinite(t) && t > -20.0f && t < 60.0f ? t : 20.0f) + 273.15;
+  html += "<p>Opening for the target drop with " + String(headspace, 1) + " L:";
+  for (const float p : {0.5f, 1.0f, 1.9f}) {
+    const double seconds = VentModel::ventSeconds(FMTData.ventCurve, FMTData.flowLevelFactor, headspace, p,
+        p * (1.0 - FMTData.ventTargetDropPercent / 100.0), Patm, tK, FMTData.FMTEffectiveVentingExponent);
+    html += " " + String(p, 1) + " bar " + (isfinite(seconds) ? String(seconds, 2) + " s" : String("n/a")) + ";";
+  }
+  html += " CO2/air flow " + String(VentModel::co2AirRatio(1.9, Patm), 3) + " (choked) to " +
+    String(VentModel::co2AirRatio(0.5, Patm), 3) + " (0.5 bar).</p>";
+  return html;
 }
 
 // Sensor zero (docs/pressure-sensor-zero.md) and the gain check.
@@ -1340,131 +1329,11 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
                "</body></html>", remaining);
 
   String page(html);
-  String volumeStatus = "Not running";
-  String gasFields = "<h2>Gas flow transfer speed</h2>"
-    "<p>Time to reach R% residual pressure at pressure P: t(R,P) = &minus;ln(R)/(a &minus; b &middot; P), with P in gauge bar and R as a fraction.</p>"
-    "<div class='form-group'><label for='targetResidualAfterReliefPercent'>Target residual pressure after relief (%)</label><input type='number' id='targetResidualAfterReliefPercent' name='targetResidualAfterReliefPercent' step='0.01' min='0.01' max='99.99' required value='" + String(FMTData.targetResidualAfterReliefPercent, 3) + "'></div>"
-    "<div style='display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px'>"
-    "<div class='form-group'><label for='expansionTimeCoefficientA'>Coefficient a</label><input type='number' id='expansionTimeCoefficientA' name='expansionTimeCoefficientA' step='any' required value='" + String(FMTData.expansionTimeCoefficientA, 6) + "'></div>"
-    "<div class='form-group'><label for='expansionTimeCoefficientB'>Coefficient b</label><input type='number' id='expansionTimeCoefficientB' name='expansionTimeCoefficientB' step='any' required value='" + String(FMTData.expansionTimeCoefficientB, 6) + "'></div></div>"
-    "<p>Expansion time for R = " + String(FMTData.targetResidualAfterReliefPercent, 3) + "% at 1 bar: " +
-    String(GasFlow::expansionTime(1.0, FMTData.targetResidualAfterReliefPercent / 100.0,
-      FMTData.expansionTimeCoefficientA, FMTData.expansionTimeCoefficientB), 2) + " s.</p>";
-  const double ventingFactorAtOneBar = GasFlow::ventingResidualFactorAtPressure(1.0,
-    FMTData.ventingResidualCoefficientA, FMTData.ventingResidualCoefficientB,
-    FMTData.ventingResidualCoefficientC);
-  const double ventingTimeAtOneBar = GasFlow::ventingSecondsForResidual(
-    FMTData.targetResidualAfterReliefPercent / 100.0,
-    FMTData.FMTVolume, FMTData.FMTReliefVolume, ventingFactorAtOneBar);
-  gasFields += "<p>Venting residual curve after 20 s: F(P) = c &middot; P<sup>2</sup> + d &middot; P + e (P in gauge bar)</p>"
-    "<div style='display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px'>"
-    "<div class='form-group'><label for='ventingResidualCoefficientA'>c</label><input type='number' id='ventingResidualCoefficientA' name='ventingResidualCoefficientA' step='any' required value='" + String(FMTData.ventingResidualCoefficientA, 6) + "'></div>"
-    "<div class='form-group'><label for='ventingResidualCoefficientB'>d</label><input type='number' id='ventingResidualCoefficientB' name='ventingResidualCoefficientB' step='any' required value='" + String(FMTData.ventingResidualCoefficientB, 6) + "'></div>"
-    "<div class='form-group'><label for='ventingResidualCoefficientC'>e</label><input type='number' id='ventingResidualCoefficientC' name='ventingResidualCoefficientC' step='any' required value='" + String(FMTData.ventingResidualCoefficientC, 6) + "'></div></div>"
-    "<p>Venting time for R = " + String(FMTData.targetResidualAfterReliefPercent, 3) + "% at 1 bar: " + String(ventingTimeAtOneBar, 2) + " s.</p>"
-    "<div class='form-group'><label for='liquidMassInGasVentingPercent'>Liquid mass in gas venting (%)</label><input type='number' id='liquidMassInGasVentingPercent' name='liquidMassInGasVentingPercent' step='0.01' min='0' max='100' required value='" + String(FMTData.liquidMassInGasVentingPercent, 3) + "'></div>"
-    "<div class='form-group'><label for='flowFactorCO2Air'>Flow factor CO2/air (speed tests run with air; a, b and c, d, e above are for CO2)</label><input type='number' id='flowFactorCO2Air' name='flowFactorCO2Air' step='0.001' min='0.5' max='1.2' required value='" + String(FMTData.flowFactorCO2Air, 3) + "'></div>";
-  page.replace("<button type='submit'>Save</button>", gasFields + "<button type='submit'>Save</button>");
-  if (isVolumeDeterminationActive()) {
-    volumeStatus = "Running - relief cycles: " + String(getVolumeDeterminationIteration()) + "/35";
-  } else {
-    const float calculatedVolume = getVolumeDeterminationCalculatedSoFar();
-    if (!isnan(calculatedVolume)) {
-      volumeStatus = "Completed - calculated FMT volume: " + String(calculatedVolume, 3) + " L";
-    }
-  }
-
-  // Results of the speed tests (docs/calibration-speed-evaluation.md).
-  String speedResultsHtml;
-  const SpeedCalibrationResults speed = getSpeedCalibrationResults();
-  if (!isSpeedCalibrationActive()) {
-    auto num = [](float v, int d) { return isfinite(v) ? String(v, d) : String("n/a"); };
-    if (speed.expansionAvailable) {
-      const char *gas = speed.expansionGasCO2 ? "CO2" : "air";
-      speedResultsHtml += String("<p><strong>Expansion (") + gas + "):</strong> floor " + num(speed.floorRP * 1000.0f, 1) +
-        " mbar (R&middot;P1; as R: " + num(speed.floorR, 4) + "); heating H " + num(speed.heatH, 3) + ", &tau; " + num(speed.heatTau, 2) +
-        " s; flow a " + num(speed.flowA, 4) + ", b " + num(speed.flowB, 4) + " (" + gas + ") &rarr; CO2 a " + num(speed.flowACO2, 4) +
-        ", b " + num(speed.flowBCO2, 4) + "; RMSE " + num(speed.rmse, 4) + " (" + String(speed.points) + " points).<br>" +
-        "Fermentation opening and heating k: 0.8 bar " + num(speed.openSeconds[0], 2) + " s, k " + num(speed.kHeat[0], 4) +
-        "; 1.5 bar " + num(speed.openSeconds[1], 2) + " s, k " + num(speed.kHeat[1], 4) +
-        "; 1.9 bar " + num(speed.openSeconds[2], 2) + " s, k " + num(speed.kHeat[2], 4) +
-        ". Headspace exponent (empty, " + gas + "): " + num(speed.headspaceExponent, 3) + " (diagnostics).</p>" +
-        "<form action='/calibration/savespeed' method='POST'>" +
-        (speed.flowAvailable ? String("<button name='target' value='ab'>Save a, b (CO2)</button> ") : String("")) +
-        "<button name='target' value='kair'>Save k" + (speed.expansionGasCO2 ? "CO2" : "Air") + " = " + num(speed.kAir, 4) + "</button>" +
-        (speed.expansionGasCO2 ? String("") : String(" <button name='target' value='kco2'>Save estimated kCO2 = ") + num(speed.kCO2Estimated, 4) + "</button>") +
-        "</form><p>Heating k excludes the floor; the floor is diagnostics only (docs/calibration-speed-evaluation.md).</p>";
-    }
-    if (speed.kFloorAvailable) {
-      speedResultsHtml += String("<p><strong>k &amp; floor (") + (speed.kFloorGasCO2 ? "CO2" : "air") + ", " +
-        num(speed.kFloorPressure, 2) + " bar):</strong> floor " + num(speed.kFloorRP * 1000.0f, 1) + " mbar (as R: " +
-        num(speed.kFloorR, 4) + "); heating k at " + num(speed.kFloorSeconds, 2) + " s: " + num(speed.kFloorK, 4) + ".</p>" +
-        "<form action='/calibration/savespeed' method='POST'><button name='target' value='kfloorair'>Save k" +
-        (speed.kFloorGasCO2 ? "CO2" : "Air") + " = " + num(speed.kFloorK, 4) + "</button></form>";
-    }
-    if (speed.ventingAvailable) {
-      speedResultsHtml += String("<p><strong>Venting (") + (speed.ventingGasCO2 ? "CO2" : "air") + "):</strong> c " +
-        num(speed.ventingAir[0], 5) + ", d " + num(speed.ventingAir[1], 5) + ", e " + num(speed.ventingAir[2], 5) +
-        " &rarr; CO2 c " + num(speed.ventingCO2[0], 5) + ", d " + num(speed.ventingCO2[1], 5) + ", e " + num(speed.ventingCO2[2], 5) +
-        "; RMSE " + num(speed.ventingRmse, 5) + " (" + String(speed.ventingPoints) + " points).</p>" +
-        "<p><strong>Valve flow against the configured curve</strong> (CO2 c " + num(speed.ventingConfigured[0], 5) +
-        ", d " + num(speed.ventingConfigured[1], 5) + ", e " + num(speed.ventingConfigured[2], 5) + "): " +
-        (isfinite(speed.ventingFlowVsConfig)
-            ? (speed.ventingFlowVsConfig >= 0.0f ? "+" : "") + num(100.0f * speed.ventingFlowVsConfig, 2) + "%" +
-              (isfinite(speed.ventingFlowVsConfigSd) ? " (sd " + num(100.0f * speed.ventingFlowVsConfigSd, 2) + "%" : String(" (")) +
-              ", " + String(speed.ventingFlowVsConfigPoints) + " releases). Negative = the valve passes less gas than configured."
-            : String("n/a")) + "</p>" +
-        "<form action='/calibration/savespeed' method='POST'><button name='target' value='cde'>Save c, d, e (CO2)</button></form>";
-    }
-  }
-  // k calibrated by the last fast test (docs/expansion-tank-k.md).
-  String kCalibrationHtml;
-  const VolumeKCalibration kCalibration = getVolumeKCalibration();
-  if (kCalibration.available && !isVolumeDeterminationActive()) {
-    const char *gasName = kCalibration.co2 ? "CO2" : "air";
-    kCalibrationHtml = String("<p><strong>k calibrated (") + gasName + "):</strong> " + String(kCalibration.kMedian, 4) +
-      " (median of " + String(kCalibration.count) + " reliefs, sd " + String(kCalibration.kSpread, 4) +
-      "; cumulative factor " + String(kCalibration.kOverall, 4) + "). Mean temperatures: fermenter " +
-      String(kCalibration.fermenterC, 1) + " &deg;C, expansion tank " +
-      (isfinite(kCalibration.expansionTankC) ? String(kCalibration.expansionTankC, 1) + " &deg;C" : String("n/a")) +
-      ". Only valid with the empty fermenter and the correct FMT volume.</p>"
-      "<form action='/calibration/savek' method='POST'><button name='target' value='k'>Save k" + (kCalibration.co2 ? "CO2" : "Air") +
-      " = " + String(kCalibration.kMedian, 4) + "</button>";
-    if (!kCalibration.co2)
-      kCalibrationHtml += " <button name='target' value='kco2est'>Save estimated kCO2 = " +
-        String(1.0f + 1.3f * (kCalibration.kMedian - 1.0f), 4) + "</button>";
-    kCalibrationHtml += "</form>";
-  }
-  const String actions = String("<div class='container' style='margin-top:20px'><h2>Calibration tests</h2>") +
-    sensorZeroSectionHtml() +
-    "<p>Requirements: Mode OFF; initial pressure at least 1.9 bar (volume determination and k &amp; floor: 0.3 bar).</p><p>No pressure target.</p>" +
-    "<hr><h3>FMT volume determination</h3>" +
-    "<p>Determines the fermenter total volume from the pressure reduction produced by repeated expansions into the configured relief volume. " +
-    "Slow mode keeps the existing three-minute expansion and four-minute settling time. Fast mode uses t(R,P) for each expansion and waits two minutes after closing. " +
-    "The test stops when the volume estimates converge, or after 35 relief cycles. It reports both the initial-to-final-pressure and full-series-fit results, compensated for temperature.</p>" +
-    "<p>Convergence requires at least 10 valid expansions: the last five fitted estimates must span less than 0.5%, with a trend below 0.05% per cycle and settled pressure. " +
-    "The endpoint and full-series results must agree within 1%, and the fit of the last 10 readings must agree with the full-series fit within 0.5%. The CSV includes these diagnostics.</p>" +
-    "<p>Fast mode also calibrates the expansion-tank k against the FMT volume (" + String(FMTData.FMTVolume, 1) + " L): run it with the empty fermenter, "
-    "at most ~3 &deg;C from the ambient temperature, and repeat at a lower pressure range to detect effects proportional to 1/P. "
-    "Gas: air, or CO2 with the fermenter purged. Current k: air " + String(FMTData.expansionTankKAir, 3) + ", CO2 " + String(FMTData.expansionTankKCO2, 3) + ".</p>" +
-    "<form action='/startvolume' method='POST'><label for='volumeGas'>Gas </label><select id='volumeGas' name='gas'><option value='air'>Air</option><option value='co2'>CO2 (purged)</option></select> "
-    "<button name='mode' value='slow'>Volume determination (slow)</button> <button name='mode' value='fast'>Volume determination (fast)</button></form><p>" + volumeStatus + "</p>" +
-    kCalibrationHtml +
-    "<p>Download results: <a href='/pressurehistory'>Pressure history</a> | " +
-    "<a href='/pressuredump'>Pressure dump</a></p>" +
-    "<hr><h3>Gas transfer speed determination</h3>" +
-    "<p>Empty fermenter, normally with air (results are converted to CO2 with the flow factor). Every wait ends when the fermenter pressure moved less than 0.3 mbar in 30 s (min 45 s, max 180 s); P1 and P2 are the mean of the last 10 s.</p>" +
-    "<p><b>Expansion</b> (from 1.9 bar, ~40 min): openings of 1, 2, 3, 5, 7, 10, 15 and 40 s, 3 cycles; fits flow (a, b), tank heating (k) and floor. " +
-    "<b>k &amp; floor</b> (from 0.3 bar, ~15 min): the fermentation opening time and 40 s, 4 times each; run it at a high and a low pressure to compare the floor. " +
-    "<b>Venting</b> (from 1.9 bar, ~10 min, valve outlet connected to atmosphere): 6 releases of 20 s; fits F(P).</p>" +
-    "<form action='/calibration/speed' method='POST'><label for='speedGas'>Gas </label><select id='speedGas' name='gas'><option value='air'>Air</option><option value='co2'>CO2</option></select> " +
-    "<button name='type' value='expansion'>Expansion</button> <button name='type' value='kfloor'>k &amp; floor</button> " +
-    "<button name='type' value='venting'>Venting</button></form><p>" + getSpeedCalibrationStatus() + "</p>" +
-    speedResultsHtml +
-    "<p>Download results: <a href='/calibration/speed.csv?type=expansion'>Expansion CSV</a> | " +
-    "<a href='/calibration/speed.csv?type=kfloor'>k &amp; floor CSV</a> | " +
-    "<a href='/calibration/speed.csv?type=venting'>Venting CSV</a></p>" +
-    "<p>CSV results are kept in RAM until restart or the next test of the same type.</p></div>";
+  page.replace("<button type='submit'>Save</button>", ventSettingsHtml() + "<button type='submit'>Save</button>");
+  const String actions = String("<div class='container' style='margin-top:20px'><h2>Calibration and maintenance</h2>") +
+    "<p>Requirements: mode OFF, no task. Do not press any Save button before analysing the data "
+    "(docs/manual-calibracao-manutencao.md).</p>" +
+    sensorZeroSectionHtml() + "</div>";
   page.replace("</body>", actions + "</body>");
   if (sensorZeroActive()) page.replace("<head>", "<head><meta http-equiv='refresh' content='10'>");
   request->send(200, "text/html", page);
@@ -1472,30 +1341,25 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
 }
 
 void handleCalibrationDataUpdate(AsyncWebServerRequest *request) {
-  const float curveA = request->hasParam("expansionTimeCoefficientA", true) ? request->getParam("expansionTimeCoefficientA", true)->value().toFloat() : FMTData.expansionTimeCoefficientA;
-  const float curveB = request->hasParam("expansionTimeCoefficientB", true) ? request->getParam("expansionTimeCoefficientB", true)->value().toFloat() : FMTData.expansionTimeCoefficientB;
-  const float targetResidual = request->hasParam("targetResidualAfterReliefPercent", true) ? request->getParam("targetResidualAfterReliefPercent", true)->value().toFloat() : FMTData.targetResidualAfterReliefPercent;
-  const float liquidMass = request->hasParam("liquidMassInGasVentingPercent", true) ? request->getParam("liquidMassInGasVentingPercent", true)->value().toFloat() : FMTData.liquidMassInGasVentingPercent;
-  const float ventingResidualCoefficientA = request->hasParam("ventingResidualCoefficientA", true) ? request->getParam("ventingResidualCoefficientA", true)->value().toFloat() : FMTData.ventingResidualCoefficientA;
-  const float ventingResidualCoefficientB = request->hasParam("ventingResidualCoefficientB", true) ? request->getParam("ventingResidualCoefficientB", true)->value().toFloat() : FMTData.ventingResidualCoefficientB;
-  const float ventingResidualCoefficientC = request->hasParam("ventingResidualCoefficientC", true) ? request->getParam("ventingResidualCoefficientC", true)->value().toFloat() : FMTData.ventingResidualCoefficientC;
-  const float p1 = request->hasParam("pressure1Bar", true) ? request->getParam("pressure1Bar", true)->value().toFloat() : FMTData.pressure1Bar;
-  const float p2 = request->hasParam("pressure2Bar", true) ? request->getParam("pressure2Bar", true)->value().toFloat() : FMTData.pressure2Bar;
-  const float c0 = request->hasParam("pressure0Current", true) ? request->getParam("pressure0Current", true)->value().toFloat() : FMTData.pressure0Current;
-  const float c1 = request->hasParam("pressure1Current", true) ? request->getParam("pressure1Current", true)->value().toFloat() : FMTData.pressure1Current;
-  const float c2 = request->hasParam("pressure2Current", true) ? request->getParam("pressure2Current", true)->value().toFloat() : FMTData.pressure2Current;
-  const float maxP = request->hasParam("maximumPressure", true) ? request->getParam("maximumPressure", true)->value().toFloat() : FMTData.maximumPressure;
+  auto value = [request](const char *name, float current) {
+    return request->hasParam(name, true) ? request->getParam(name, true)->value().toFloat() : current;
+  };
+  const float liquidMass = value("liquidMassInGasVentingPercent", FMTData.liquidMassInGasVentingPercent);
+  const float ventDrop = value("ventTargetDropPercent", FMTData.ventTargetDropPercent);
+  const float ventMin = value("ventMinSeconds", FMTData.ventMinSeconds);
+  const float ventSafety = value("ventSafetyDropPercent", FMTData.ventSafetyDropPercent);
+  const float level = value("flowLevelFactor", FMTData.flowLevelFactor);
+  const float p1 = value("pressure1Bar", FMTData.pressure1Bar);
+  const float p2 = value("pressure2Bar", FMTData.pressure2Bar);
+  const float c0 = value("pressure0Current", FMTData.pressure0Current);
+  const float c1 = value("pressure1Current", FMTData.pressure1Current);
+  const float c2 = value("pressure2Current", FMTData.pressure2Current);
+  const float maxP = value("maximumPressure", FMTData.maximumPressure);
   const bool threePoint = request->hasParam("threePoint", true);
-  const float flowFactor = request->hasParam("flowFactorCO2Air", true) ? request->getParam("flowFactorCO2Air", true)->value().toFloat() : FMTData.flowFactorCO2Air;
-  if (!isValidFlowFactor(flowFactor)) {
-    request->send(400, "text/plain", "Flow factor CO2/air must be from 0.5 to 1.2.");
-    return;
-  }
-  if (!GasFlow::validExpansionParameters(curveA, curveB, maxP) ||
-      !(targetResidual > 0.0f && targetResidual < 100.0f) || !(liquidMass >= 0.0f && liquidMass <= 100.0f) ||
-      !GasFlow::validVentingResidualCurve(ventingResidualCoefficientA, ventingResidualCoefficientB,
-                                           ventingResidualCoefficientC, maxP)) {
-    request->send(400, "text/plain", "Invalid gas-flow parameters. a - b*P must remain positive through maximum pressure, and residual/liquid mass must be percentages between 0 and 100.");
+  if (!(liquidMass >= 0.0f && liquidMass <= 100.0f) || !isValidVentTargetDrop(ventDrop) || !isValidVentMinSeconds(ventMin) ||
+      !isValidVentSafetyDrop(ventSafety) || !(ventSafety > ventDrop) || !isValidFlowLevelFactor(level)) {
+    request->send(400, "text/plain", "Invalid vent parameters: target drop 1-15%, minimum opening 0.2-10 s, "
+                  "safety drop 2-30% and above the target, level factor 0.5-1.5, liquid mass 0-100%.");
     return;
   }
   if (!(p1 > 0.5f && p1 < maxP) || (threePoint && p2 != 0.0f && !(p2 > p1 + 0.5f && p2 < maxP)) || !(c1 > c0) || (threePoint && p2 != 0.0f && !(c2 > c1)) || !(maxP > 2.0f && maxP < 3.0f)) {
@@ -1529,14 +1393,11 @@ void handleCalibrationDataUpdate(AsyncWebServerRequest *request) {
     FMTData.nucleationWindow = request->getParam("nucleationWindow", true)->value().toInt();
   }
   
-  FMTData.expansionTimeCoefficientA = curveA;
-  FMTData.expansionTimeCoefficientB = curveB;
-  FMTData.targetResidualAfterReliefPercent = targetResidual;
   FMTData.liquidMassInGasVentingPercent = liquidMass;
-  FMTData.ventingResidualCoefficientA = ventingResidualCoefficientA;
-  FMTData.ventingResidualCoefficientB = ventingResidualCoefficientB;
-  FMTData.ventingResidualCoefficientC = ventingResidualCoefficientC;
-  FMTData.flowFactorCO2Air = flowFactor;
+  FMTData.ventTargetDropPercent = ventDrop;
+  FMTData.ventMinSeconds = ventMin;
+  FMTData.ventSafetyDropPercent = ventSafety;
+  FMTData.flowLevelFactor = level;
   writeFMTDataToNIV();
   
   String html = "<!DOCTYPE html><html><head>";
@@ -2857,119 +2718,6 @@ void handleControlDataUpdate(AsyncWebServerRequest *request) {
   request->send(200, "text/html", html);
 }
 
-void handleStartSpeedCalibration(AsyncWebServerRequest *request) {
-  if (!request->hasParam("type", true)) {
-    request->send(400, "text/plain", "Missing test type");
-    return;
-  }
-  const String type = request->getParam("type", true)->value();
-  if (type != "expansion" && type != "venting" && type != "kfloor") {
-    request->send(400, "text/plain", "Invalid test type");
-    return;
-  }
-  const uint8_t test = type == "venting" ? SPEED_TEST_VENTING : type == "kfloor" ? SPEED_TEST_K_FLOOR
-                                                                                 : SPEED_TEST_EXPANSION;
-  const bool co2 = request->hasParam("gas", true) && request->getParam("gas", true)->value() == "co2";
-  char reason[100];
-  if (!startSpeedCalibration(test, co2, reason, sizeof(reason))) {
-    request->send(409, "text/plain", reason);
-    return;
-  }
-  request->redirect("/calibration");
-}
-
-void handleStartVolume(AsyncWebServerRequest *request) {
-  char reason[80];
-  
-  const bool fast = request->hasParam("mode", true) && request->getParam("mode", true)->value() == "fast";
-  const bool co2 = request->hasParam("gas", true) && request->getParam("gas", true)->value() == "co2";
-  bool started = startVolumeDetermination(fast, co2, reason, sizeof(reason));
-  if (started) {
-    request->redirect("/calibration?volume=1");
-  } else {
-    String html = "<!DOCTYPE html><html><head>";
-    html += "<meta charset='UTF-8'>";
-    html += "<meta http-equiv='refresh' content='2;url=/calibration'>";
-    html += "<style>body{font-family:Arial;text-align:center;margin-top:50px;}";
-    html += "</head><body>";
-    html += "<h1>Volume determination blocked</h1>";
-    html += "<p>" + String(reason) + "</p>";
-    html += "</body></html>";
-    request->send(200, "text/html", html);
-  }
-}
-
-// Saves the k calibrated by the last fast volume test (docs/expansion-tank-k.md):
-// target "k" stores it as kAir or kCO2 (test gas); "kco2est" (air test) stores
-// kCO2 = 1 + 1.3 * (kAir - 1).
-void handleSaveVolumeK(AsyncWebServerRequest *request) {
-  const VolumeKCalibration calibration = getVolumeKCalibration();
-  const String target = request->hasParam("target", true) ? request->getParam("target", true)->value() : "";
-  if (!calibration.available || isVolumeDeterminationActive()) {
-    request->send(409, "text/plain", "No finished fast volume test to calibrate k.");
-    return;
-  }
-  float k = calibration.kMedian;
-  if (target == "kco2est" && !calibration.co2) k = 1.0f + 1.3f * (k - 1.0f);
-  else if (target != "k") {
-    request->send(400, "text/plain", "Invalid target");
-    return;
-  }
-  if (!isValidExpansionTankK(k)) {
-    request->send(400, "text/plain", "Calibrated k outside 1.0-1.5; not saved.");
-    return;
-  }
-  if (target == "k" && !calibration.co2) FMTData.expansionTankKAir = k;
-  else FMTData.expansionTankKCO2 = k;
-  writeFMTDataToNIV();
-  request->redirect("/calibration");
-}
-
-// Saves results of the speed tests (docs/calibration-speed-evaluation.md):
-// "ab" opening-time coefficients (converted to CO2), "kair" / "kco2" heating k
-// of the expansion test, "kfloorair" k of the k & floor test, "cde" venting
-// curve (converted to CO2).
-void handleSaveSpeedCalibration(AsyncWebServerRequest *request) {
-  const SpeedCalibrationResults r = getSpeedCalibrationResults();
-  const String target = request->hasParam("target", true) ? request->getParam("target", true)->value() : "";
-  if (isSpeedCalibrationActive()) {
-    request->send(409, "text/plain", "A speed test is running.");
-    return;
-  }
-  bool ok = false;
-  if (target == "ab" && r.expansionAvailable && r.flowAvailable &&
-      GasFlow::validExpansionParameters(r.flowACO2, r.flowBCO2, FMTData.maximumPressure)) {
-    FMTData.expansionTimeCoefficientA = r.flowACO2;
-    FMTData.expansionTimeCoefficientB = r.flowBCO2;
-    ok = true;
-  } else if (target == "kair" && r.expansionAvailable && isValidExpansionTankK(r.kAir)) {
-    if (r.expansionGasCO2) FMTData.expansionTankKCO2 = r.kAir;
-    else FMTData.expansionTankKAir = r.kAir;
-    ok = true;
-  } else if (target == "kco2" && r.expansionAvailable && !r.expansionGasCO2 &&
-             isValidExpansionTankK(r.kCO2Estimated)) {
-    FMTData.expansionTankKCO2 = r.kCO2Estimated;
-    ok = true;
-  } else if (target == "kfloorair" && r.kFloorAvailable && isValidExpansionTankK(r.kFloorK)) {
-    if (r.kFloorGasCO2) FMTData.expansionTankKCO2 = r.kFloorK;
-    else FMTData.expansionTankKAir = r.kFloorK;
-    ok = true;
-  } else if (target == "cde" && r.ventingAvailable &&
-             GasFlow::validVentingResidualCurve(r.ventingCO2[0], r.ventingCO2[1], r.ventingCO2[2],
-                                                FMTData.maximumPressure)) {
-    FMTData.ventingResidualCoefficientA = r.ventingCO2[0];
-    FMTData.ventingResidualCoefficientB = r.ventingCO2[1];
-    FMTData.ventingResidualCoefficientC = r.ventingCO2[2];
-    ok = true;
-  }
-  if (!ok) {
-    request->send(400, "text/plain", "No valid result for this target.");
-    return;
-  }
-  writeFMTDataToNIV();
-  request->redirect("/calibration");
-}
-
 void handleControlAuto(AsyncWebServerRequest *request) {
   ControlData.chillerOverride = 0;
   ControlData.heaterOverride = 0;
@@ -2980,7 +2728,7 @@ void handleControlAuto(AsyncWebServerRequest *request) {
 
 void handleControlReliefOnce(AsyncWebServerRequest *request) {
   Serial.println("Relief once requested");
-  pressureRelief(false);
+  pressureRelief();
   request->redirect("/control");
 }
 

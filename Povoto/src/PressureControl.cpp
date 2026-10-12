@@ -1,5 +1,5 @@
 #include "PressureControl.h"
-#include "GasFlowModel.h"
+#include "VentModel.h"
 #include "TemperatureControl.h"
 #include "PovotoData.h"
 #include "PovotoCommon.h"
@@ -15,13 +15,11 @@
 #include "PovotoFilesystem.h"
 #include "AtmosphericPressure.h"
 #include "SensorZero.h"
+#include "PovotoAlarms.h"
+#include <esp_timer.h>
 #include <math.h>
 #include <algorithm>
 
-
-#define DEBUGACCELERATION (debugging ? 20L : 1L)
-#define TRANSFERTIME (8000 / DEBUGACCELERATION) 
-#define RELIEFTIME (8000 / DEBUGACCELERATION)
 
 #define PRESSURE_MEDIAN_WINDOW 9
 #define CURRENT_MEDIAN_MIN_SAMPLE_MS 20 // defined for 16 samples at 1.1ms in the INA226 (~17.6ms)
@@ -34,21 +32,6 @@
 
 #define TRANSFER_CLOSE_PRESSURE_BLOCK_MS (2*CURRENT_MEDIAN_MIN_SAMPLE_MS*PRESSURE_MEDIAN_WINDOW) // gives time to fill and renovate the whole vector, avoiding transient pneumatics effects
 
-#define PRESSURE_SAMPLE_MIN_MS 250
-#define PRESSURE_SAMPLES_MAX 3000
-#define PRESSURE_RELIEF_HISTORY_MAX 500
-#define VOLUME_DETERMINATION_RECORD_START_CYCLE 6
-#define VOLUME_DETERMINATION_RECORD_END_CYCLE 35
-#define VOLUME_DETERMINATION_OPEN_MS (3L*60000UL / DEBUGACCELERATION)
-#define VOLUME_DETERMINATION_WAIT_MS (4L*60000UL / DEBUGACCELERATION)
-#define VOLUME_DETERMINATION_FAST_WAIT_MS (2L*60000UL / DEBUGACCELERATION)
-static constexpr unsigned VOLUME_MIN_VALID_RELIEFS = 10;
-static constexpr unsigned VOLUME_CONVERGENCE_WINDOW = 5;
-static constexpr float VOLUME_MAX_FIT_SPREAD = 0.005f;
-static constexpr float VOLUME_MAX_METHOD_DIFFERENCE_PERCENT = 1.0f;
-static constexpr unsigned VOLUME_RECENT_FIT_WINDOW = 10;
-static constexpr float VOLUME_MAX_TREND_PERCENT_PER_CYCLE = 0.05f;
-static constexpr float VOLUME_MAX_RECENT_DIFFERENCE_PERCENT = 0.5f;
 #define RELIEFS_WINDOW_SIZE 2
 #define RELIEF_OVERDUE_FACTOR 1.20f
 #define RELIEF_PER_HOUR_MIN_DISPLAY 0.20f
@@ -184,8 +167,6 @@ static float currentOnReliefMeasured = 0.0f;
 
 
 float  adjustedPressureAfterRelief;
-static float adjustedEquilibriumPressure = NAN;
-static float tankPressureAtClose = NAN; // expansion tank at valve close, gauge bar
 
 float pressureOnReliefMeas = 0.0f;
 static unsigned long pressureOnReliefMeasuredMillis = 0;
@@ -256,204 +237,11 @@ static void processSlowPressureTarget() {
   if (changed) writeSetPointDataToNIV();
 }
 
-struct PressureReliefRecord {
-  char timestamp[32];
-  float temperature;
-  float pressureBefore;
-  float pressureAfter;
-  float currentBefore;
-  float currentAfter;
-  float tiK;
-  float tfK;
-  float pi;
-  float pfAdjusted;
-  float adjustedEquilibriumPressure;
-  uint16_t nReliefs;
-  float factorMedio;
-  float fermenterVolume;
-  float fittedVolume;
-  float volumeDifferencePercent;
-  float recentFittedVolume;
-  float recentDifferencePercent;
-  float trendPercentPerCycle;
-  bool converged;
-  bool volumeMetricsValid;
-  bool pressureSettled;
-  float expansionTankTemperature; // NAN when the sensor is not valid
-  float tRefK;                  // tank reference temperature (fast mode)
-  float kRelief;                // k of this relief that returns FMTVolume (fast mode)
-  float kCumulative;            // same from the cumulative factor
-};
-
-static PressureReliefRecord *pressureReliefHistory = nullptr;
-static uint16_t pressureReliefIndex = 0;
-static uint16_t pressureReliefCount = 0;
-static int16_t pendingReliefIndex = -1;
 static unsigned long lastSolenoidToggleMillis = 0;
-float pressureDropFactor = 0.99f;
-
-static bool volumeDeterminationActive = false;
-static bool volumeDeterminationFast = false;
-// ===== Gas-transfer speed tests (docs/calibration-speed-evaluation.md) =====
-// Empty fermenter, normally with air. Expansion: openings of several lengths
-// to fit flow, tank heating and floor; k & floor: the fermentation opening time
-// alternated with a long one; venting: the fermenter vented through the valve
-// outlet. Every wait ends when the fermenter pressure is stable.
-static bool speedCalibrationActive = false;
-static uint8_t speedTest = SPEED_TEST_EXPANSION;
-static bool speedGasCO2 = false;
-static const uint8_t speedExpansionDurations[] = {1, 2, 3, 5, 7, 10, 15, 40};
-static constexpr uint8_t SPEED_EXPANSION_DURATION_COUNT =
-    sizeof(speedExpansionDurations) / sizeof(speedExpansionDurations[0]);
-static constexpr uint8_t SPEED_EXPANSION_CYCLES = 3;
-static constexpr uint8_t SPEED_K_FLOOR_PAIRS = 4;
-static constexpr uint8_t SPEED_LONG_OPEN_SECONDS = 40; // flow and heating are over
-static constexpr uint8_t SPEED_VENTING_RELEASES = 6;
-static constexpr uint8_t SPEED_VENTING_OPEN_SECONDS = 20;
-static constexpr uint8_t SPEED_MAX_RECORDS = 24;
-static constexpr uint8_t SPEED_TEST_COUNT = 3;
-static constexpr float SPEED_VENTING_NOISE_PRESSURE_BAR = 0.050f;
-// Adaptive wait: the fermenter pressure moved less than this in the last 30 s.
-static constexpr float SPEED_STABLE_DELTA_BAR = 0.0003f;
-static constexpr unsigned long SPEED_STABLE_WINDOW_MS = 30000UL;
-static constexpr unsigned long SPEED_AVERAGE_MS = 10000UL; // P1/P2 = mean of the last 10 s
-static constexpr unsigned long SPEED_CLOSE_READING_MS = 500UL; // P_fechamento
-static unsigned long speedWaitMinMs() { return debugging ? 5000UL : 45000UL; }
-static unsigned long speedWaitMaxMs() { return debugging ? 10000UL : 180000UL; }
-
-struct SpeedRecord {
-  uint32_t epoch;
-  float requestedSeconds, openSeconds;
-  float p1, pClose, p15, p30, p60, p2, pl, r;
-  float waitSeconds;
-  float tempFermP1, tempAmbP1, tempFermP2, tempAmbP2;
-  // Venting: configured F(P1) for CO2 and this release's flow against it
-  // (ln F / ln F_configured - 1), taken at the end of the test.
-  float fConfigured, flowVsConfig;
-  bool valid;
-};
-static SpeedRecord speedRecords[SPEED_TEST_COUNT][SPEED_MAX_RECORDS];
-static uint8_t speedRecordCount[SPEED_TEST_COUNT] = {0, 0, 0};
-static uint8_t speedStage = 0; // 0: stable P1 (first record), 1: valve open, 2: settling
-static unsigned long speedStageMillis = 0;
-static float speedVolumeFactor = 0.0f;
-static const char *speedStatus = "Idle";
-static SpeedCalibrationResults speedResults = {};
-
-// 1-Hz fermenter pressure of the current wait (ms since the wait started).
-static constexpr uint16_t SPEED_HISTORY = 200;
-static float speedHistory[SPEED_HISTORY];
-static uint32_t speedHistoryMillis[SPEED_HISTORY];
-static uint16_t speedHistoryCount = 0;
-static unsigned long speedLastAcquisition = 0;
-
-static double expansionTime(float pressure);
-
-static uint8_t speedRecordTarget(uint8_t test) {
-  switch (test) {
-    case SPEED_TEST_EXPANSION: return SPEED_EXPANSION_DURATION_COUNT * SPEED_EXPANSION_CYCLES;
-    case SPEED_TEST_K_FLOOR: return 2 * SPEED_K_FLOOR_PAIRS;
-    default: return SPEED_VENTING_RELEASES;
-  }
-}
-
-// k & floor: even records use the fermentation opening time at this pressure.
-static float speedRequestedSeconds(uint8_t test, uint8_t index, float pressure) {
-  if (test == SPEED_TEST_VENTING) return SPEED_VENTING_OPEN_SECONDS;
-  if (test == SPEED_TEST_K_FLOOR) {
-    if (index % 2) return SPEED_LONG_OPEN_SECONDS;
-    const double seconds = expansionTime(pressure);
-    return isfinite(seconds) ? (float)fmin(60.0, fmax(0.5, seconds)) : 7.0f;
-  }
-  return speedExpansionDurations[index % SPEED_EXPANSION_DURATION_COUNT];
-}
-static float volumeStartPressure = 0.0f;
-static float volumeStartTemperatureK = 0.0f;
-static uint16_t volumeStartReliefIteration = 0;
-static float volumeTargetPressure = 0.0f;
-static unsigned long volumeLastReliefMillis = 0;
-static uint16_t volumeIteration = 0;
-static bool volumeAwaitingRecord = false;
-static int16_t volumeRecordIndex = -1;
-static bool volumeSummaryAvailable = false;
-static float volumeSummaryTiK = 0.0f;
-static float volumeSummaryTfK = 0.0f;
-static float volumeSummaryPi = 0.0f;
-static float volumeSummaryPfAdjusted = 0.0f;
-static uint16_t volumeSummaryNReliefs = 0;
-static float volumeSummaryFactor = 0.0f;
-static float volumeSummaryFermenterVolume = 0.0f;
-static VolumeKCalibration volumeCalibration = {};
-static float volumeCalculatedSoFar = 0.0f;
-static bool volumeCalculatedSoFarValid = false;
-static float volumeFittedSoFar = NAN;
-static bool volumeConverged = false;
-static bool volumePressureSettled = false;
-static unsigned long volumeAdjustedEquilibriumCaptureMillis = 0;
-static float volumeAdjustedEquilibriumSnapshot = NAN;
-
-static bool volumeHasConverged() {
-  if (!pressureReliefHistory || pressureReliefCount < VOLUME_CONVERGENCE_WINDOW) return false;
-  unsigned validCount = 0;
-  float minVolume = INFINITY;
-  float maxVolume = 0.0f;
-  double sx = 0.0, sy = 0.0, sxx = 0.0, sxy = 0.0;
-  bool windowSettled = true;
-  for (uint16_t i = 0; i < pressureReliefCount; ++i) {
-    const uint16_t idx = (pressureReliefIndex + PRESSURE_RELIEF_HISTORY_MAX - pressureReliefCount + i)
-                         % PRESSURE_RELIEF_HISTORY_MAX;
-    const PressureReliefRecord &r = pressureReliefHistory[idx];
-    const bool valid = r.volumeMetricsValid && isfinite(r.fittedVolume) && r.fittedVolume > 0.0f;
-    if (valid) ++validCount;
-    if (i >= pressureReliefCount - VOLUME_CONVERGENCE_WINDOW) {
-      if (!valid) return false;
-      windowSettled = windowSettled && r.pressureSettled;
-      const double x = r.nReliefs;
-      const double y = r.fittedVolume;
-      sx += x; sy += y; sxx += x * x; sxy += x * y;
-      minVolume = fminf(minVolume, r.fittedVolume);
-      maxVolume = fmaxf(maxVolume, r.fittedVolume);
-    }
-  }
-  PressureReliefRecord &last = pressureReliefHistory[
-      (pressureReliefIndex + PRESSURE_RELIEF_HISTORY_MAX - 1) % PRESSURE_RELIEF_HISTORY_MAX];
-  const double denominator = VOLUME_CONVERGENCE_WINDOW * sxx - sx * sx;
-  if (denominator <= 0.0) return false;
-  const double slope = (VOLUME_CONVERGENCE_WINDOW * sxy - sx * sy) / denominator;
-  last.trendPercentPerCycle = 100.0 * slope / (sy / VOLUME_CONVERGENCE_WINDOW);
-  return windowSettled && validCount >= VOLUME_MIN_VALID_RELIEFS &&
-         (maxVolume - minVolume) / minVolume < VOLUME_MAX_FIT_SPREAD &&
-         isfinite(last.trendPercentPerCycle) &&
-         fabsf(last.trendPercentPerCycle) < VOLUME_MAX_TREND_PERCENT_PER_CYCLE &&
-         isfinite(last.recentDifferencePercent) &&
-         fabsf(last.recentDifferencePercent) < VOLUME_MAX_RECENT_DIFFERENCE_PERCENT &&
-         isfinite(last.volumeDifferencePercent) &&
-         fabsf(last.volumeDifferencePercent) < VOLUME_MAX_METHOD_DIFFERENCE_PERCENT;
-}
-
-struct PressureSampleRecord {
-  char timestamp[6];
-  unsigned long millisStamp;
-  float pressure;
-};
-
-static PressureSampleRecord *pressureSamples = nullptr;
-static uint16_t pressureSamplesIndex = 0;
-static uint16_t pressureSamplesCount = 0;
-static unsigned long pressureLastSampleMillis = 0;
-static bool pressureDumpInProgress = false;
-static PressureSampleRecord *pressureDumpSamples = nullptr;
-static uint16_t pressureDumpCount = 0;
-static uint16_t pressureDumpIndex = 0;
-static bool pressureDumpHeaderSent = false;
-static bool pressureDumpDone = false;
-
-static bool pressureHistoryExportInProgress = false;
-static uint16_t pressureHistoryExportAvailable = 0;
-static uint16_t pressureHistoryExportStartIndex = 0;
-static uint16_t pressureHistoryExportIndex = 0;
-static bool pressureHistoryHeaderSent = false;
-static bool pressureHistoryExportDone = false;
+// Fraction of the gauge pressure kept by a vent, 1 - target drop: a vent fires
+// at setPoint/sqrt(f) and settles near setPoint*sqrt(f) (pressure stability
+// bands use the same cycle).
+float pressureDropFactor = 0.94f;
 
 static float currentWindow[PRESSURE_MEDIAN_WINDOW];
 static uint8_t currentWindowSortedIdx[PRESSURE_MEDIAN_WINDOW];
@@ -472,160 +260,15 @@ float kelvin(float x) {
   return x + 273.15f;
 }
 
-// ===== Expansion-tank accounting (docs/expansion-tank-k.md) =====
-// In a short expansion the gas pushed into the tank heats up (flow work) and
-// the tank wall pulls it toward the ambient temperature. k = gamma/(1 + q) is
-// the filling factor (q: fraction of the compression heat lost to the wall);
-// the same exchange leaves phi = 1 - (gamma/k - 1)/(gamma - 1) of any
-// temperature difference, so the tank is at Tref = Tamb + phi*(Tferm - Tamb).
-// Relative to the fermenter gas counted at Tferm, the tank behaves as an
-// isothermal volume Vr/k * Tferm/Tref. Valve timing and the gas-flow model keep
-// the physical FMTReliefVolume. Tamb ("ambientC" below) is expansionTankTemp:
-// the tank's own Dallas, else the environment (docs/thermometers.md).
-static constexpr float GAMMA_CO2 = 1.29f;
-static constexpr float GAMMA_AIR = 1.40f;
-
-static bool ENV_TEMP_VALID(float t);
-
-static float expansionTankRetainedFraction(float k, float gamma) {
-  if (!(k > 0.0f) || !(gamma > 1.0f)) return 0.0f;
-  return fminf(1.0f, fmaxf(0.0f, 1.0f - (gamma / k - 1.0f) / (gamma - 1.0f)));
-}
-
-// Tank reference temperature (K); Tferm without a valid ambient reading.
-static float expansionTankReferenceKelvin(float k, float gamma, float fermenterC, float ambientC) {
-  if (!ENV_TEMP_VALID(ambientC)) return kelvin(fermenterC);
-  return kelvin(ambientC + expansionTankRetainedFraction(k, gamma) * (fermenterC - ambientC));
-}
-
-// Effective tank volume for any k > 0 (also used by the calibration).
-static float expansionTankVolumeForK(float k, float gamma, float fermenterC, float ambientC) {
-  if (!(k > 0.0f) || !isfinite(fermenterC)) return NAN;
-  const float tref = expansionTankReferenceKelvin(k, gamma, fermenterC, ambientC);
-  return tref > 0.0f ? FMTData.FMTReliefVolume / k * kelvin(fermenterC) / tref : NAN;
-}
-
-static float accountingReliefVolume(float k, float gamma, float fermenterC, float ambientC) {
-  const float volume = expansionTankVolumeForK(isValidExpansionTankK(k) ? k : 1.0f,
-                                               gamma, fermenterC, ambientC);
-  return isfinite(volume) && volume > 0.0f ? volume : FMTData.FMTReliefVolume;
-}
-
-// k that makes the effective tank volume equal requiredVolume. The volume falls
-// with k (1/k dominates the Tref term), so a bisection over 0.8-1.6 is enough;
-// NAN outside it.
-static float solveExpansionTankK(float requiredVolume, float gamma, float fermenterC, float ambientC) {
-  if (!(requiredVolume > 0.0f)) return NAN;
-  float lo = 0.8f, hi = 1.6f;
-  const float volumeLo = expansionTankVolumeForK(lo, gamma, fermenterC, ambientC);
-  const float volumeHi = expansionTankVolumeForK(hi, gamma, fermenterC, ambientC);
-  if (!isfinite(volumeLo) || !isfinite(volumeHi) ||
-      requiredVolume > volumeLo || requiredVolume < volumeHi) return NAN;
-  for (int i = 0; i < 40; ++i) {
-    const float mid = 0.5f * (lo + hi);
-    if (expansionTankVolumeForK(mid, gamma, fermenterC, ambientC) > requiredVolume) lo = mid;
-    else hi = mid;
-  }
-  return 0.5f * (lo + hi);
-}
-
-static float fermentationReliefVolume() {
-  return accountingReliefVolume(FMTData.expansionTankKCO2, GAMMA_CO2,
-                                ControlData.temperature, environmentTemp);
-}
-
-// Volume determination. Fast mode opens the valve for the fermentation's
-// expansion time (1% residual): k and Tref of the test gas (air by default,
-// CO2 with the fermenter purged) and the residual compensated as in a relief.
-// Slow mode keeps it open 3 min, so the tank cools back and equalizes:
-// physical volume, no residual.
-static bool volumeDeterminationCO2 = false;
-
-static float volumeRoutineK() {
-  return volumeDeterminationCO2 ? FMTData.expansionTankKCO2 : FMTData.expansionTankKAir;
-}
-
-static float volumeRoutineGamma() {
-  return volumeDeterminationCO2 ? GAMMA_CO2 : GAMMA_AIR;
-}
-
-static float volumeRoutineReliefVolume(float fermenterC, float ambientC) {
-  return volumeDeterminationFast
-      ? accountingReliefVolume(volumeRoutineK(), volumeRoutineGamma(), fermenterC, ambientC)
-      : FMTData.FMTReliefVolume;
-}
-
-static float volumeRoutineReliefVolume() {
-  return volumeRoutineReliefVolume(ControlData.temperature, expansionTankTemp);
-}
-
-// Pressure ratio after/before a relief extended to full equalization.
-static float volumeRoutineEquilibriumFactor(float factor) {
-  if (!volumeDeterminationFast || !isfinite(factor)) return factor;
-  // The opening time leaves r of the CO2 flow; air flows 1/flowFactorCO2Air
-  // faster, so in the same time it leaves r^(1/factor).
-  float residual = FMTData.targetResidualAfterReliefPercent / 100.0f;
-  if (!volumeDeterminationCO2 && isValidFlowFactor(FMTData.flowFactorCO2Air))
-    residual = powf(residual, 1.0f / FMTData.flowFactorCO2Air);
-  return 1.0f - (1.0f - factor) / (1.0f - residual);
-}
-
-// Gas volume of a vessel whose pressure falls by dropFactor (after/before, at
-// full equalization) when expanded into reliefVolume.
-float volumeEstimationFromPressureDrop(float dropFactor, float reliefVolume) {
-  if (dropFactor <= 0.0f || dropFactor >= 1.0f) {
-    return NAN;
-  }
-  return (reliefVolume * dropFactor) / (1.0f -dropFactor);
-}
-
-float volumeEstimationFromPressureDrop(float dropFactor) {
-  return volumeEstimationFromPressureDrop(dropFactor, fermentationReliefVolume());
-}
-
-static float volumeRoutineVolume(float factor, float fermenterC, float ambientC) {
-  return volumeEstimationFromPressureDrop(volumeRoutineEquilibriumFactor(factor),
-                                          volumeRoutineReliefVolume(fermenterC, ambientC));
-}
-
-static float volumeRoutineVolume(float factor) {
-  return volumeRoutineVolume(factor, ControlData.temperature, expansionTankTemp);
-}
-
-// k of the test gas that makes the fast test return FMTVolume (the empty
-// fermenter); NAN in slow mode.
-static float volumeRoutineCalibratedK(float factor, float fermenterC, float ambientC) {
-  if (!volumeDeterminationFast || !(FMTData.FMTVolume > 0.0f)) return NAN;
-  const float equalized = volumeRoutineEquilibriumFactor(factor);
-  if (!(equalized > 0.0f && equalized < 1.0f)) return NAN;
-  return solveExpansionTankK(FMTData.FMTVolume * (1.0f - equalized) / equalized,
-                             volumeRoutineGamma(), fermenterC, ambientC);
-}
-
-// kCO2 from the known beer volume (Relief log, diagnostics): the k that makes
-// this relief's equalized drop factor match the headspace FMTVolume - beer.
-static float kCO2FromBeerVolume(float dropFactor) {
-  if (!(dropFactor > 0.0f && dropFactor < 1.0f) ||
-      !isfinite(BatchData.initialBeerVolume) || !(BatchData.initialBeerVolume > 0.0f)) return NAN;
-  const float headspace = FMTData.FMTVolume - (BatchData.initialBeerVolume - CountersData.dumpedVolume);
-  if (!(headspace > 0.0f)) return NAN;
-  return solveExpansionTankK(headspace * (1.0f - dropFactor) / dropFactor, GAMMA_CO2,
-                             ControlData.temperature, expansionTankTemp);
-}
-
 static void updateBeerVolumeFromHeadspace() {
-  // The pressure-drop estimate needs three completed reliefs. Until then, use
-  // the batch's measured fill volume for every CO2 calculation.
+  // The headspace measured by the vents needs three completed vents. Until
+  // then, use the batch's measured fill volume for every CO2 calculation.
   if (CountersData.totalReliefCount < 3 && !isfinite(headspaceFiltered) &&
       isfinite(BatchData.initialBeerVolume) &&
       BatchData.initialBeerVolume > 0.0f &&
       BatchData.initialBeerVolume <= FMTData.FMTVolume) {
     beerVolume = BatchData.initialBeerVolume;
     CountersData.headSpaceVolume = FMTData.FMTVolume - beerVolume;
-    if (isfinite(FMTData.FMTReliefVolume) && FMTData.FMTReliefVolume > 0.0f) {
-      pressureDropFactor = CountersData.headSpaceVolume /
-        (CountersData.headSpaceVolume + fermentationReliefVolume());
-    }
     return;
   }
   beerVolume = FMTData.FMTVolume - CountersData.headSpaceVolume;
@@ -673,95 +316,100 @@ static float expansionPressureThreshold() {
   return SetPointData.setPointPressure / sqrtf(pressureDropFactor);
 }
 
-static bool gasFlowCycle = false;
-static bool gasTankHasHistory = false;
-static unsigned long gasClosedMillis = 0;
-static unsigned long gasMinimumVentingMilliseconds = 0;
-static double gasLoggedVentingSeconds = NAN, gasLoggedResidual = 0;
-static double gasLoggedOpenSeconds = 0;
-static double gasLoggedExpansionOptimalSeconds = NAN;
-static double gasPlannedExpansionSeconds = NAN;
-// Measured inventory at transfer-valve close. This is the CO2-balance source
-// of truth; it is derived from EjectedPressure after the post-relief reading.
-static double gasTankMolesAtClose = 0;
-static double gasTankPressureAtClose = 0;
-static bool gasVentingActive = false;
-static double gasVentingFactorAtClose = NAN;
-static double gasVentingFermenterVolume = 0, gasVentingExpansionVolume = 0;
-static double gasVentedMolesAccounted = 0;
-static double gasVentedMolesCredited = 0;
-static bool gasPreviousTankValid = false;
-static double gasPreviousTankPressureAtClose = NAN;
-static double gasPreviousTankPressureAtOpen = NAN;
-static double gasPreviousTankRemainingMoles = NAN;
-static double gasPreviousTankCreditedMoles = NAN;
-static double gasPreviousTankVentingSeconds = NAN;
-static double gasPreviousTankResidualFraction = NAN;
-static double gasLoggedPreviousVentingResidual = NAN;
-static double gasInitialMoles = 0;
-static double gasCycleA = 1, gasCycleB = 1.5;
-static double gasHeadspace = 0;
-static double gasCalculatedPressureCompensation = NAN;
-static double gasAppliedPressureCompensation = NAN;
-static bool gasPressureCompensationValid = false;
-static const char *gasHeadspaceUpdateStatus = "not_evaluated";
+// ===== Direct vent (docs/vent.md) =====
+// The valve vents the fermenter to the atmosphere for a time estimated from
+// the flow curve and the headspace. The CO2 that left is counted from the real
+// opening time and the pressures at opening and right after closing, without
+// the headspace and without reading the sensor during the transient.
+static constexpr float VENT_MAX_SECONDS = 30.0f;  // hard cap of one opening
+static constexpr float VENT_DEFAULT_GAS_C = 20.0f; // no valid temperature at all
+struct VentPlan {
+  float headspace;         // L: applied value (24-h average, held, EMA or initial)
+  float smallestHeadspace; // L: smallest plausible value, for the safety limit
+  float gasTemperatureC;
+  const char *gasSource;   // "headspace" or "liquid"
+  float estimatedSeconds;  // the target drop with `headspace`
+  float safetySeconds;     // the safety drop with `smallestHeadspace`
+  float plannedSeconds;
+  const char *limit;       // "estimate", "minimum" or "safety"
+};
+static VentPlan ventPlan = {NAN, NAN, NAN, "liquid", NAN, NAN, NAN, ""};
+static int64_t ventOpenMicros = 0;
+static float ventRealSeconds = NAN;
+static const char *ventHeadspaceStatus = "not_evaluated";
+// Last vent, for the Relief log and the status.
+struct VentResult {
+  float pMeanGauge;        // log mean of P_on and the pressure right after closing
+  float cooling;
+  float flowConstant;      // CO2, with ratio, Z and level
+  float flowMoles;         // flow model, before the liquid-mass correction
+  float countedMoles;      // flow model, or fermenter side for a vent without effect
+  const char *counted;     // "flow", "fermenter-side" or "none" (not Fermenting)
+  float apparentHeadspace; // flow moles / isothermal drop (NAN = not available)
+  float dropPercent;       // isothermal drop / P_on extrapolated
+};
+static VentResult ventResult = {NAN, NAN, NAN, NAN, NAN, "none", NAN, NAN};
 
-static bool gasFlowMode() {
-  return !volumeDeterminationActive && SetPointData.mode == MODE_FERMENTING;
+static float ventGasKelvin() {
+  float t = gasTemperature();
+  if (!isfinite(t) || t == NOTaTEMP || t < -20.0f || t > 60.0f) t = VENT_DEFAULT_GAS_C;
+  return kelvin(t);
 }
 
-static double calculateExpansionTankRemainingMoles(unsigned long now) {
-  if (!gasTankHasHistory) return 0;
-  if (!gasVentingActive) return gasInitialMoles;
-  return gasTankMolesAtClose * GasFlow::ventingResidual((now - gasClosedMillis) / 1000.0,
-    gasVentingFermenterVolume, gasVentingExpansionVolume, gasVentingFactorAtClose);
+// Headspace for the opening time: the applied value; before any, the
+// fermenter minus the beer informed for the batch.
+static float initialHeadspaceEstimate() {
+  const float beer = BatchData.initialBeerVolume - CountersData.dumpedVolume;
+  return (isfinite(beer) && beer > 0.0f && beer < FMTData.FMTVolume) ? FMTData.FMTVolume - beer : NAN;
 }
 
-// Track gas actually vented to atmosphere, once per increment. The tank
-// inventory is pressure-measured; apply the liquid correction exactly here.
-static void accountExpansionTankVenting(unsigned long now) {
-  if (!gasVentingActive) return;
-  const double remaining = calculateExpansionTankRemainingMoles(now);
-  const double cumulativeVentedNow = gasTankMolesAtClose - remaining;
-  if (!isfinite(cumulativeVentedNow) ||
-      cumulativeVentedNow <= gasVentedMolesAccounted) return;
-  const double deltaVented = cumulativeVentedNow - gasVentedMolesAccounted;
-  gasVentedMolesAccounted = cumulativeVentedNow;
-  const double credited = deltaVented *
-    (1.0 - FMTData.liquidMassInGasVentingPercent / 100.0);
-  gasVentedMolesCredited += credited;
-  CountersData.totalMolsEjected += credited;
+static float ventHeadspaceForTime() {
+  if (isfinite(CountersData.headSpaceVolume) && CountersData.headSpaceVolume > 0.0f &&
+      CountersData.headSpaceVolume < FMTData.FMTVolume) return CountersData.headSpaceVolume;
+  const float initial = initialHeadspaceEstimate();
+  return isfinite(initial) ? initial : FMTData.FMTVolume;
 }
 
-// The previous tank vents only until the next transfer valve opens. Capture
-// its completed cycle before changing the state for the new relief.
-static void capturePreviousTankVenting(unsigned long now) {
-  accountExpansionTankVenting(now);
-  gasPreviousTankValid = gasTankHasHistory;
-  if (gasPreviousTankValid) {
-    gasPreviousTankPressureAtClose = gasTankPressureAtClose;
-    gasPreviousTankVentingSeconds = (now - gasClosedMillis) / 1000.0;
-    gasPreviousTankResidualFraction = GasFlow::ventingResidual(
-      gasPreviousTankVentingSeconds, gasVentingFermenterVolume,
-      gasVentingExpansionVolume, gasVentingFactorAtClose);
-    gasPreviousTankRemainingMoles = calculateExpansionTankRemainingMoles(now);
-    gasPreviousTankPressureAtOpen = gasTankPressureAtClose * gasPreviousTankResidualFraction;
-    gasPreviousTankCreditedMoles = gasVentedMolesCredited;
-  } else {
-    gasPreviousTankPressureAtClose = NAN;
-    gasPreviousTankVentingSeconds = NAN;
-    gasPreviousTankResidualFraction = NAN;
-    gasPreviousTankRemainingMoles = NAN;
-    gasPreviousTankPressureAtOpen = NAN;
-    gasPreviousTankCreditedMoles = NAN;
+// Smallest of the applied value, the EMA and the informed one (a wrong
+// headspace must not open the valve for too long).
+static float ventSmallestHeadspace() {
+  float smallest = ventHeadspaceForTime();
+  if (isfinite(headspaceFiltered) && headspaceFiltered > 0.0f) smallest = fminf(smallest, headspaceFiltered);
+  const float initial = initialHeadspaceEstimate();
+  if (isfinite(initial)) smallest = fminf(smallest, initial);
+  return smallest;
+}
+
+// Opening time from the pressure at opening: the target drop with the applied
+// headspace, at most the safety drop with the smallest plausible one, and at
+// least the minimum opening (which wins over the safety limit).
+static void planVent(float pOnGauge) {
+  ventPlan.headspace = ventHeadspaceForTime();
+  ventPlan.smallestHeadspace = ventSmallestHeadspace();
+  ventPlan.gasSource = gasTemperatureSource();
+  const double tK = ventGasKelvin();
+  ventPlan.gasTemperatureC = tK - 273.15;
+  const double exponent = FMTData.FMTEffectiveVentingExponent;
+  const VentModel::Curve &curve = FMTData.ventCurve;
+  ventPlan.estimatedSeconds = VentModel::ventSeconds(curve, FMTData.flowLevelFactor, ventPlan.headspace, pOnGauge,
+      pOnGauge * (1.0 - FMTData.ventTargetDropPercent / 100.0), Patm, tK, exponent);
+  ventPlan.safetySeconds = VentModel::ventSeconds(curve, FMTData.flowLevelFactor, ventPlan.smallestHeadspace, pOnGauge,
+      pOnGauge * (1.0 - FMTData.ventSafetyDropPercent / 100.0), Patm, tK, exponent);
+  float seconds = ventPlan.estimatedSeconds;
+  ventPlan.limit = "estimate";
+  if (isfinite(ventPlan.safetySeconds) && (!isfinite(seconds) || seconds > ventPlan.safetySeconds)) {
+    seconds = ventPlan.safetySeconds;
+    ventPlan.limit = "safety";
   }
-  gasInitialMoles = gasPreviousTankValid ? gasPreviousTankRemainingMoles : 0;
-  gasVentingActive = false;
+  if (!isfinite(seconds) || seconds < FMTData.ventMinSeconds) {
+    seconds = FMTData.ventMinSeconds;
+    ventPlan.limit = "minimum";
+  }
+  ventPlan.plannedSeconds = fminf(seconds, VENT_MAX_SECONDS);
 }
 
-static double expansionTankInventoryMoles() {
-  if (!gasTankHasHistory) return 0;
-  return gasVentingActive ? gasTankMolesAtClose - gasVentedMolesAccounted : gasInitialMoles;
+static bool ventCountsCO2() {
+  return SetPointData.mode == MODE_FERMENTING;
 }
 
 // Keep a persistent progress integral in mol/L. The snapshot is deliberately
@@ -786,7 +434,7 @@ static void updateCO2MolsProducedPerLiter(float beerVolumeBeforeEvent) {
   lastCO2ProducedPerLiterUpdateMillis = now;
 
   const double totalMols = CountersData.totalMolsEjected +
-    CountersData.CO2InSolution + double(headSpaceCO2Mols) + expansionTankInventoryMoles();
+    CountersData.CO2InSolution + double(headSpaceCO2Mols);
   if (!isfinite(totalMols)) return;
 
   co2ProducedDiagnosticTotalMols = totalMols;
@@ -834,50 +482,6 @@ void resetCO2MolsProducedPerLiterTracking() {
   CountersData.co2CorrectionDebt = 0.0;
 }
 
-static bool shouldStartGasExpansion(unsigned long now) {
-  if (SetPointData.setPointPressure <= 0) return false;
-  if (gasVentingActive && now - gasClosedMillis < gasMinimumVentingMilliseconds) return false;
-  return ControlData.pressure >= expansionPressureThreshold();
-}
-
-static double expansionTime(float pressure) {
-  return GasFlow::expansionTime(pressure,
-    FMTData.targetResidualAfterReliefPercent / 100.0,
-    FMTData.expansionTimeCoefficientA, FMTData.expansionTimeCoefficientB);
-}
-
-static unsigned long expansionTimeMilliseconds(float pressure) {
-  const double seconds = expansionTime(pressure);
-  gasPlannedExpansionSeconds = seconds;
-  return isfinite(seconds) ? (unsigned long)fmax(1.0, floor(seconds * 1000.0)) : 1UL;
-}
-
-static void beginGasExpansion() {
-  gasLoggedPreviousVentingResidual = gasPreviousTankResidualFraction;
-  gasLoggedVentingSeconds = gasPreviousTankVentingSeconds;
-  // Snapshot the optimal times at opening, before pressure/configuration changes.
-  gasLoggedExpansionOptimalSeconds = expansionTime(ControlData.pressure);
-  gasHeadspace = CountersData.headSpaceVolume;
-  if (!(gasHeadspace > 0))
-    gasHeadspace = volumeEstimationFromPressureDrop(pressureDropFactor);
-  gasHeadspace = fmin(gasHeadspace, FMTData.FMTVolume);
-}
-
-static void finishGasExpansion(unsigned long now) {
-  const double seconds = (now - reliefValveOpenedMillis) / 1000.0;
-  const double residual = FMTData.targetResidualAfterReliefPercent / 100.0;
-  gasLoggedResidual = residual;
-  gasLoggedOpenSeconds = seconds;
-  gasMinimumVentingMilliseconds = (unsigned long)fmax(0.0, seconds * 1000.0);
-  gasClosedMillis = now;
-  // The venting factor is set in processPressure() from the measured tank
-  // pressure at close; the tank is not vented before that.
-  gasVentingFermenterVolume = FMTData.FMTVolume;
-  gasVentingExpansionVolume = FMTData.FMTReliefVolume;
-  Serial.printf("[GAS FLOW] open=%.3fs expansionResidual=%.6f initial=%.6fmol\n",
-    seconds, residual, gasInitialMoles);
-}
-
 static const char *co2DissolvedStateLabel(CO2DissolvedState state) {
   switch (state) {
     case CO2_STATE_EQUILIBRIUM:     return "immediate"; // label kept for log continuity
@@ -891,9 +495,9 @@ static const char *co2DissolvedEstimationModeLabel() {
   return co2DissolvedStateLabel(co2DissolvedState);
 }
 
-// Measured CO2 outside the liquid: vented, in the headspace and in the expansion tank.
+// Measured CO2 outside the liquid: vented and in the headspace.
 static double gasPhaseCO2Mols() {
-  return CountersData.totalMolsEjected + double(headSpaceCO2Mols) + expansionTankInventoryMoles();
+  return CountersData.totalMolsEjected + double(headSpaceCO2Mols);
 }
 
 // State changes are persisted at once, so a reboot keeps the state.
@@ -1184,8 +788,17 @@ static void recomputeDissolvedCO2MolsFromCurrentState() {
   co2GasBaselineValid = true;
 }
 
+// CO2 in the headspace above the start: real gas (Z of CO2) at the gas
+// temperature now and at the batch start (docs/vent.md). The atmospheric part
+// is subtracted at both ends, as with the gauge pressures before.
+static double headspaceMolesAboveAtmosphere(double gauge, double tKelvin, double volume) {
+  const double pAbs = gauge + Patm;
+  return volume / (CONST_R * tKelvin) *
+      (pAbs / VentModel::co2Z(pAbs, tKelvin) - Patm / VentModel::co2Z(Patm, tKelvin));
+}
+
 static void recomputeHeadspaceCO2MolsFromCurrentState() {
-  const float currentTemperatureK = kelvin(ControlData.temperature);
+  const float currentTemperatureK = ventGasKelvin();
   const float initialTemperatureK = kelvin(BatchData.startTemperature);
   if (!isfinite(CountersData.headSpaceVolume) || CountersData.headSpaceVolume <= 0.0f ||
       !isfinite(currentTemperatureK) || currentTemperatureK <= 0.0f ||
@@ -1195,8 +808,8 @@ static void recomputeHeadspaceCO2MolsFromCurrentState() {
     return;
   }
 
-  headSpaceCO2Mols = ControlData.pressure    * CountersData.headSpaceVolume / (CONST_R * currentTemperatureK)
-                   - BatchData.startPressure * CountersData.headSpaceVolume / (CONST_R * initialTemperatureK);
+  headSpaceCO2Mols = headspaceMolesAboveAtmosphere(ControlData.pressure, currentTemperatureK, CountersData.headSpaceVolume)
+                   - headspaceMolesAboveAtmosphere(BatchData.startPressure, initialTemperatureK, CountersData.headSpaceVolume);
   if (!isfinite(headSpaceCO2Mols) || headSpaceCO2Mols < 0.0f) {
     headSpaceCO2Mols = 0.0f;
   }
@@ -1213,10 +826,6 @@ static bool applyHeadspaceValue(float headspace) {
   if (headspace != CountersData.headSpaceVolume) co2GasBaselineValid = false;
   CountersData.headSpaceVolume = headspace;
   beerVolume = FMTData.FMTVolume - headspace;
-  if (isfinite(FMTData.FMTReliefVolume) && FMTData.FMTReliefVolume > 0.0f) {
-    pressureDropFactor = headspace /
-      (headspace + fermentationReliefVolume());
-  }
   return true;
 }
 
@@ -1916,21 +1525,6 @@ float getBeerCO2EvolutionGramsPerLiterPerDay() {
   return fmaxf(0.0f, getReportedCO2EvolutionGramsPerLiterPerDay());
 }
 
-static void releasePressureReliefHistory() {
-  if (pressureReliefHistory) {
-    delete[] pressureReliefHistory;
-    pressureReliefHistory = nullptr;
-  }
-  pressureReliefIndex = 0;
-  pressureReliefCount = 0;
-  pendingReliefIndex = -1;
-  volumeRecordIndex = -1;
-  volumeAwaitingRecord = false;
-  volumeStartPressure = 0.0f;
-  volumeStartTemperatureK = 0.0f;
-  volumeStartReliefIteration = 0;
-}
-
 static void resetReliefsPerHourState() {
   reliefMillisCount = 0;
   reliefMillisIndex = 0;
@@ -2040,7 +1634,7 @@ float getReliefsPerHourValue() {
 
 float getTotalCO2Mols() {
   return CountersData.totalMolsEjected + CountersData.CO2InSolution +
-    headSpaceCO2Mols + expansionTankInventoryMoles();
+    headSpaceCO2Mols;
 }
 
 float CO2Mass(float mols) {
@@ -2476,25 +2070,24 @@ String describePressureSensor() {
   return String(text);
 }
 
-// ===== Relief check (docs/alarms.md) =====
-// Each fermentation relief's drop against the one expected from the applied
-// headspace (24-hour average, frozen reference): above 2x, the gas left
-// elsewhere (leak between the valve and the expansion tank, ~3x with the tank
-// off); below 0.25x, the relief had no effect (valve not opening, tank not
-// venting). A suspect relief is quarantined (does not feed the headspace, CO2
-// from the fermenter side); two consecutive of the same kind raise the alarm
-// and an OK relief clears it.
-static constexpr float RELIEF_LEAK_DROP_RATIO = 2.0f;
+// ===== Vent check (docs/alarms.md) =====
+// The isothermal drop of each fermentation vent against the drop expected
+// from the CO2 counted by the flow model and the applied headspace (24-hour
+// average, frozen reference). Below 0.25x the vent had (almost) no effect:
+// valve not opening, outlet blocked, or the expansion tank reconnected by
+// mistake. Such a vent is not counted by the flow model (it would count moles
+// that did not leave): its CO2 is the fermenter-side loss over the reference
+// headspace, and it does not feed the headspace. Two in a row raise the
+// alarm; a normal vent clears it.
 static constexpr float RELIEF_NO_EFFECT_DROP_RATIO = 0.25f;
 static constexpr uint8_t RELIEF_CHECK_CONSECUTIVE = 2;
 static constexpr float RELIEF_CHECK_MIN_PRESSURE = 0.1f; // bar
 static constexpr uint8_t RELIEF_CHECK_SKIPPED = 0;
 static constexpr uint8_t RELIEF_CHECK_OK = 1;
-static constexpr uint8_t RELIEF_CHECK_LEAK = 2;
-static constexpr uint8_t RELIEF_CHECK_NO_EFFECT = 3;
-static uint8_t reliefCheckLast = RELIEF_CHECK_SKIPPED;  // last evaluated relief
-static uint8_t reliefCheckRun = 0;                      // consecutive suspects of that kind
-static uint8_t reliefCheckAlarmKind = RELIEF_CHECK_OK;  // LEAK / NO_EFFECT while the alarm lasts
+static constexpr uint8_t RELIEF_CHECK_NO_EFFECT = 3; // value kept from the expansion-tank check
+static uint8_t reliefCheckLast = RELIEF_CHECK_SKIPPED;  // last evaluated vent
+static uint8_t reliefCheckRun = 0;                      // consecutive vents without effect
+static bool reliefCheckAlarm = false;
 static float reliefCheckDropRatio = NAN;
 static float reliefCheckExpectedDrop = NAN;
 static float reliefCheckMeasuredDrop = NAN;
@@ -2504,68 +2097,114 @@ static float reliefCheckReference = NAN;
 static const char *reliefCheckLabel(uint8_t check) {
   switch (check) {
     case RELIEF_CHECK_OK: return "ok";
-    case RELIEF_CHECK_LEAK: return "leak";
     case RELIEF_CHECK_NO_EFFECT: return "no-effect";
     default: return "";
   }
 }
 
-static uint8_t evaluateReliefCheck(float dropFactor, bool taskWindow) {
+// flowMoles: CO2 counted by the flow model for this vent; tKelvin: gas.
+static uint8_t evaluateVentCheck(double flowMoles, double tKelvin, bool taskWindow) {
   const float reference = CountersData.headSpaceVolume;
-  const float relief = fermentationReliefVolume();
-  const bool applicable = !taskWindow && !volumeDeterminationActive && !pressureSensorAlarm &&
-      !(debugging && debugPressureOverride) && isfinite(headspaceFiltered) &&
-      CountersData.totalReliefCount >= 3 && isfinite(reference) && reference > 0.0f &&
-      isfinite(relief) && relief > 0.0f && isfinite(dropFactor) &&
-      isfinite(pressureOnReliefExtrap) && pressureOnReliefExtrap >= RELIEF_CHECK_MIN_PRESSURE;
+  const bool applicable = ventCountsCO2() && !taskWindow && !pressureSensorAlarm &&
+      !(debugging && debugPressureOverride) && isfinite(reference) && reference > 0.0f &&
+      isfinite(flowMoles) && flowMoles > 0.0 &&
+      isfinite(pressureOnReliefExtrap) && pressureOnReliefExtrap >= RELIEF_CHECK_MIN_PRESSURE &&
+      isfinite(adjustedPressureAfterRelief);
   reliefCheckDropRatio = NAN;
   uint8_t result = RELIEF_CHECK_SKIPPED;
   if (applicable) {
-    // Same model as the headspace measurement: drop fraction Vr / (V + Vr).
-    const float expected = relief / (reference + relief);
-    const float measured = 1.0f - dropFactor;
-    reliefCheckDropRatio = measured / expected;
-    reliefCheckExpectedDrop = expected * pressureOnReliefExtrap;
-    reliefCheckMeasuredDrop = measured * pressureOnReliefExtrap;
+    // Isothermal drops of P/Z (real gas): measured, and expected from the
+    // counted moles in the reference headspace.
+    const double pOn = pressureOnReliefExtrap + Patm, pAfter = adjustedPressureAfterRelief + Patm;
+    const double measured = pOn / VentModel::co2Z(pOn, tKelvin) - pAfter / VentModel::co2Z(pAfter, tKelvin);
+    const double expected = flowMoles * CONST_R * tKelvin / reference;
+    reliefCheckDropRatio = float(measured / expected);
+    reliefCheckMeasuredDrop = pressureOnReliefExtrap - adjustedPressureAfterRelief;
+    reliefCheckExpectedDrop = float(reliefCheckMeasuredDrop / reliefCheckDropRatio);
     reliefCheckPressure = pressureOnReliefExtrap;
     reliefCheckReference = reference;
-    result = reliefCheckDropRatio > RELIEF_LEAK_DROP_RATIO ? RELIEF_CHECK_LEAK
-           : reliefCheckDropRatio < RELIEF_NO_EFFECT_DROP_RATIO ? RELIEF_CHECK_NO_EFFECT : RELIEF_CHECK_OK;
+    result = reliefCheckDropRatio < RELIEF_NO_EFFECT_DROP_RATIO ? RELIEF_CHECK_NO_EFFECT : RELIEF_CHECK_OK;
   }
-  if (result == RELIEF_CHECK_LEAK || result == RELIEF_CHECK_NO_EFFECT) {
-    reliefCheckRun = result == reliefCheckLast ? reliefCheckRun + 1 : 1;
-    if (reliefCheckRun >= RELIEF_CHECK_CONSECUTIVE) reliefCheckAlarmKind = result;
+  if (result == RELIEF_CHECK_NO_EFFECT) {
+    reliefCheckRun = reliefCheckLast == RELIEF_CHECK_NO_EFFECT ? reliefCheckRun + 1 : 1;
+    if (reliefCheckRun >= RELIEF_CHECK_CONSECUTIVE) reliefCheckAlarm = true;
+    Serial.printf("[VENT] without effect: drop %.4f bar, expected %.4f bar (%.2fx), run %u\n",
+                  reliefCheckMeasuredDrop, reliefCheckExpectedDrop, reliefCheckDropRatio, reliefCheckRun);
   } else if (result == RELIEF_CHECK_OK) {
     reliefCheckRun = 0;
-    reliefCheckAlarmKind = RELIEF_CHECK_OK;
+    reliefCheckAlarm = false;
   }
   if (result != RELIEF_CHECK_SKIPPED) reliefCheckLast = result;
-  if (result == RELIEF_CHECK_LEAK || result == RELIEF_CHECK_NO_EFFECT)
-    Serial.printf("[RELIEF] suspect %s: drop %.4f bar, expected %.4f bar (%.2fx), run %u\n",
-                  reliefCheckLabel(result), reliefCheckMeasuredDrop, reliefCheckExpectedDrop,
-                  reliefCheckDropRatio, reliefCheckRun);
   return result;
 }
 
 bool reliefCheckAlarmActive() {
-  return reliefCheckAlarmKind != RELIEF_CHECK_OK && SetPointData.mode == MODE_FERMENTING &&
-      !volumeDeterminationActive && !(debugging && debugPressureOverride);
-}
-
-bool reliefCheckAlarmIsLeak() {
-  return reliefCheckAlarmKind == RELIEF_CHECK_LEAK;
+  return reliefCheckAlarm && SetPointData.mode == MODE_FERMENTING && !(debugging && debugPressureOverride);
 }
 
 // Alarm e-mail (PovotoAlarms.cpp).
 String describeReliefCheck() {
   char text[320];
   snprintf(text, sizeof(text),
-           "Relief check: %s\nLast relief drop: %.4f bar, expected %.4f bar (%.2fx; alarm above %.1fx or below %.2fx)\n"
-           "Pressure at the relief: %.3f bar\nReference headspace: %.2f L\n",
-           reliefCheckAlarmKind == RELIEF_CHECK_LEAK ? "drop too large (leak between valve and expansion tank?)"
-               : reliefCheckAlarmKind == RELIEF_CHECK_NO_EFFECT ? "no pressure drop (valve not opening or tank not venting?)" : "ok",
+           "Vent check: %s\nLast vent drop: %.4f bar, expected %.4f bar from the counted CO2 (%.2fx; alarm below %.2fx)\n"
+           "Pressure at the vent: %.3f bar\nReference headspace: %.2f L\n",
+           reliefCheckAlarm ? "no pressure drop (valve not opening or outlet blocked?)" : "ok",
            reliefCheckMeasuredDrop, reliefCheckExpectedDrop, reliefCheckDropRatio,
-           RELIEF_LEAK_DROP_RATIO, RELIEF_NO_EFFECT_DROP_RATIO, reliefCheckPressure, reliefCheckReference);
+           RELIEF_NO_EFFECT_DROP_RATIO, reliefCheckPressure, reliefCheckReference);
+  return String(text);
+}
+
+// ===== Valve stuck open (docs/alarms.md) =====
+// After a fermentation vent the pressure recovers (the gas warms back and the
+// fermentation goes on). If it is still falling STUCK_OPEN_CHECK_MS after the
+// reading right after closing, by more than STUCK_OPEN_FALL_BAR, the valve did
+// not close: alarm at once (the fermenter is losing its pressure). A later
+// vent that recovers normally clears it.
+static constexpr unsigned long STUCK_OPEN_CHECK_MS = 30000UL;
+static constexpr float STUCK_OPEN_FALL_BAR = 0.005f;
+static bool stuckOpenArmed = false;
+static float stuckOpenReference = NAN;      // pressure read right after closing
+static unsigned long stuckOpenReferenceMillis = 0;
+static float stuckOpenLastFall = NAN;       // reference - pressure STUCK_OPEN_CHECK_MS later
+static bool stuckOpenAlarm = false;
+
+static void armStuckOpenCheck() {
+  stuckOpenArmed = ventCountsCO2() && isfinite(pressureAfterRelief);
+  stuckOpenReference = pressureAfterRelief;
+  stuckOpenReferenceMillis = pressureAfterReliefMillis;
+}
+
+static void checkValveStuckOpen() {
+  if (!ventCountsCO2()) {
+    stuckOpenArmed = false;
+    stuckOpenAlarm = false;
+    return;
+  }
+  if (!stuckOpenArmed || inTheMiddleOfRelief() || !pressureAcquisitionValid ||
+      (int32_t)(pressureAcquiredMillis - stuckOpenReferenceMillis) < (int32_t)STUCK_OPEN_CHECK_MS) return;
+  stuckOpenArmed = false;
+  // A task may lower the pressure on purpose (dump); the debug page owns the pressure.
+  if (taskWindowType != 0 || reliefOpenedDuringTask || pressureSensorAlarm ||
+      (debugging && debugPressureOverride)) return;
+  stuckOpenLastFall = stuckOpenReference - ControlData.pressure;
+  const bool stuck = stuckOpenLastFall > STUCK_OPEN_FALL_BAR;
+  if (stuck != stuckOpenAlarm)
+    Serial.printf("[VENT] valve stuck open: %s (pressure fell %.4f bar in %lu s after closing)\n",
+                  stuck ? "YES" : "cleared", stuckOpenLastFall, STUCK_OPEN_CHECK_MS / 1000UL);
+  stuckOpenAlarm = stuck;
+}
+
+bool valveStuckOpenAlarmActive() {
+  return stuckOpenAlarm && SetPointData.mode == MODE_FERMENTING && !(debugging && debugPressureOverride);
+}
+
+String describeValveStuckOpen() {
+  char text[200];
+  snprintf(text, sizeof(text),
+           "Pressure after the last vent: %.4f bar right after closing, %.4f bar lower %lu s later "
+           "(alarm above %.3f bar)\nPressure now: %.3f bar (target %.3f bar)\n",
+           stuckOpenReference, stuckOpenLastFall, STUCK_OPEN_CHECK_MS / 1000UL, STUCK_OPEN_FALL_BAR,
+           ControlData.pressure, SetPointData.setPointPressure);
   return String(text);
 }
 
@@ -2596,163 +2235,6 @@ void drawCalibrationStatus() {
 
 const char *getCalibrationDisplayLine(uint8_t index) {
   return index < 3 ? calibrationDisplayLines[index] : "";
-}
-
-static void formatFloatCsv(char *out, size_t size, float value, uint8_t decimals) {
-  snprintf(out, size, "%.*f", decimals, value);
-  for (size_t i = 0; out[i] != '\0'; ++i) {
-    if (out[i] == '.') {
-      out[i] = ',';
-    }
-  }
-}
-
-// Least-squares fit with a free intercept: ln(Padjusted) = a + b*N.
-// Include the initial measurement at N=0 and each settled measurement once.
-static float fitVolumeFromHistory(unsigned recentWindow = 0) {
-  if (!pressureReliefHistory || !isfinite(volumeStartPressure) || volumeStartPressure <= 0.0f)
-    return NAN;
-  if (recentWindow && pressureReliefCount < recentWindow) return NAN;
-  unsigned count = recentWindow ? 0 : 1;
-  double meanX = 0.0;
-  double meanY = recentWindow ? 0.0 : log((double)volumeStartPressure);
-  double sxx = 0.0;
-  double sxy = 0.0;
-  for (uint16_t i = recentWindow ? pressureReliefCount - recentWindow : 0; i < pressureReliefCount; ++i) {
-    const uint16_t idx = (pressureReliefIndex + PRESSURE_RELIEF_HISTORY_MAX - pressureReliefCount + i)
-                         % PRESSURE_RELIEF_HISTORY_MAX;
-    const PressureReliefRecord &record = pressureReliefHistory[idx];
-    if (record.nReliefs == 0 ||
-        !isfinite(record.pfAdjusted) || record.pfAdjusted <= 0.0f) {
-      if (recentWindow) return NAN;
-      continue;
-    }
-    const double x = record.nReliefs;
-    const double y = log((double)record.pfAdjusted);
-    ++count;
-    const double dx = x - meanX;
-    const double dy = y - meanY;
-    meanX += dx / count;
-    meanY += dy / count;
-    sxx += dx * (x - meanX);
-    sxy += dx * (y - meanY);
-  }
-  if (count < 2 || sxx <= 0.0) return NAN;
-  const double slope = sxy / sxx;
-  if (!isfinite(slope) || slope >= 0.0 ||
-      !isfinite(FMTData.FMTReliefVolume) || FMTData.FMTReliefVolume <= 0.0f) return NAN;
-  const float volume = volumeRoutineVolume((float)exp(slope));
-  return isfinite(volume) && volume > 0.0f ? volume : NAN;
-}
-
-static void formatVolumeComparison(char *extremes, size_t extremesSize,
-                                   char *fit, size_t fitSize, float endpointVolume,
-                                   float fittedVolume) {
-  if (isfinite(endpointVolume) && endpointVolume > 0.0f)
-    snprintf(extremes, extremesSize, "Extremos: %.3f L", endpointVolume);
-  else
-    snprintf(extremes, extremesSize, "Extremos: N/A");
-  if (isfinite(fittedVolume) && fittedVolume > 0.0f) {
-    if (isfinite(endpointVolume) && endpointVolume > 0.0f)
-      snprintf(fit, fitSize, "Ajuste: %.3f L (%+.2f%%)", fittedVolume,
-               100.0f * (fittedVolume / endpointVolume - 1.0f));
-    else
-      snprintf(fit, fitSize, "Ajuste: %.3f L", fittedVolume);
-  } else {
-    snprintf(fit, fitSize, "Ajuste: N/A");
-  }
-}
-
-static void finalizeVolumeDeterminationSummary() {
-  if (!volumeDeterminationActive) {
-    return;
-  }
-
-  volumeSummaryAvailable = false;
-  volumeSummaryTiK = volumeStartTemperatureK;
-  volumeSummaryTfK = kelvin(ControlData.temperature);
-  volumeSummaryPi = volumeStartPressure;
-  volumeSummaryNReliefs = (volumeIteration >= volumeStartReliefIteration)
-                        ? (volumeIteration - volumeStartReliefIteration)
-                        : 0;
-
-  if (volumeSummaryTiK <= 0.0f || volumeSummaryTfK <= 0.0f ||
-      volumeSummaryPi <= 0.0f || volumeSummaryNReliefs == 0) {
-    volumeDeterminationActive = false;
-    showCalibrationPanel("Volume: END", "Dados insuficientes", "Sem resumo");
-    return;
-  }
-
-  volumeSummaryPfAdjusted = (ControlData.pressure + Patm) * (volumeSummaryTiK / volumeSummaryTfK) - Patm;
-  if (volumeSummaryPfAdjusted <= 0.0f) {
-    volumeDeterminationActive = false;
-    showCalibrationPanel("Volume: END", "Pf ajustada invalida", "Sem resumo");
-    return;
-  }
-
-  volumeSummaryFactor = powf(volumeSummaryPfAdjusted / volumeSummaryPi, 1.0f / (float)volumeSummaryNReliefs);
-  const float denom = 1.0f - volumeSummaryFactor;
-  if (fabsf(denom) < 0.000001f) {
-    volumeDeterminationActive = false;
-    showCalibrationPanel("Volume: END", "Fator invalido", "Sem resumo");
-    return;
-  }
-
-  // Mean temperatures of the test; the calibrated k is the median of the
-  // per-relief values (the cumulative-factor k is shown for comparison).
-  float fermenterSum = 0.0f, ambientSum = 0.0f;
-  uint16_t fermenterCount = 0, ambientCount = 0;
-  static constexpr uint16_t K_VALUES_MAX = 64; // the test stops at 35 reliefs
-  static float kValues[K_VALUES_MAX];
-  uint16_t kCount = 0;
-  for (uint16_t i = 0; i < pressureReliefCount && pressureReliefHistory; ++i) {
-    const PressureReliefRecord &record = pressureReliefHistory[i];
-    if (isfinite(record.temperature)) { fermenterSum += record.temperature; ++fermenterCount; }
-    if (isfinite(record.expansionTankTemperature)) { ambientSum += record.expansionTankTemperature; ++ambientCount; }
-    if (isfinite(record.kRelief) && kCount < K_VALUES_MAX) kValues[kCount++] = record.kRelief;
-  }
-  const float meanFermenterC = fermenterCount ? fermenterSum / fermenterCount : ControlData.temperature;
-  const float meanAmbientC = ambientCount ? ambientSum / ambientCount : NAN;
-  volumeSummaryFermenterVolume = volumeRoutineVolume(volumeSummaryFactor, meanFermenterC, meanAmbientC);
-  volumeCalibration = {};
-  volumeCalibration.co2 = volumeDeterminationCO2;
-  volumeCalibration.fermenterC = meanFermenterC;
-  volumeCalibration.expansionTankC = meanAmbientC;
-  volumeCalibration.volume = volumeSummaryFermenterVolume;
-  volumeCalibration.kOverall = volumeRoutineCalibratedK(volumeSummaryFactor, meanFermenterC, meanAmbientC);
-  volumeCalibration.kMedian = NAN;
-  volumeCalibration.kSpread = NAN;
-  volumeCalibration.count = kCount;
-  if (kCount > 0) {
-    std::sort(kValues, kValues + kCount);
-    volumeCalibration.kMedian = (kCount % 2) ? kValues[kCount / 2]
-                                             : 0.5f * (kValues[kCount / 2 - 1] + kValues[kCount / 2]);
-    float sum = 0.0f, sumSquares = 0.0f;
-    for (uint16_t i = 0; i < kCount; ++i) { sum += kValues[i]; sumSquares += kValues[i] * kValues[i]; }
-    const float mean = sum / kCount;
-    volumeCalibration.kSpread = kCount > 1 ? sqrtf(fmaxf(0.0f, (sumSquares - kCount * mean * mean) / (kCount - 1))) : NAN;
-  }
-  volumeCalibration.available = volumeDeterminationFast && isfinite(volumeCalibration.kMedian);
-  Serial.printf("[VOLUME] %s (%s): factor %.5f, volume %.2f L (relief volume %.3f L, Tferm %.2f C, Tamb %.2f C); "
-                "k for FMTVolume %.1f L: median %.4f (sd %.4f, n %u), cumulative %.4f\n",
-                volumeDeterminationFast ? "fast" : "slow", volumeDeterminationCO2 ? "CO2" : "air",
-                volumeSummaryFactor, volumeSummaryFermenterVolume,
-                volumeRoutineReliefVolume(meanFermenterC, meanAmbientC), meanFermenterC, meanAmbientC,
-                FMTData.FMTVolume, volumeCalibration.kMedian, volumeCalibration.kSpread,
-                (unsigned)kCount, volumeCalibration.kOverall);
-  volumeSummaryAvailable = true;
-  volumeCalculatedSoFar = volumeSummaryFermenterVolume;
-  volumeCalculatedSoFarValid = true;
-  volumeDeterminationActive = false;
-
-  char line1[40];
-  char line2[40];
-  char line3[40];
-  snprintf(line1, sizeof(line1), "END: %s (%u/%u)", volumeConverged ? "convergiu" : "limite",
-           (unsigned)volumeSummaryNReliefs, (unsigned)volumeIteration);
-  formatVolumeComparison(line2, sizeof(line2), line3, sizeof(line3),
-                         volumeSummaryFermenterVolume, volumeFittedSoFar);
-  showCalibrationPanel(line1, line2, line3);
 }
 
 void calculateFermentationState() {
@@ -2828,15 +2310,6 @@ static float adjustedPressureForPostRelief(float postReliefPressure,
   return (pressureOnReliefMeas + Patm) * powf(
     (postReliefPressure + Patm) / (pressureOnReliefMeas + Patm),
     1.0f / FMTData.FMTEffectiveVentingExponent) - Patm;
-}
-
-static float adjustedEquilibriumPressureForPostRelief(float postReliefPressure,
-                                                       unsigned long postReliefMillis,
-                                                       bool usePolytropicCorrection = true) {
-  const float adjusted = usePolytropicCorrection
-    ? adjustedPressureForPostRelief(postReliefPressure, postReliefMillis) : postReliefPressure;
-  const float residual = FMTData.targetResidualAfterReliefPercent / 100.0f;
-  return pressureOnReliefMeas - (pressureOnReliefMeas - adjusted) / (1.0f - residual);
 }
 
 static void clearPolytropicSamples() {
@@ -2927,13 +2400,8 @@ static void estimatePreviousReliefPolytropicExponent() {
     polytropicEstimatedExponent = exponent;
 }
 
-static bool ENV_TEMP_VALID(float t) {
-  // TODO: trocar por "recebido há menos de X min" quando houver timestamp.
-  return isfinite(t) && t > -20.0f && t < 60.0f && t != NOTaTEMP;
-}
-
 void processPressure(bool afterRelief) {
-  // Capture the old volume before a relief can update headspace below.
+  // Capture the old volume before a vent can update the headspace below.
   const float beerVolumeBeforeEvent = beerVolume;
   updateBeerVolumeFromHeadspace();
   const float reliefPressureReachedTarget = pressureReachedTarget;
@@ -2944,89 +2412,100 @@ void processPressure(bool afterRelief) {
   float headspaceMeasuredForLog = NAN;    // [DAILY-HS]
   bool collectingInitialHeadspaceSamples = false;
   float ejectedMols = 0.0f;
-  uint8_t reliefCheckResult = RELIEF_CHECK_SKIPPED; // [RELIEF-CHECK]
-  float ventingElapsedAtLogSeconds = NAN;
+  uint8_t reliefCheckResult = RELIEF_CHECK_SKIPPED;
   float ejectedMolsBeforeLiquidCorrection = 0.0f;
+  double ventGasK = NAN;
 
  // Conditioning: plain refrigerator. The CO2 balance stays as it was at the
   // entry (docs/conditioning.md); only the derived SG/ABV are recomputed from
   // the counters (after a reboot they would otherwise be missing).
   if (SetPointData.mode == MODE_CONDITIONING) {
-    if (afterRelief) { // safety relief: close the cycle without accounting
+    if (afterRelief) { // safety vent: close the cycle without accounting
       pressureAfterRelief = ControlData.pressure;
       pressureAfterReliefMillis = pressureAcquiredMillis;
       pressureReachedTarget = 0;
       pressureReachedTargetMillis = 0;
-      pendingReliefIndex = -1;
     }
     calculateFermentationState();
     return;
   }
 
-  if (afterRelief && debugging) {
-    if (volumeDeterminationActive && pressureSamples) 
-      ControlData.pressure = ControlData.pressure * 0.984f + random(-5,5) * 0.0005; 
-    else
-      ControlData.pressure = ControlData.pressure * 0.942f + random(-5,5) * 0.0005;       
-  }      
+  // Bench boards have no valve: the target drop is simulated.
+  if (afterRelief && debugging)
+    ControlData.pressure = ControlData.pressure * (1.0f - FMTData.ventTargetDropPercent / 100.0f) +
+                           random(-5, 5) * 0.0005;
 
   updateReliefsPerHour(afterRelief);
-  
-  if  (afterRelief) {
+
+  if (afterRelief) {
     pressureAfterRelief = ControlData.pressure;
     pressureAfterReliefMillis = pressureAcquiredMillis;
-    // These belong to the relief being completed. Preserve them for its log
-    // before clearing the live values used to detect the next relief cycle.
+    // These belong to the vent being completed. Preserve them for its log
+    // before clearing the live values used to detect the next cycle.
     pressureReachedTarget = 0;
     pressureReachedTargetMillis = 0;
-    adjustedPressureAfterRelief = volumeDeterminationActive
-      ? pressureAfterRelief : adjustedPressureForPostRelief(pressureAfterRelief, pressureAfterReliefMillis);
-       // Todo: tentar fazer esse expoente ser determinado dinamicamente ou entao apurar o fator de queda de pressao ao na ejeçao (talvez so sirva para fermentacao  estavel e intensa)
-
-    const float targetResidual = FMTData.targetResidualAfterReliefPercent / 100.0f;
-    adjustedEquilibriumPressure = adjustedEquilibriumPressureForPostRelief(
-      pressureAfterRelief, pressureAfterReliefMillis, !volumeDeterminationActive);
-    if (volumeDeterminationActive && isfinite(volumeAdjustedEquilibriumSnapshot))
-      adjustedEquilibriumPressure = volumeAdjustedEquilibriumSnapshot;
-    // Expansion-tank pressure at close. Fermenter and tank both stop at
-    // (1 - r) of their way to the common pressure, so the gap left between them
-    // is r * pressureOnReliefMeas (the tank starts at 0 gauge) and the tank is at
-    // (1 - r) * Peq = (1 - r) * Pon - drop. The former Pon - drop / (1 - r)^2
-    // left a gap of only ~2r * drop (+0.9 to 1.7% ejected, batch 160).
-    tankPressureAtClose = (1.0f - targetResidual) * pressureOnReliefMeas -
-      (pressureOnReliefMeas - pressureAfterRelief);
-
+    // Settled pressure: the reading right after closing (gas still cold)
+    // through the polytropic exponent.
+    adjustedPressureAfterRelief = adjustedPressureForPostRelief(pressureAfterRelief, pressureAfterReliefMillis);
     if (isfinite(pressureOnReliefExtrap) && pressureOnReliefExtrap > 0.01f &&
-        isfinite(adjustedEquilibriumPressure)) {
-      instantPressureDropFactor = adjustedEquilibriumPressure / pressureOnReliefExtrap;
+        isfinite(adjustedPressureAfterRelief)) {
+      instantPressureDropFactor = adjustedPressureAfterRelief / pressureOnReliefExtrap;
     }
 
+    // Count (docs/vent.md): the flow model with the real opening time, the
+    // log mean of the pressures at opening and right after closing, and the
+    // gas temperature. No headspace and no reading during the transient.
+    ventGasK = ventGasKelvin();
+    const VentModel::VentCount count = VentModel::ventMoles(FMTData.ventCurve, FMTData.flowLevelFactor,
+        ventRealSeconds, pressureOnReliefMeas, pressureAfterRelief, Patm, ventGasK,
+        FMTData.FMTEffectiveVentingExponent);
+    ventResult.pMeanGauge = count.pMeanGauge;
+    ventResult.cooling = count.cooling;
+    ventResult.flowConstant = count.flowConstant;
+    ventResult.flowMoles = count.moles;
+    ventResult.apparentHeadspace = (isfinite(pressureOnReliefExtrap) && isfinite(adjustedPressureAfterRelief))
+        ? VentModel::apparentHeadspace(count.moles, pressureOnReliefExtrap, adjustedPressureAfterRelief, Patm, ventGasK)
+        : NAN;
+    ventResult.dropPercent = isfinite(instantPressureDropFactor) ? 100.0f * (1.0f - instantPressureDropFactor) : NAN;
+
     const bool skipTaskWindow = reliefOpenedDuringTask || taskWindowType != 0;
-    // [RELIEF-CHECK] A suspect relief (leak or no effect, docs/alarms.md) does
-    // not feed the headspace, and its CO2 is the fermenter-side loss over the
-    // reference headspace instead of the tank-side estimate.
-    reliefCheckResult = evaluateReliefCheck(instantPressureDropFactor, skipTaskWindow);
-    const bool reliefQuarantined = reliefCheckResult == RELIEF_CHECK_LEAK ||
-                                   reliefCheckResult == RELIEF_CHECK_NO_EFFECT;
-    if (reliefQuarantined)
-      tankPressureAtClose = fmaxf(0.0f, pressureOnReliefExtrap - adjustedEquilibriumPressure) *
-          CountersData.headSpaceVolume / fermentationReliefVolume();
-    if (!skipTaskWindow && !reliefQuarantined && isfinite(instantPressureDropFactor) &&
-        instantPressureDropFactor > 0.0f && instantPressureDropFactor < 1.0f) {
-      const float headspaceMeasured =
-        volumeEstimationFromPressureDrop(instantPressureDropFactor);
+    reliefCheckResult = evaluateVentCheck(count.moles, ventGasK, skipTaskWindow);
+    const bool noEffect = reliefCheckResult == RELIEF_CHECK_NO_EFFECT;
+    double moles = count.moles;
+    ventResult.counted = "flow";
+    if (noEffect) {
+      // Fermenter-side loss over the reference headspace (about nothing when
+      // the valve did not open).
+      const double pOn = pressureOnReliefExtrap + Patm, pAfter = adjustedPressureAfterRelief + Patm;
+      moles = fmax(0.0, (pOn / VentModel::co2Z(pOn, ventGasK) - pAfter / VentModel::co2Z(pAfter, ventGasK)) *
+                        CountersData.headSpaceVolume / (CONST_R * ventGasK));
+      ventResult.counted = "fermenter-side";
+    }
+    if (!ventCountsCO2()) {
+      moles = 0.0;
+      ventResult.counted = "none";
+    }
+    ventResult.countedMoles = moles;
+    ejectedMolsBeforeLiquidCorrection = moles;
+    ejectedMols = moles * (1.0f - FMTData.liquidMassInGasVentingPercent / 100.0f);
+    CountersData.totalMolsEjected += ejectedMols;
+
+    // Apparent headspace of the vent: the 24-hour average and the EMA, except
+    // in task windows and for a vent without effect.
+    if (ventCountsCO2() && !skipTaskWindow && !noEffect) {
+      const float headspaceMeasured = ventResult.apparentHeadspace;
       const bool validHeadspaceMeasured = isfinite(headspaceMeasured) &&
         headspaceMeasured > 0.0f && headspaceMeasured < FMTData.FMTVolume;
       // [DAILY-HS] Every valid measurement enters the 24-hour average,
-      // including reliefs 1-3, except those of the volume determination.
+      // including vents 1-3.
       if (validHeadspaceMeasured) {
         headspaceMeasuredForLog = headspaceMeasured;
-        if (!volumeDeterminationActive) dailyHsAccumulate(headspaceMeasured);
+        dailyHsAccumulate(headspaceMeasured);
       }
       if (validHeadspaceMeasured && CountersData.totalReliefCount < 3 &&
           !isfinite(headspaceFiltered)) {
-        // Keep the three initial factors only for the geometric initialization.
-        lnPressureDropAvg.add(logf(instantPressureDropFactor));
+        // Keep the three initial values only for the geometric initialization.
+        lnPressureDropAvg.add(logf(headspaceMeasured));
         collectingInitialHeadspaceSamples = true;
       } else if (validHeadspaceMeasured) {
         if (!isfinite(headspaceFiltered)) {
@@ -3045,152 +2524,42 @@ void processPressure(bool afterRelief) {
       }
     }
 
-    if (gasFlowCycle && headspaceUpdated && headspaceFromDaily) {
-      gasHeadspaceUpdateStatus = "updated_daily_average"; // [DAILY-HS]
-    } else if (gasFlowCycle && headspaceUpdated) {
-      gasHeadspaceUpdateStatus = "updated_adjusted_equilibrium";
-    } else if (gasFlowCycle && collectingInitialHeadspaceSamples) {
-      gasHeadspaceUpdateStatus = "collecting_initial_samples";
-    } else if (gasFlowCycle && reliefQuarantined) {
-      gasHeadspaceUpdateStatus = "skipped_relief_check";
-    } else if (gasFlowCycle && skipTaskWindow) {
-      gasHeadspaceUpdateStatus = "skipped_task_window";
-    } else if (gasFlowCycle &&
-               strcmp(gasHeadspaceUpdateStatus, "missing_pressure_rise_reference") != 0 &&
-               strcmp(gasHeadspaceUpdateStatus, "invalid_pressure_compensation") != 0) {
-      gasHeadspaceUpdateStatus = "skipped_invalid_pressure_ratio";
+    if (!ventCountsCO2()) {
+      ventHeadspaceStatus = "not_counted";
+    } else if (headspaceUpdated && headspaceFromDaily) {
+      ventHeadspaceStatus = "updated_daily_average"; // [DAILY-HS]
+    } else if (headspaceUpdated) {
+      ventHeadspaceStatus = "updated_ema";
+    } else if (collectingInitialHeadspaceSamples) {
+      ventHeadspaceStatus = "collecting_initial_samples";
+    } else if (noEffect) {
+      ventHeadspaceStatus = "skipped_vent_check";
+    } else if (skipTaskWindow) {
+      ventHeadspaceStatus = "skipped_task_window";
+    } else if (!isfinite(pressureOnReliefExtrap)) {
+      ventHeadspaceStatus = "missing_pressure_rise_reference";
+    } else {
+      ventHeadspaceStatus = "skipped_invalid_drop";
     }
-    
-    if (pendingReliefIndex >= 0) {
-      PressureReliefRecord &record = pressureReliefHistory[pendingReliefIndex];
-      record.pressureAfter = ControlData.pressure;
-      record.currentAfter = currentReading;
-      record.adjustedEquilibriumPressure = adjustedEquilibriumPressure;
-    }
-    pendingReliefIndex = -1;
 
-    // The tank pressure at close is the measured transfer inventory. Install it
-    // as the venting curve baseline only now, after the post-relief reading.
-    const float expansionTankMoles = fmaxf(0.0f, tankPressureAtClose) * fermentationReliefVolume() /
-      (CONST_R * kelvin(ControlData.temperature));
-    gasTankMolesAtClose = expansionTankMoles;
-    gasTankPressureAtClose = fmaxf(0.0f, tankPressureAtClose);
-    gasVentingFactorAtClose = GasFlow::ventingResidualFactorAtPressure(
-      tankPressureAtClose, FMTData.ventingResidualCoefficientA,
-      FMTData.ventingResidualCoefficientB, FMTData.ventingResidualCoefficientC);
-    if (!gasFlowCycle) {
-      gasVentingFermenterVolume = FMTData.FMTVolume;
-      gasVentingExpansionVolume = FMTData.FMTReliefVolume;
-    }
-    gasTankHasHistory = true;
-    gasVentedMolesAccounted = 0;
-    gasVentedMolesCredited = 0;
-    gasVentingActive = true;
-
-    const unsigned long ventingLogMillis = millis();
-    accountExpansionTankVenting(ventingLogMillis);
-    ventingElapsedAtLogSeconds = (ventingLogMillis - gasClosedMillis) / 1000.0f;
-    ejectedMolsBeforeLiquidCorrection = fmaxf(0.0f,
-      (float)gasVentedMolesAccounted);
-    ejectedMols = ejectedMolsBeforeLiquidCorrection *
-      (1.0f - FMTData.liquidMassInGasVentingPercent / 100.0f);
-    
-    CountersData.totalReliefCount += 1;    
+    CountersData.totalReliefCount += 1;
     polytropicReferenceCloseMillis = reliefValveClosedMillis;
     polytropicReferenceReliefNumber = CountersData.totalReliefCount;
     polytropicReferencePressureBefore = pressureOnReliefMeas;
     polytropicReferencePressureAfter = pressureAfterRelief;
     polytropicReferencePressureAfterMillis = pressureAfterReliefMillis;
-
+    armStuckOpenCheck();
   }
 
   recomputeDissolvedCO2MolsFromCurrentState();
   recomputeHeadspaceCO2MolsFromCurrentState();
   recomputeBeerCO2EvolutionFromCurrentState();
   updateCO2MolsProducedPerLiter(beerVolumeBeforeEvent);
-  
-  //float lastTotalCO2MolsProceduced = CountersData.CO2InSolution + headSpaceCO2Mols + CountersData.totalMolsEjected; está sendo usado ou não?
-
-//  float massCO2Produced = CO2Mass(CountersData.totalCO2MolsProduced - lastTotalCO2MolsProceduced);
-
-//  Serial.println(EstimateSGFromProducedCO2Mol(beerSG, beerVolume, CountersData.totalCO2MolsProduced - lastTotalCO2MolsProceduced) *1000.0);
-/*
-  float Pi = SGToPlato(BatchData.batchOG) + BatchData.addedPlato;
-  float SGu = 1 + (Pi / (258.6-(Pi/258.2)*227.1));
-  float totalCO2Mols = CountersData.totalMolsEjected + CountersData.CO2InSolution + headSpaceCO2Mols + expansionTankInventoryMoles();
-  beerPlato = (100*(10*beerVolume*SGu*Pi - 90.08 * totalCO2Mols)
-                / (1000*beerVolume*SGu - 44.01 * totalCO2Mols) 
-             - 0.1808*Pi ) 
-             / 0.8192;
-  beerSG = PlatoToSG(beerPlato);
-  beerABV = 100*(105*(BatchData.batchOG - beerSG) / (100 - beerSG) * (beerSG / 0.79));
-  */
   calculateFermentationState();
-  
-  if (afterRelief && volumeDeterminationActive) {
-    volumeIteration++;
-
-    if (volumeAwaitingRecord && volumeRecordIndex >= 0) {
-      PressureReliefRecord &record = pressureReliefHistory[volumeRecordIndex];
-
-      record.tiK = volumeStartTemperatureK;
-      record.tfK = kelvin(ControlData.temperature);
-      record.pi = volumeStartPressure;
-      record.nReliefs = (volumeIteration >= volumeStartReliefIteration)
-              ? (volumeIteration - volumeStartReliefIteration)
-              : 0;
-      record.volumeMetricsValid = false;
-
-      if (record.tiK > 0.0f && record.tfK > 0.0f && record.pi > 0.0f && record.nReliefs > 0) {
-        record.pfAdjusted = (record.pressureAfter+Patm) * (record.tiK / record.tfK) - Patm;
-        if (record.pfAdjusted > 0.0f) {
-          record.factorMedio = powf(record.pfAdjusted / record.pi, 1.0f / (float)record.nReliefs);
-
-            record.fermenterVolume = volumeRoutineVolume(record.factorMedio, record.temperature,
-                                                         record.expansionTankTemperature);
-            record.volumeMetricsValid = isfinite(record.fermenterVolume) && record.fermenterVolume > 0.0f;
-            volumeCalculatedSoFar = record.fermenterVolume;
-            volumeCalculatedSoFarValid = record.volumeMetricsValid;
-            record.kCumulative = volumeRoutineCalibratedK(record.factorMedio, record.temperature,
-                                                          record.expansionTankTemperature);
-        }
-      }
-      if (volumeDeterminationFast) {
-        record.tRefK = expansionTankReferenceKelvin(volumeRoutineK(), volumeRoutineGamma(),
-                                                    record.temperature, record.expansionTankTemperature);
-        if (record.pressureBefore > 0.0001f)
-          record.kRelief = volumeRoutineCalibratedK(record.pressureAfter / record.pressureBefore,
-                                                    record.temperature, record.expansionTankTemperature);
-      }
-
-      volumeFittedSoFar = fitVolumeFromHistory();
-      record.fittedVolume = volumeFittedSoFar;
-      record.pressureSettled = volumePressureSettled;
-      record.volumeDifferencePercent = record.volumeMetricsValid && isfinite(record.fittedVolume)
-          ? 100.0f * (record.fittedVolume / record.fermenterVolume - 1.0f) : NAN;
-      record.recentFittedVolume = fitVolumeFromHistory(VOLUME_RECENT_FIT_WINDOW);
-      record.recentDifferencePercent = isfinite(record.recentFittedVolume) &&
-          isfinite(record.fittedVolume) && record.fittedVolume > 0.0f
-          ? 100.0f * (record.recentFittedVolume / record.fittedVolume - 1.0f) : NAN;
-      volumeConverged = volumeHasConverged();
-      record.converged = volumeConverged;
-
-      char line1[40];
-      char line2[40];
-      char line3[40];
-      snprintf(line1, sizeof(line1), "Iteracao: %u", volumeIteration);
-      formatVolumeComparison(line2, sizeof(line2), line3, sizeof(line3),
-                             record.volumeMetricsValid ? record.fermenterVolume : NAN,
-                             record.fittedVolume);
-      showCalibrationPanel(line1, line2, line3);
-      volumeAwaitingRecord = false;
-      volumeRecordIndex = -1;
-    }
-  }
 
   if (afterRelief) {
     const double totalCO2Mols = CountersData.totalMolsEjected +
-                                CountersData.CO2InSolution + headSpaceCO2Mols + expansionTankInventoryMoles();
+                                CountersData.CO2InSolution + headSpaceCO2Mols;
     ReliefLogData reliefLog = {};
     reliefLog.povotoNumber = (int)FMTData.PovotoNum;
     reliefLog.reliefNumber = CountersData.totalReliefCount;
@@ -3202,10 +2571,8 @@ void processPressure(bool afterRelief) {
     reliefLog.atmosphericPressure = Patm;
     reliefLog.atmosphericPressureSource = atmosphericPressureSourceLabel();
     reliefLog.environmentTemperature = environmentTemp;
-    reliefLog.expansionTankTemperature = expansionTankTemp;
-    reliefLog.tankReferenceTemperature = expansionTankReferenceKelvin(
-        FMTData.expansionTankKCO2, GAMMA_CO2, ControlData.temperature, expansionTankTemp) - 273.15f;
-    reliefLog.reliefVolume = FMTData.FMTReliefVolume;
+    reliefLog.gasTemperature = ventGasK - 273.15;
+    reliefLog.gasTemperatureSource = ventPlan.gasSource;
     reliefLog.effectiveVentingExponent = FMTData.FMTEffectiveVentingExponent;
     reliefLog.pressureOnReliefMeasured = pressureOnReliefMeas;
     reliefLog.currentOnReliefMeasured = currentOnReliefMeasured;
@@ -3214,35 +2581,28 @@ void processPressure(bool afterRelief) {
     reliefLog.pressureAfterRelief = pressureAfterRelief;
     reliefLog.currentAfterRelief = currentReading;
     reliefLog.adjustedPressureAfterRelief = adjustedPressureAfterRelief;
-    reliefLog.adjustedEquilibriumPressure = adjustedEquilibriumPressure;
-    reliefLog.tankPressureAtClose = tankPressureAtClose;
-    reliefLog.reliefDropRatio = reliefCheckResult != RELIEF_CHECK_SKIPPED ? reliefCheckDropRatio : NAN;
-    reliefLog.reliefCheck = reliefCheckLabel(reliefCheckResult);
+    reliefLog.ventEstimatedSeconds = ventPlan.estimatedSeconds;
+    reliefLog.ventSafetySeconds = ventPlan.safetySeconds;
+    reliefLog.ventPlannedSeconds = ventPlan.plannedSeconds;
+    reliefLog.ventLimit = ventPlan.limit;
+    reliefLog.ventHeadspaceForTime = ventPlan.headspace;
+    reliefLog.ventRealSeconds = ventRealSeconds;
+    reliefLog.ventT0Seconds = FMTData.ventCurve.t0;
+    reliefLog.ventMeanPressure = ventResult.pMeanGauge;
+    reliefLog.ventCoolingFactor = ventResult.cooling;
+    reliefLog.ventFlowConstant = ventResult.flowConstant;
+    reliefLog.flowLevelFactor = FMTData.flowLevelFactor;
+    reliefLog.ventFlowMoles = ventResult.flowMoles;
+    reliefLog.ventCounted = ventResult.counted;
+    reliefLog.ventDropPercent = ventResult.dropPercent;
+    reliefLog.ventTargetDropPercent = FMTData.ventTargetDropPercent;
     reliefLog.liquidMassInGasVentingPercent = FMTData.liquidMassInGasVentingPercent;
-    reliefLog.expansionTankResidualMoles = gasPreviousTankValid ?
-      (float)gasPreviousTankRemainingMoles : NAN;
-    reliefLog.ventingElapsedAtLogSeconds = ventingElapsedAtLogSeconds;
-    reliefLog.previousTankPressureAtCloseBar = (float)gasPreviousTankPressureAtClose;
-    reliefLog.previousTankPressureAtOpenBar = (float)gasPreviousTankPressureAtOpen;
-    reliefLog.previousTankEjectedMoles = (float)gasPreviousTankCreditedMoles;
     reliefLog.ejectedMolsBeforeLiquidCorrection = ejectedMolsBeforeLiquidCorrection;
     reliefLog.instantaneousPressureDropFactor = instantPressureDropFactor;
-    reliefLog.pressureDropFactor = pressureDropFactor;
     reliefLog.headSpaceVolume = CountersData.headSpaceVolume;
     reliefLog.beerVolume = beerVolume;
     reliefLog.ejectedMols = ejectedMols;
-    reliefLog.gasFlowModelActive = gasFlowCycle;
-    reliefLog.gasOpeningSeconds = gasFlowCycle ? gasLoggedOpenSeconds : NAN;
-    reliefLog.gasPreviousVentingSeconds = gasFlowCycle ? gasLoggedVentingSeconds : NAN;
-    reliefLog.gasExpansionResidual = gasFlowCycle ? gasLoggedResidual : NAN;
-    reliefLog.gasTankMolesAtClose = gasTankMolesAtClose;
-    reliefLog.gasVentingResidualFactor = gasFlowCycle ? gasVentingFactorAtClose : NAN;
-    reliefLog.gasExpansionOptimalSeconds = gasFlowCycle ? gasLoggedExpansionOptimalSeconds : NAN;
-    reliefLog.gasPlannedExpansionSeconds = gasFlowCycle ? gasPlannedExpansionSeconds : NAN;
-    reliefLog.gasCalculatedPressureCompensation = gasFlowCycle ? gasCalculatedPressureCompensation : NAN;
-    reliefLog.gasAppliedPressureCompensation = gasFlowCycle ? gasAppliedPressureCompensation : NAN;
-    reliefLog.gasHeadspaceUpdateStatus = gasFlowCycle ? gasHeadspaceUpdateStatus : "not_applicable";
-    reliefLog.gasVentingResidual = gasFlowCycle ? gasLoggedPreviousVentingResidual : NAN;
+    reliefLog.ventHeadspaceStatus = ventHeadspaceStatus;
     reliefLog.totalMolsEjected = CountersData.totalMolsEjected;
     reliefLog.headSpaceCO2Mols = headSpaceCO2Mols;
     reliefLog.dissolvedCO2Mols = CountersData.CO2InSolution;
@@ -3256,23 +2616,24 @@ void processPressure(bool afterRelief) {
     reliefLog.polytropicFitRMSEBar = polytropicFitRMSEBar;
     // [DAILY-HS] headSpaceVolume above is the applied value.
     reliefLog.headSpaceMeasured = headspaceMeasuredForLog;
-    reliefLog.kCO2FromBeerVolume = volumeDeterminationActive ? NAN : kCO2FromBeerVolume(instantPressureDropFactor);
+    reliefLog.headSpaceApparent = ventResult.apparentHeadspace;
     reliefLog.headSpaceEMA = headspaceFiltered;
     reliefLog.headSpaceDaily = dailyHsValue;
     reliefLog.dailyHours = dailyHsHours;
     reliefLog.dailyState = dailyHsStateLabel();
+    reliefLog.reliefDropRatio = reliefCheckResult != RELIEF_CHECK_SKIPPED ? reliefCheckDropRatio : NAN;
+    reliefLog.reliefCheck = reliefCheckLabel(reliefCheckResult);
     doReliefDataLog(reliefLog);
 
-    // The third relief was logged using the configured initial volume. Its
-    // pressure sample completes the geometric initialization for the filter,
-    // which is installed only for the next relief and later calculations.
+    // The third vent was logged using the configured initial volume. Its
+    // value completes the geometric initialization of the filter, which is
+    // installed only for the next vent and later calculations.
     if (CountersData.totalReliefCount == 3 &&
         isfinite(BatchData.initialBeerVolume) &&
         BatchData.initialBeerVolume > 0.0f &&
         BatchData.initialBeerVolume <= FMTData.FMTVolume &&
-        !isfinite(headspaceFiltered)) {
-      const float initialFactor = expf(lnPressureDropAvg.value());
-      const float estimatedHeadspace = volumeEstimationFromPressureDrop(initialFactor);
+        !isfinite(headspaceFiltered) && lnPressureDropAvg.value() != 0.0f) {
+      const float estimatedHeadspace = expf(lnPressureDropAvg.value());
       if (applyFilteredHeadspace(estimatedHeadspace)) {
         headspaceFilterAlpha = 0.05f;
         lnPressureDropAvg.clear();
@@ -3287,128 +2648,74 @@ bool processReliefCycle() {
     static unsigned long ReliefStartPressureTime = 0;
     if (timeToStartExpansion) {
       if (!MILLISDIFF(timeToStartExpansion, 0)) {
-        digitalWrite(PINVENTINGLED, HIGH); // just to control led indicating delay to finish last cycle relief
-        ;Serial.printf("Cor: vermelha (2) %lu\n", millis() / 1000);
+        digitalWrite(PINVENTINGLED, HIGH); // LED: a vent is waiting to open
       }
       else {
-        //;Serial.printf("[PRESSURE] %lu / %lu: Abrindo transfer valve. Pressure=%.2f bar\n", millis(), timeToStartExpansion, ControlData.pressure);
         // Use an acquisition at/after the scheduled opening for the common
-        // pre-relief reference used by both correction and diagnostic fit.
+        // pre-vent reference used by both correction and diagnostic fit.
         if (!pressureAcquisitionValid || inPressureNoiseWindow() ||
             (int32_t)(pressureAcquiredMillis - timeToStartExpansion) < 0) return true;
         estimatePreviousReliefPolytropicExponent();
         pressureOnReliefMeas = ControlData.pressure;
         pressureOnReliefMeasuredMillis = pressureAcquiredMillis;
         currentOnReliefMeasured = currentReading;
+        planVent(pressureOnReliefMeas);
+        digitalWrite(PINVENTINGLED, LOW);
+        digitalWrite(PINTRANSFERVALVE, HIGH); ventOpenMicros = esp_timer_get_time();
         ReliefStartPressureTime = millis();
         reliefValveOpenedMillis = ReliefStartPressureTime;
         reliefOpenedDuringTask = taskWindowType != 0;
-        capturePreviousTankVenting(ReliefStartPressureTime);
-        if (gasFlowCycle) {
-          timeToFinishExpansion = expansionTimeMilliseconds(pressureOnReliefMeas);
-          beginGasExpansion();
-        }
-        digitalWrite(PINVENTINGLED, LOW);
-        digitalWrite(PINTRANSFERVALVE, HIGH);
         markSolenoidToggle();
         ControlData.transferValve = true;
-        timeToFinishExpansion += millis();
-        timeToStartExpansion = 0; 
+        timeToFinishExpansion = ReliefStartPressureTime + (unsigned long)lroundf(ventPlan.plannedSeconds * 1000.0f);
+        if (!timeToFinishExpansion) timeToFinishExpansion = 1;
+        timeToStartExpansion = 0;
       }
     }
     else if (timeToFinishExpansion) {
       if (MILLISDIFF(timeToFinishExpansion, 0)) {
-        //;Serial.printf("[PRESSURE] %lu / %lu: Fechando transfer valve. Pressure=%.2f bar\n", millis(), timeToFinishExpansion, ControlData.pressure);
+        // The closing is timed here, in the loop: a late loop only makes the
+        // drop larger; the real opening time is what counts.
+        digitalWrite(PINTRANSFERVALVE, LOW); const int64_t ventCloseMicros = esp_timer_get_time();
+        ventRealSeconds = float((ventCloseMicros - ventOpenMicros) / 1e6);
+        // Rise of the pressure by the fermentation during the opening, from
+        // the rate before it (at most 0.1 bar): the reference for the drop.
         float extrapolation =
             (pressureOnReliefMeas - pressureReachedTarget)
             * float(millis() - ReliefStartPressureTime)
             / float(ReliefStartPressureTime - pressureReachedTargetMillis);
-        if (gasFlowCycle) {
-          gasCalculatedPressureCompensation = extrapolation;
-          gasAppliedPressureCompensation = NAN;
-          gasPressureCompensationValid = false;
-          const unsigned long observationMs = ReliefStartPressureTime - pressureReachedTargetMillis;
-          if (!pressureReachedTargetMillis || observationMs == 0 || observationMs >= 0x80000000UL) {
-            gasHeadspaceUpdateStatus = "missing_pressure_rise_reference";
-          } else if (!isfinite(extrapolation) || extrapolation < 0) {
-            gasHeadspaceUpdateStatus = "invalid_pressure_compensation";
-          } else {
-            gasPressureCompensationValid = true;
-            gasAppliedPressureCompensation = fminf(extrapolation, 0.1f);
-            gasHeadspaceUpdateStatus = "pending_pressure_reading";
-          }
-        }
-        if (!isfinite(extrapolation) || extrapolation < 0) {
-          extrapolation = 0.0f;
-        } else {
-          extrapolation = fminf(extrapolation, 0.1f);
-        }
-        pressureOnReliefExtrap = pressureOnReliefMeas + extrapolation;
-        if (gasFlowCycle && !gasPressureCompensationValid)
-          pressureOnReliefExtrap = NAN;
+        const unsigned long observationMs = ReliefStartPressureTime - pressureReachedTargetMillis;
+        const bool riseReference = pressureReachedTargetMillis && observationMs != 0 && observationMs < 0x80000000UL &&
+            isfinite(extrapolation) && extrapolation >= 0.0f;
+        // Without a reference only the count runs (it does not use it); the
+        // headspace and the vent check need it.
+        pressureOnReliefExtrap = riseReference || !ventCountsCO2()
+            ? pressureOnReliefMeas + (riseReference ? fminf(extrapolation, 0.1f) : 0.0f) : NAN;
 
-        digitalWrite(PINTRANSFERVALVE, LOW);
         digitalWrite(PINVENTINGLED, HIGH);
         markSolenoidToggle();
         ControlData.transferValve = false;
-        const unsigned long transferClosedMillis = millis();
-        reliefValveClosedMillis = transferClosedMillis;
+        reliefValveClosedMillis = millis();
         pressureAcquisitionValid = false;
         clearPolytropicSamples();
-        // The measured inventory is installed at the post-relief reading, but
-        // its venting clock starts when the transfer valve actually closes.
-        gasClosedMillis = transferClosedMillis;
-        if (gasFlowCycle) finishGasExpansion(transferClosedMillis);
         resetCurrentMedianFilter();
         noPressureReadUntil = millis() + TRANSFER_CLOSE_PRESSURE_BLOCK_MS;
-        if (volumeDeterminationActive) {
-          // Fast mode uses two minutes of venting; slow mode preserves four.
-          volumeLastReliefMillis = millis();
-          volumePressureSettled = false;
-          volumeAdjustedEquilibriumSnapshot = NAN;
-          volumeAdjustedEquilibriumCaptureMillis = noPressureReadUntil;
-          timeToRegisterPressure = volumeLastReliefMillis +
-              (volumeDeterminationFast ? VOLUME_DETERMINATION_FAST_WAIT_MS : VOLUME_DETERMINATION_WAIT_MS);
-        } else {
-          timeToRegisterPressure = noPressureReadUntil;
-        }
+        timeToRegisterPressure = noPressureReadUntil;
+        if (!timeToRegisterPressure) timeToRegisterPressure = 1;
         timeToFinishExpansion = 0;
       }
-    }
-    /*else {
-      digitalWrite(PINTRANSFERVALVE, LOW);
-      digitalWrite(PINVENTINGLED, LOW);
-      ControlData.transferValve = false;  
-        ;Serial.println("Cor: apagada2");
-
-    }*/
-
-    if (volumeAdjustedEquilibriumCaptureMillis &&
-        pressureAcquisitionValid &&
-        (int32_t)(pressureAcquiredMillis - volumeAdjustedEquilibriumCaptureMillis) >= 0) {
-      // Capture the equilibrium pressure in the same post-close window used
-      // by a normal relief, independently from the later volume reading.
-      volumeAdjustedEquilibriumSnapshot =
-        adjustedEquilibriumPressureForPostRelief(ControlData.pressure, pressureAcquiredMillis, false);
-      volumeAdjustedEquilibriumCaptureMillis = 0;
     }
 
     if (timeToRegisterPressure) {
       if (pressureAcquisitionValid &&
           (int32_t)(pressureAcquiredMillis - timeToRegisterPressure) >= 0) {
-        //;Serial.printf("[PRESSURE] %lu / %lu: Registrando pressão. Pressure=%.2f bar\n", millis(), timeToRegisterPressure, ControlData.pressure);
         timeToRegisterPressure = 0;
-        if (volumeDeterminationActive) volumePressureSettled = true;
         processPressure(true);
-        if (gasFlowCycle) {
-          gasFlowCycle = false;
-        }
-        digitalWrite(PINVENTINGLED, LOW);        
+        digitalWrite(PINVENTINGLED, LOW);
         digitalWrite(PINTRANSFERVALVE, LOW);
-
       }
-    }    
-    
+    }
+
     return true;
   }
   else
@@ -3416,1096 +2723,23 @@ bool processReliefCycle() {
 }
 
 
-void pressureRelief(bool fromVolumeDetermination) {
-  static unsigned long lastReliefEvent = 0;
-  if (speedCalibrationActive || inTheMiddleOfRelief()) { // if we're still in the middle of a relief, ignore new relief requests to avoid overlapping and potential hardware issues
+// Called from the main loop and from the web task (Control page): it only
+// schedules; processReliefCycle() opens and closes the valve in the loop.
+void pressureRelief() {
+  if (inTheMiddleOfRelief()) { // never overlap two vents
     return;
   }
-  const bool useGasFlow = !fromVolumeDetermination && gasFlowMode();
-  gasFlowCycle = useGasFlow;
-  if (gasFlowCycle) {
-    gasCycleA = FMTData.expansionTimeCoefficientA;
-    gasCycleB = FMTData.expansionTimeCoefficientB;
-  }
-  
-  if (fromVolumeDetermination) {
-    const uint16_t nextCycle = volumeIteration + 1;
-    // Keep a complete diagnostic history. The first five cycles remain
-    // stabilization cycles and are excluded from the volume calculation by
-    // delaying the calculation baseline until cycle six.
-    const bool shouldRecordCycle = nextCycle <= VOLUME_DETERMINATION_RECORD_END_CYCLE;
-
-    volumeAwaitingRecord = false;
-    volumeRecordIndex = -1;
-    pendingReliefIndex = -1;
-
-    if (shouldRecordCycle) {
-      if (!pressureReliefHistory) {
-        return;
-      }
-
-      if (nextCycle == VOLUME_DETERMINATION_RECORD_START_CYCLE &&
-          (volumeStartTemperatureK <= 0.0f || volumeStartPressure <= 0.0f)) {
-        volumeStartTemperatureK = kelvin(ControlData.temperature);
-        volumeStartPressure = ControlData.pressure;
-        volumeStartReliefIteration = volumeIteration;
-      }
-
-      const uint16_t recordIndex = pressureReliefIndex;
-      PressureReliefRecord &record = pressureReliefHistory[recordIndex];
-      record.timestamp[0] = '\0';
-      NTPFormatedDateTime(record.timestamp);
-      record.temperature = ControlData.temperature;
-      record.expansionTankTemperature = ENV_TEMP_VALID(expansionTankTemp) ? expansionTankTemp : NAN;
-      record.tRefK = NAN;
-      record.kRelief = NAN;
-      record.kCumulative = NAN;
-      record.pressureBefore = ControlData.pressure;
-      record.pressureAfter = 0.0f;
-      record.currentBefore = currentReading;
-      record.currentAfter = 0.0f;
-      record.tiK = 0.0f;
-      record.tfK = 0.0f;
-      record.pi = 0.0f;
-      record.pfAdjusted = 0.0f;
-      record.adjustedEquilibriumPressure = NAN;
-      record.nReliefs = 0;
-      record.factorMedio = 0.0f;
-      record.fermenterVolume = 0.0f;
-      record.fittedVolume = NAN;
-      record.volumeDifferencePercent = NAN;
-      record.recentFittedVolume = NAN;
-      record.recentDifferencePercent = NAN;
-      record.trendPercentPerCycle = NAN;
-      record.converged = false;
-      record.volumeMetricsValid = false;
-      record.pressureSettled = false;
-
-      pendingReliefIndex = recordIndex;
-      volumeAwaitingRecord = true;
-      volumeRecordIndex = recordIndex;
-
-      pressureReliefIndex = (pressureReliefIndex + 1) % PRESSURE_RELIEF_HISTORY_MAX;
-      if (pressureReliefCount < PRESSURE_RELIEF_HISTORY_MAX) {
-        pressureReliefCount++;
-      }
-    }
-  }
-
-  const float pressureSeconds = (ControlData.pressure > 0.0f) ? ControlData.pressure : 0.0f;
-  const unsigned long extraMs = (unsigned long)(pressureSeconds * 1000.0L) / (debugging ? 10 : 1);
-  const bool isBrewingTransfer = (SetPointData.mode == MODE_BREWING_TRANSFERING);
-  const unsigned long reliefDurationDivisor = isBrewingTransfer ? 2UL : 1UL;
-  const unsigned long scaledTransferTime = volumeDeterminationActive
-      ? (volumeDeterminationFast ? expansionTimeMilliseconds(ControlData.pressure) : VOLUME_DETERMINATION_OPEN_MS)
-      : (unsigned long)TRANSFERTIME / reliefDurationDivisor;
-  const unsigned long scaledReliefTime = (unsigned long)RELIEFTIME / reliefDurationDivisor;
-  const unsigned long scaledExtraMs = (volumeDeterminationActive || isBrewingTransfer) ? 0 : extraMs;
-  const unsigned long scaledFinishMs = isBrewingTransfer ? 0 : 1000UL;
-  
-  
-  if (MILLISDIFF(lastReliefEvent,TRANSFERTIME + RELIEFTIME)) {
-    timeToStartExpansion     = millis() + holdPressureDueToTemperatureRelays();
-  }
-  else {
-    timeToStartExpansion     = lastReliefEvent + TRANSFERTIME + RELIEFTIME;
-    if (timeToStartExpansion < millis() + holdPressureDueToTemperatureRelays()) {
-      timeToStartExpansion = millis() + holdPressureDueToTemperatureRelays();
-    }
-  }
-  timeToFinishExpansion    = scaledTransferTime + scaledExtraMs;
-  if (gasFlowCycle) {
-    timeToStartExpansion = millis() + holdPressureDueToTemperatureRelays();
-    if (!timeToStartExpansion) timeToStartExpansion = 1;
-    timeToFinishExpansion = expansionTimeMilliseconds(ControlData.pressure);
-  }
-  timeToRegisterPressure = 0; // garante que estado anterior não vaza para novo ciclo
-
-
-  lastReliefEvent = millis()
-
-
-  ;Serial.printf("[PRESSURE] Relief requested: pressure=%.2f bar, extraMs=%lu, transferOpen=%lu, transferClose=%lu\n", 
-                ControlData.pressure, extraMs, timeToStartExpansion, timeToFinishExpansion );
-
-  // NÃO chamar processReliefCycle() aqui:
-  // pressureRelief() é chamado do async web task (core 0) e processReliefCycle()
-  // também é chamado do main loop (core 1) via pressureControl().
-  // Chamar aqui cria uma race condition onde ambos executam stage 1 simultaneamente
-  // e o += millis() de timeToFinishExpansion é aplicado duas vezes,
-  // resultando em timeToFinishExpansion ≈ 2*millis()+5000 → transfer fica aberto por ~16min.
-
-}
-
-void handlePressureHistoryCSV(AsyncWebServerRequest *request) {
-  if (pressureHistoryExportInProgress) {
-    request->send(409, "text/plain", "History export in progress");
-    return;
-  }
-
-  pressureHistoryExportInProgress = true;
-  pressureHistoryExportAvailable = (pressureReliefHistory ? pressureReliefCount : 0);
-  if (pressureHistoryExportAvailable > 100) {
-    pressureHistoryExportAvailable = 100;
-  }
-  pressureHistoryExportStartIndex = (pressureReliefIndex + PRESSURE_RELIEF_HISTORY_MAX - pressureHistoryExportAvailable) % PRESSURE_RELIEF_HISTORY_MAX;
-  pressureHistoryExportIndex = 0;
-  pressureHistoryHeaderSent = false;
-  pressureHistoryExportDone = false;
-
-  AsyncWebServerResponse *response = request->beginChunkedResponse(
-      "text/csv",
-      [](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
-        (void)index;
-
-        if (!pressureHistoryExportInProgress) {
-          return 0;
-        }
-
-        if (pressureHistoryExportDone) {
-          pressureHistoryExportDone = false;
-          pressureHistoryExportInProgress = false;
-          pressureHistoryExportAvailable = 0;
-          pressureHistoryExportStartIndex = 0;
-          pressureHistoryExportIndex = 0;
-          pressureHistoryHeaderSent = false;
-          return 0;
-        }
-
-        size_t len = 0;
-
-        if (!pressureHistoryHeaderSent) {
-          const char *header = "data_hora;temperatura;temperatura_tanque_expansao;pressao_antes;pressao_depois;adjustedEquilibriumPressure;corrente_antes_mA;corrente_depois_mA;patm;relief_volume;modo;gas;k;T_ref_K;relief_volume_efetivo;volume_estimado;Ti_K;Tf_K;Pi;Pf_ajustada;nReliefs;fatorMedio;fator_equalizado;volume_fermentador;k_relief;k_para_FMTVolume;volume_ajuste;diferenca_ajuste_percentual;volume_ajuste_ultimas10;diferenca_recente_percentual;tendencia_percentual_por_ciclo;pressao_estabilizada;convergiu\n";
-          size_t headerLen = strlen(header);
-          if (headerLen > maxLen) {
-            headerLen = maxLen;
-          }
-          memcpy(buffer, header, headerLen);
-          len += headerLen;
-          pressureHistoryHeaderSent = (headerLen == strlen(header));
-          if (!pressureHistoryHeaderSent) {
-            return len;
-          }
-        }
-
-        while (len < maxLen && pressureHistoryExportIndex < pressureHistoryExportAvailable && pressureReliefHistory) {
-          const uint16_t idx = (pressureHistoryExportStartIndex + pressureHistoryExportIndex) % PRESSURE_RELIEF_HISTORY_MAX;
-          const PressureReliefRecord &record = pressureReliefHistory[idx];
-
-          // Same equalization, residual and k as the routine's result.
-          float volumeEstimated = 0.0f;
-          if (record.pressureBefore > 0.0001f) {
-            const float single = volumeRoutineVolume(record.pressureAfter / record.pressureBefore,
-                                                     record.temperature, record.expansionTankTemperature);
-            if (isfinite(single)) volumeEstimated = single;
-          }
-
-          char tempBuf[16];
-          char envTempBuf[16] = "";
-          char modeBuf[8];
-          char gasBuf[8];
-          char kBuf[16];
-          char tRefBuf[16] = "";
-          char kReliefBuf[16] = "";
-          char effectiveReliefBuf[16];
-          char equalizedFactorBuf[16] = "";
-          char kAirBuf[16] = "";
-          char pBeforeBuf[16];
-          char pAfterBuf[16];
-          char equilibriumBuf[16];
-          char currentBeforeBuf[16];
-          char currentAfterBuf[16];
-          char patmBuf[16];
-          char reliefVolBuf[16];
-          char volumeBuf[16];
-          char tiBuf[16] = "";
-          char tfBuf[16] = "";
-          char piBuf[16] = "";
-          char pfAdjBuf[16] = "";
-          char nReliefsBuf[12] = "";
-          char factorBuf[16] = "";
-          char fermenterVolBuf[16] = "";
-          char fittedVolBuf[16] = "";
-          char differenceBuf[16] = "";
-          char recentBuf[16] = "";
-          char recentDifferenceBuf[16] = "";
-          char trendBuf[16] = "";
-          char dateBufSafe[32];
-
-          if (record.timestamp[0]) {
-            strncpy(dateBufSafe, record.timestamp, sizeof(dateBufSafe) - 1);
-            dateBufSafe[sizeof(dateBufSafe) - 1] = '\0';
-          } else {
-            strncpy(dateBufSafe, "0", sizeof(dateBufSafe));
-            dateBufSafe[sizeof(dateBufSafe) - 1] = '\0';
-          }
-          for (size_t i = 0; dateBufSafe[i] != '\0'; ++i) {
-            if ((unsigned char)dateBufSafe[i] < 32 || dateBufSafe[i] == ';' || dateBufSafe[i] == '\n' || dateBufSafe[i] == '\r') {
-              dateBufSafe[i] = '_';
-            }
-          }
-
-          formatFloatCsv(tempBuf, sizeof(tempBuf), record.temperature, 2);
-          if (isfinite(record.expansionTankTemperature))
-            formatFloatCsv(envTempBuf, sizeof(envTempBuf), record.expansionTankTemperature, 2);
-          snprintf(modeBuf, sizeof(modeBuf), "%s", volumeDeterminationFast ? "rapido" : "lento");
-          snprintf(gasBuf, sizeof(gasBuf), "%s", volumeDeterminationCO2 ? "CO2" : "ar");
-          formatFloatCsv(kBuf, sizeof(kBuf), volumeDeterminationFast ? volumeRoutineK() : 1.0f, 3);
-          if (isfinite(record.tRefK)) formatFloatCsv(tRefBuf, sizeof(tRefBuf), record.tRefK, 2);
-          if (isfinite(record.kRelief)) formatFloatCsv(kReliefBuf, sizeof(kReliefBuf), record.kRelief, 4);
-          formatFloatCsv(effectiveReliefBuf, sizeof(effectiveReliefBuf),
-                         volumeRoutineReliefVolume(record.temperature, record.expansionTankTemperature), 3);
-          formatFloatCsv(pBeforeBuf, sizeof(pBeforeBuf), record.pressureBefore, 3);
-          formatFloatCsv(pAfterBuf, sizeof(pAfterBuf), record.pressureAfter, 3);
-          formatFloatCsv(equilibriumBuf, sizeof(equilibriumBuf), record.adjustedEquilibriumPressure, 3);
-          formatFloatCsv(currentBeforeBuf, sizeof(currentBeforeBuf), record.currentBefore, 4);
-          formatFloatCsv(currentAfterBuf, sizeof(currentAfterBuf), record.currentAfter, 4);
-          formatFloatCsv(patmBuf, sizeof(patmBuf), Patm, 3);
-          formatFloatCsv(reliefVolBuf, sizeof(reliefVolBuf), FMTData.FMTReliefVolume, 2);
-          formatFloatCsv(volumeBuf, sizeof(volumeBuf), volumeEstimated, 2);
-
-          if (record.volumeMetricsValid) {
-            formatFloatCsv(tiBuf, sizeof(tiBuf), record.tiK, 2);
-            formatFloatCsv(tfBuf, sizeof(tfBuf), record.tfK, 2);
-            formatFloatCsv(piBuf, sizeof(piBuf), record.pi, 3);
-            formatFloatCsv(pfAdjBuf, sizeof(pfAdjBuf), record.pfAdjusted, 3);
-            snprintf(nReliefsBuf, sizeof(nReliefsBuf), "%u", (unsigned)record.nReliefs);
-            formatFloatCsv(factorBuf, sizeof(factorBuf), record.factorMedio, 5);
-            formatFloatCsv(equalizedFactorBuf, sizeof(equalizedFactorBuf),
-                           volumeRoutineEquilibriumFactor(record.factorMedio), 5);
-            formatFloatCsv(fermenterVolBuf, sizeof(fermenterVolBuf), record.fermenterVolume, 3);
-            if (isfinite(record.kCumulative))
-              formatFloatCsv(kAirBuf, sizeof(kAirBuf), record.kCumulative, 4);
-          }
-
-          if (isfinite(record.fittedVolume))
-            formatFloatCsv(fittedVolBuf, sizeof(fittedVolBuf), record.fittedVolume, 3);
-          if (isfinite(record.volumeDifferencePercent))
-            formatFloatCsv(differenceBuf, sizeof(differenceBuf), record.volumeDifferencePercent, 3);
-
-          if (isfinite(record.recentFittedVolume))
-            formatFloatCsv(recentBuf, sizeof(recentBuf), record.recentFittedVolume, 3);
-          if (isfinite(record.recentDifferencePercent))
-            formatFloatCsv(recentDifferenceBuf, sizeof(recentDifferenceBuf), record.recentDifferencePercent, 3);
-          if (isfinite(record.trendPercentPerCycle))
-            formatFloatCsv(trendBuf, sizeof(trendBuf), record.trendPercentPerCycle, 4);
-
-          char line[512];
-          int lineLen = snprintf(
-              line,
-              sizeof(line),
-              "%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%u;%u\n",
-              dateBufSafe,
-              tempBuf,
-              envTempBuf,
-              pBeforeBuf,
-              pAfterBuf,
-              equilibriumBuf,
-              currentBeforeBuf,
-              currentAfterBuf,
-              patmBuf,
-              reliefVolBuf,
-              modeBuf,
-              gasBuf,
-              kBuf,
-              tRefBuf,
-              effectiveReliefBuf,
-              volumeBuf,
-              tiBuf,
-              tfBuf,
-              piBuf,
-              pfAdjBuf,
-              nReliefsBuf,
-              factorBuf,
-              equalizedFactorBuf,
-              fermenterVolBuf,
-              kReliefBuf,
-              kAirBuf,
-              fittedVolBuf,
-              differenceBuf,
-              recentBuf, recentDifferenceBuf, trendBuf,
-              (unsigned)record.pressureSettled, (unsigned)record.converged);
-
-          if (lineLen <= 0) {
-            pressureHistoryExportIndex++;
-            continue;
-          }
-
-          if (len + (size_t)lineLen > maxLen) {
-            break;
-          }
-
-          memcpy(buffer + len, line, (size_t)lineLen);
-          len += (size_t)lineLen;
-          pressureHistoryExportIndex++;
-        }
-
-        if (pressureHistoryExportIndex >= pressureHistoryExportAvailable) {
-          pressureHistoryExportDone = true;
-        }
-
-        return len;
-      });
-
-  response->addHeader("Content-Disposition", "attachment; filename=pressure_history.csv");
-  response->addHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
-  response->addHeader("Pragma", "no-cache");
-  response->addHeader("Expires", "0");
-  request->send(response);
-}
-
-void handlePressureDumpCSV(AsyncWebServerRequest *request) {
-  if (pressureDumpInProgress) {
-    request->send(409, "text/plain", "Dump in progress");
-    return;
-  }
-
-  pressureDumpInProgress = true;
-  pressureDumpSamples = pressureSamples;
-  pressureDumpCount = (pressureDumpSamples ? pressureSamplesCount : 0);
-  pressureDumpIndex = 0;
-  pressureDumpHeaderSent = false;
-  pressureDumpDone = false;
-
-  AsyncWebServerResponse *response = request->beginChunkedResponse(
-      "text/csv",
-      [](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
-        (void)index;
-
-        if (!pressureDumpInProgress) {
-          return 0;
-        }
-
-        if (pressureDumpDone) {
-          pressureDumpDone = false;
-          pressureDumpInProgress = false;
-          if (pressureSamples) {
-            delete[] pressureSamples;
-            pressureSamples = nullptr;
-          }
-          pressureSamplesIndex = 0;
-          pressureSamplesCount = 0;
-          pressureLastSampleMillis = 0;
-          pressureDumpSamples = nullptr;
-          pressureDumpCount = 0;
-          pressureDumpIndex = 0;
-          pressureDumpHeaderSent = false;
-          return 0;
-        }
-
-        size_t len = 0;
-        if (!pressureDumpHeaderSent) {
-          const char *header = "min_sec;millis;pressao\n";
-          size_t headerLen = strlen(header);
-          if (headerLen > maxLen) {
-            headerLen = maxLen;
-          }
-          memcpy(buffer, header, headerLen);
-          len += headerLen;
-          pressureDumpHeaderSent = (headerLen == strlen(header));
-          if (!pressureDumpHeaderSent) {
-            return len;
-          }
-        }
-
-        while (len < maxLen && pressureDumpIndex < pressureDumpCount && pressureDumpSamples) {
-          const PressureSampleRecord &record = pressureDumpSamples[pressureDumpIndex];
-          const char *dateBuf = record.timestamp[0] ? record.timestamp : "00:00";
-          char pressBuf[16];
-          formatFloatCsv(pressBuf, sizeof(pressBuf), record.pressure, 3);
-          char line[64];
-          int lineLen = snprintf(line, sizeof(line), "%s;%lu;%s\n", dateBuf, record.millisStamp, pressBuf);
-          if (lineLen <= 0) {
-            pressureDumpIndex++;
-            continue;
-          }
-          if (len + (size_t)lineLen > maxLen) {
-            break;
-          }
-          memcpy(buffer + len, line, (size_t)lineLen);
-          len += (size_t)lineLen;
-          pressureDumpIndex++;
-        }
-
-        if (pressureDumpIndex >= pressureDumpCount) {
-          pressureDumpDone = true;
-        }
-
-        return len;
-      });
-
-  response->addHeader("Content-Disposition", "attachment; filename=pressure_dump.csv");
-  request->send(response);
-}
-
-
-// Valve writes happen only in the main loop, just like the relief state machine.
-bool startSpeedCalibration(uint8_t test, bool co2, char *reason, size_t reasonSize) {
-  const char *blocked = nullptr;
-  const float minimumPressure = test == SPEED_TEST_K_FLOOR ? 0.3f : 1.9f;
-  if (test >= SPEED_TEST_COUNT) blocked = "Invalid test";
-  else if (SetPointData.mode != MODE_OFF) blocked = "Mode must be OFF";
-  else if (calibrationRoutineActive() || inTheMiddleOfRelief() || taskWindowType != 0)
-    blocked = "Process in progress";
-  else if (!isfinite(ControlData.pressure) || ControlData.pressure < minimumPressure)
-    blocked = test == SPEED_TEST_K_FLOOR ? "Insufficient pressure (min 0.3 bar)"
-                                         : "Insufficient pressure (min 1.9 bar)";
-  else if (!isfinite(FMTData.FMTVolume) || FMTData.FMTVolume <= 0.0f ||
-           !isfinite(FMTData.FMTReliefVolume) || FMTData.FMTReliefVolume <= 0.0f)
-    blocked = "Invalid fermenter or expansion volume";
-  if (blocked) {
-    snprintf(reason, reasonSize, "%s", blocked);
-    return false;
-  }
-  speedTest = test;
-  speedGasCO2 = co2;
-  speedVolumeFactor = test == SPEED_TEST_VENTING ? 0.0f
-      : FMTData.FMTVolume / (FMTData.FMTVolume + FMTData.FMTReliefVolume);
-  speedRecordCount[test] = 0;
-  if (test == SPEED_TEST_EXPANSION) speedResults.expansionAvailable = false;
-  else if (test == SPEED_TEST_K_FLOOR) speedResults.kFloorAvailable = false;
-  else speedResults.ventingAvailable = false;
-  speedStage = 0;
-  speedStageMillis = millis();
-  speedHistoryCount = 0;
-  speedLastAcquisition = 0;
-  speedStatus = "Running";
-  speedCalibrationActive = true;
-  return true;
-}
-
-String getSpeedCalibrationStatus() {
-  return String(speedStatus) + " - expansion: " + String(speedRecordCount[SPEED_TEST_EXPANSION]) +
-         "/" + String(speedRecordTarget(SPEED_TEST_EXPANSION)) + "; k &amp; floor: " +
-         String(speedRecordCount[SPEED_TEST_K_FLOOR]) + "/" + String(speedRecordTarget(SPEED_TEST_K_FLOOR)) +
-         "; venting: " + String(speedRecordCount[SPEED_TEST_VENTING]) +
-         "/" + String(speedRecordTarget(SPEED_TEST_VENTING));
-}
-
-SpeedCalibrationResults getSpeedCalibrationResults() {
-  return speedResults;
-}
-
-static void closeSpeedValve() {
-  digitalWrite(PINTRANSFERVALVE, LOW);
-  ControlData.transferValve = false;
-  markSolenoidToggle();
-  resetCurrentMedianFilter();
-  noPressureReadUntil = millis() + TRANSFER_CLOSE_PRESSURE_BLOCK_MS;
-}
-
-bool isSpeedCalibrationActive() {
-  return speedCalibrationActive;
+  timeToRegisterPressure = 0; // no state of the previous cycle leaks into the new one
+  timeToFinishExpansion = 0;
+  unsigned long start = millis() + holdPressureDueToTemperatureRelays();
+  if (!start) start = 1;
+  timeToStartExpansion = start;
+  Serial.printf("[PRESSURE] Vent requested: pressure=%.3f bar, opening at %lu\n",
+                ControlData.pressure, timeToStartExpansion);
 }
 
 bool calibrationRoutineActive() {
-  return speedCalibrationActive || volumeDeterminationActive || sensorZeroActive();
-}
-
-static const char *speedTestName(uint8_t test) {
-  return test == SPEED_TEST_VENTING ? "Venting" : test == SPEED_TEST_K_FLOOR ? "k & floor" : "Expansion";
-}
-
-static void showSpeedCalibrationProgress(bool force = false) {
-  static unsigned long lastUpdate = 0;
-  const unsigned long now = millis();
-  if (!force && now - lastUpdate < 1000UL) return;
-  lastUpdate = now;
-  const uint8_t count = speedRecordCount[speedTest];
-  const uint8_t target = speedRecordTarget(speedTest);
-  char line1[48], line2[64], line3[64];
-  snprintf(line1, sizeof(line1), "%s: %s", speedTestName(speedTest),
-           speedCalibrationActive ? "RUN" : (count >= target ||
-             (speedTest == SPEED_TEST_VENTING && count > 0 &&
-              speedRecords[SPEED_TEST_VENTING][count - 1].p2 < 0.4f)) ? "END" : "ABORT");
-  if (speedCalibrationActive) {
-    const SpeedRecord &record = speedRecords[speedTest][count < SPEED_MAX_RECORDS ? count : SPEED_MAX_RECORDS - 1];
-    snprintf(line2, sizeof(line2), "Medicao %u/%u | %.1fs", count + 1, target,
-             speedStage == 1 ? record.requestedSeconds : 0.0f);
-    const unsigned long elapsed = (now - speedStageMillis) / 1000UL;
-    snprintf(line3, sizeof(line3), "%s %lus | P: %.3f bar",
-             speedStage == 1 ? "Aberta:" : "Espera:", elapsed, ControlData.pressure);
-  } else {
-    snprintf(line2, sizeof(line2), "Medicoes: %u/%u", count, target);
-    snprintf(line3, sizeof(line3), "%s", count == target ? "Resultado na pagina Calibration" : speedStatus);
-  }
-  showCalibrationPanel(line1, line2, line3);
-}
-
-static void speedResetWait(unsigned long now) {
-  speedStageMillis = now;
-  speedHistoryCount = 0;
-  speedLastAcquisition = 0;
-}
-
-// One sample per second of the fermenter pressure (only fresh acquisitions;
-// the first one at least SPEED_CLOSE_READING_MS after the wait started).
-static void speedSampleWait(unsigned long now) {
-  if (speedHistoryCount >= SPEED_HISTORY || !isfinite(ControlData.pressure)) return;
-  const unsigned long elapsed = now - speedStageMillis;
-  if (elapsed < SPEED_CLOSE_READING_MS) return;
-  if (!debugging && (pressureAcquiredMillis == speedLastAcquisition ||
-                     (int32_t)(pressureAcquiredMillis - speedStageMillis) < 0)) return;
-  if (speedHistoryCount > 0 && elapsed - speedHistoryMillis[speedHistoryCount - 1] < 1000UL) return;
-  speedLastAcquisition = pressureAcquiredMillis;
-  speedHistory[speedHistoryCount] = ControlData.pressure;
-  speedHistoryMillis[speedHistoryCount] = elapsed;
-  ++speedHistoryCount;
-}
-
-static float speedPressureAt(uint32_t elapsedMs) {
-  for (uint16_t i = 0; i < speedHistoryCount; ++i)
-    if (speedHistoryMillis[i] >= elapsedMs) return speedHistory[i];
-  return NAN;
-}
-
-static float speedAverageLast(uint32_t windowMs) {
-  if (speedHistoryCount == 0) return NAN;
-  const uint32_t last = speedHistoryMillis[speedHistoryCount - 1];
-  double sum = 0.0;
-  uint16_t n = 0;
-  for (uint16_t i = 0; i < speedHistoryCount; ++i) {
-    if (last - speedHistoryMillis[i] <= windowMs) { sum += speedHistory[i]; ++n; }
-  }
-  return n ? (float)(sum / n) : NAN;
-}
-
-static bool speedWaitDone() {
-  if (speedHistoryCount == 0) return false;
-  const uint32_t last = speedHistoryMillis[speedHistoryCount - 1];
-  if (last >= speedWaitMaxMs()) return true;
-  if (last < speedWaitMinMs() || last < SPEED_STABLE_WINDOW_MS) return false;
-  float earlier = NAN;
-  for (uint16_t i = 0; i < speedHistoryCount; ++i) {
-    if (last - speedHistoryMillis[i] >= SPEED_STABLE_WINDOW_MS) earlier = speedHistory[i];
-    else break;
-  }
-  return isfinite(earlier) && fabsf(speedHistory[speedHistoryCount - 1] - earlier) < SPEED_STABLE_DELTA_BAR;
-}
-
-static float speedAmbient() {
-  return ENV_TEMP_VALID(environmentTemp) ? environmentTemp : NAN;
-}
-
-// Gas-flow factor: CO2 rate / air rate (1 when the test gas is CO2).
-static float speedFlowFactor() {
-  return speedGasCO2 ? 1.0f : FMTData.flowFactorCO2Air;
-}
-
-static float medianOf(float *values, uint8_t n) {
-  if (n == 0) return NAN;
-  std::sort(values, values + n);
-  return (n % 2) ? values[n / 2] : 0.5f * (values[n / 2 - 1] + values[n / 2]);
-}
-
-// Least squares y = c0 + c1*x; false with fewer than 3 points or no x spread.
-static bool speedLinearFit(const float *x, const float *y, uint8_t n, float &c0, float &c1) {
-  if (n < 3) return false;
-  double sx = 0, sy = 0, sxx = 0, sxy = 0;
-  for (uint8_t i = 0; i < n; ++i) { sx += x[i]; sy += y[i]; sxx += x[i] * x[i]; sxy += x[i] * y[i]; }
-  const double den = n * sxx - sx * sx;
-  if (!(fabs(den) > 1e-9)) return false;
-  c1 = (float)((n * sxy - sx * sy) / den);
-  c0 = (float)((sy - c1 * sx) / n);
-  return isfinite(c0) && isfinite(c1);
-}
-
-// Expansion: R = exp(-(a - b*P)*t) + H*exp(-t/tau) + floor/P (docs/calibration-speed-evaluation.md),
-// fitted in stages: floor from the long openings, then heating (5-15 s) and flow
-// (1-3 s) alternately, each with the other subtracted, for SPEED_FIT_PASSES
-// passes (on the 17/09 data it converges in 3-5 and lands within ~1% of k of a
-// full 5-parameter least squares).
-static void computeExpansionResults() {
-  SpeedCalibrationResults &out = speedResults;
-  const uint8_t n = speedRecordCount[SPEED_TEST_EXPANSION];
-  const SpeedRecord *rec = speedRecords[SPEED_TEST_EXPANSION];
-  out.expansionAvailable = false;
-  out.expansionGasCO2 = speedGasCO2;
-  float values[SPEED_MAX_RECORDS], values2[SPEED_MAX_RECORDS], xs[SPEED_MAX_RECORDS], ys[SPEED_MAX_RECORDS];
-  uint8_t m = 0;
-  for (uint8_t i = 0; i < n; ++i)
-    if (rec[i].valid && rec[i].requestedSeconds >= 30) { values[m] = rec[i].r * rec[i].p1; values2[m] = rec[i].r; ++m; }
-  out.floorRP = medianOf(values, m);
-  out.floorR = medianOf(values2, m);
-  if (!isfinite(out.floorRP)) return;
-  m = 0;
-  for (uint8_t i = 0; i < n; ++i) {
-    if (!rec[i].valid || rec[i].requestedSeconds < 5 || rec[i].requestedSeconds > 15) continue;
-    const float y = rec[i].r - out.floorRP / rec[i].p1;
-    if (y > 0.002f) { xs[m] = rec[i].openSeconds; ys[m] = logf(y); ++m; }
-  }
-  float c0 = NAN, c1 = NAN;
-  out.flowAvailable = false;
-  out.flowA = out.flowB = NAN;
-  static constexpr uint8_t SPEED_FIT_PASSES = 5;
-  for (uint8_t pass = 0; pass < SPEED_FIT_PASSES; ++pass) {
-    if (pass > 0) {
-      m = 0;
-      for (uint8_t i = 0; i < n; ++i) {
-        if (!rec[i].valid || rec[i].requestedSeconds < 5 || rec[i].requestedSeconds > 15) continue;
-        const float flow = out.flowAvailable ? expf(-(out.flowA - out.flowB * rec[i].p1) * rec[i].openSeconds) : 0.0f;
-        const float y = rec[i].r - out.floorRP / rec[i].p1 - flow;
-        if (y > 0.002f) { xs[m] = rec[i].openSeconds; ys[m] = logf(y); ++m; }
-      }
-    }
-    if (!speedLinearFit(xs, ys, m, c0, c1) || !(c1 < 0.0f)) { out.heatTau = NAN; out.heatH = NAN; return; }
-    out.heatH = expf(c0);
-    out.heatTau = -1.0f / c1;
-    m = 0;
-    for (uint8_t i = 0; i < n; ++i) {
-      if (!rec[i].valid || rec[i].requestedSeconds > 3) continue;
-      const float z = rec[i].r - out.heatH * expf(-rec[i].openSeconds / out.heatTau) - out.floorRP / rec[i].p1;
-      if (z > 0.001f && z < 1.0f) { xs[m] = rec[i].p1; ys[m] = -logf(z) / rec[i].openSeconds; ++m; }
-    }
-    out.flowAvailable = speedLinearFit(xs, ys, m, c0, c1);
-    out.flowA = out.flowAvailable ? c0 : NAN;
-    out.flowB = out.flowAvailable ? -c1 : NAN;
-  }
-  const float factor = speedFlowFactor();
-  out.flowACO2 = out.flowA * factor;
-  out.flowBCO2 = out.flowB * factor;
-  out.flowAvailable = out.flowAvailable && GasFlow::validExpansionParameters(out.flowACO2, out.flowBCO2, FMTData.maximumPressure);
-  // Quality of the whole model and heating at the fermentation opening times.
-  double sse = 0.0;
-  uint8_t used = 0;
-  for (uint8_t i = 0; i < n; ++i) {
-    if (!rec[i].valid) continue;
-    const float t = rec[i].openSeconds, p = rec[i].p1;
-    const float flow = out.flowAvailable ? expf(-(out.flowA - out.flowB * p) * t) : 0.0f;
-    const float predicted = flow + out.heatH * expf(-t / out.heatTau) + out.floorRP / p;
-    sse += (predicted - rec[i].r) * (predicted - rec[i].r);
-    ++used;
-  }
-  out.rmse = used ? (float)sqrt(sse / used) : NAN;
-  out.points = used;
-  const float residual = FMTData.targetResidualAfterReliefPercent / 100.0f;
-  const float pressures[3] = {0.8f, 1.5f, 1.9f};
-  for (uint8_t i = 0; i < 3; ++i) {
-    // Fermentation (CO2) opening time with the new coefficients when the flow fit is valid.
-    const float t = out.flowAvailable ? -logf(residual) / (out.flowACO2 - out.flowBCO2 * pressures[i])
-                                      : (float)expansionTime(pressures[i]);
-    out.openSeconds[i] = t;
-    out.kHeat[i] = 1.0f / (1.0f - out.heatH * expf(-t / out.heatTau));
-  }
-  out.kAir = out.kHeat[1];
-  out.kCO2Estimated = 1.0f + 1.3f * (out.kAir - 1.0f);
-  // Headspace exponent of the empty fermenter (diagnostics): adiabatic drop at
-  // close against the isothermal one after settling.
-  m = 0;
-  for (uint8_t i = 0; i < n; ++i) {
-    if (!rec[i].valid || rec[i].requestedSeconds < 3 || rec[i].requestedSeconds > 10 || !isfinite(rec[i].pClose)) continue;
-    const float closeRatio = (rec[i].pClose + Patm) / (rec[i].p1 + Patm);
-    const float settledRatio = (rec[i].p2 + Patm) / (rec[i].p1 + Patm);
-    if (closeRatio < 1.0f && settledRatio < 1.0f) values[m++] = logf(closeRatio) / logf(settledRatio);
-  }
-  out.headspaceExponent = medianOf(values, m);
-  out.expansionAvailable = isfinite(out.kAir);
-}
-
-// k & floor: floor from the long openings; heating at the fermentation time =
-// R - floor/P - flow residual (current coefficients, converted to the test gas).
-static void computeKFloorResults() {
-  SpeedCalibrationResults &out = speedResults;
-  const uint8_t n = speedRecordCount[SPEED_TEST_K_FLOOR];
-  const SpeedRecord *rec = speedRecords[SPEED_TEST_K_FLOOR];
-  out.kFloorGasCO2 = speedGasCO2;
-  float floorsRP[SPEED_MAX_RECORDS], floorsR[SPEED_MAX_RECORDS], ks[SPEED_MAX_RECORDS], times[SPEED_MAX_RECORDS];
-  uint8_t nf = 0, nk = 0;
-  double pressureSum = 0.0;
-  for (uint8_t i = 0; i < n; ++i) {
-    if (!rec[i].valid) continue;
-    pressureSum += rec[i].p1;
-    if (rec[i].requestedSeconds >= 30) { floorsRP[nf] = rec[i].r * rec[i].p1; floorsR[nf] = rec[i].r; ++nf; }
-  }
-  out.kFloorPressure = (n > 0) ? (float)(pressureSum / n) : NAN;
-  out.kFloorRP = medianOf(floorsRP, nf);
-  out.kFloorR = medianOf(floorsR, nf);
-  for (uint8_t i = 0; i < n && isfinite(out.kFloorRP); ++i) {
-    if (!rec[i].valid || rec[i].requestedSeconds >= 30) continue;
-    const float t = rec[i].openSeconds, p = rec[i].p1;
-    const float rate = (FMTData.expansionTimeCoefficientA - FMTData.expansionTimeCoefficientB * p) / speedFlowFactor();
-    const float heat = rec[i].r - out.kFloorRP / p - expf(-rate * t);
-    ks[nk] = 1.0f / (1.0f - heat);
-    times[nk] = t;
-    ++nk;
-  }
-  out.kFloorK = medianOf(ks, nk);
-  out.kFloorSeconds = medianOf(times, nk);
-  out.kFloorAvailable = isfinite(out.kFloorK) && isfinite(out.kFloorRP);
-}
-
-// Venting: parabola F(P) = c*P^2 + d*P + e over the valid releases; the CO2
-// curve fits F^factor (CO2 leaves ~21% slower in moles than air).
-static bool speedParabolaFit(const float *x, const float *y, uint8_t n, float coef[3]) {
-  if (n < 3) return false;
-  double s[5] = {0, 0, 0, 0, 0}, t[3] = {0, 0, 0};
-  for (uint8_t i = 0; i < n; ++i) {
-    double p = 1.0;
-    for (uint8_t k = 0; k < 5; ++k) { s[k] += p; if (k < 3) t[k] += p * y[i]; p *= x[i]; }
-  }
-  // Normal equations for [e, d, c] (powers 0, 1, 2).
-  double m[3][4] = {{s[0], s[1], s[2], t[0]}, {s[1], s[2], s[3], t[1]}, {s[2], s[3], s[4], t[2]}};
-  for (uint8_t col = 0; col < 3; ++col) {
-    uint8_t pivot = col;
-    for (uint8_t r = col + 1; r < 3; ++r) if (fabs(m[r][col]) > fabs(m[pivot][col])) pivot = r;
-    if (fabs(m[pivot][col]) < 1e-12) return false;
-    for (uint8_t k = 0; k < 4; ++k) { const double tmp = m[col][k]; m[col][k] = m[pivot][k]; m[pivot][k] = tmp; }
-    for (uint8_t r = 0; r < 3; ++r) {
-      if (r == col) continue;
-      const double f = m[r][col] / m[col][col];
-      for (uint8_t k = col; k < 4; ++k) m[r][k] -= f * m[col][k];
-    }
-  }
-  coef[2] = (float)(m[0][3] / m[0][0]); // e
-  coef[1] = (float)(m[1][3] / m[1][1]); // d
-  coef[0] = (float)(m[2][3] / m[2][2]); // c
-  return isfinite(coef[0]) && isfinite(coef[1]) && isfinite(coef[2]);
-}
-
-static void computeVentingResults() {
-  SpeedCalibrationResults &out = speedResults;
-  const uint8_t n = speedRecordCount[SPEED_TEST_VENTING];
-  const SpeedRecord *rec = speedRecords[SPEED_TEST_VENTING];
-  out.ventingGasCO2 = speedGasCO2;
-  float x[SPEED_MAX_RECORDS], y[SPEED_MAX_RECORDS], yCO2[SPEED_MAX_RECORDS];
-  uint8_t m = 0;
-  for (uint8_t i = 0; i < n; ++i) {
-    if (!rec[i].valid) continue;
-    x[m] = rec[i].p1;
-    y[m] = rec[i].r;
-    yCO2[m] = powf(rec[i].r, speedFlowFactor());
-    ++m;
-  }
-  out.ventingAvailable = speedParabolaFit(x, y, m, out.ventingAir) && speedParabolaFit(x, yCO2, m, out.ventingCO2);
-  double sse = 0.0;
-  for (uint8_t i = 0; i < m && out.ventingAvailable; ++i) {
-    const float predicted = (out.ventingAir[0] * x[i] + out.ventingAir[1]) * x[i] + out.ventingAir[2];
-    sse += (predicted - y[i]) * (predicted - y[i]);
-  }
-  out.ventingRmse = m ? (float)sqrt(sse / m) : NAN;
-  out.ventingPoints = m;
-
-  // Change against the configured curve (CO2), to follow the valve over time
-  // (e.g. before/after cleaning it). The flow of each release is -ln F: the
-  // ratio of the logarithms is the flow against the configured one.
-  out.ventingConfigured[0] = FMTData.ventingResidualCoefficientA;
-  out.ventingConfigured[1] = FMTData.ventingResidualCoefficientB;
-  out.ventingConfigured[2] = FMTData.ventingResidualCoefficientC;
-  double sum = 0.0, sumSq = 0.0;
-  uint8_t compared = 0;
-  for (uint8_t i = 0; i < n; ++i) {
-    SpeedRecord &r = speedRecords[SPEED_TEST_VENTING][i];
-    r.fConfigured = (float)GasFlow::ventingResidualFactorAtPressure(r.p1, out.ventingConfigured[0],
-                                                                    out.ventingConfigured[1], out.ventingConfigured[2]);
-    const float fCO2 = powf(r.r, speedFlowFactor());
-    r.flowVsConfig = (r.valid && fCO2 > 0.0f && fCO2 < 1.0f && r.fConfigured > 0.0f && r.fConfigured < 1.0f)
-        ? logf(fCO2) / logf(r.fConfigured) - 1.0f : NAN;
-    if (!isfinite(r.flowVsConfig)) continue;
-    sum += r.flowVsConfig;
-    sumSq += (double)r.flowVsConfig * r.flowVsConfig;
-    ++compared;
-  }
-  out.ventingFlowVsConfigPoints = compared;
-  out.ventingFlowVsConfig = compared ? (float)(sum / compared) : NAN;
-  out.ventingFlowVsConfigSd = compared > 1
-      ? (float)sqrt(fmax(0.0, (sumSq - sum * sum / compared) / (compared - 1))) : NAN;
-  out.ventingAvailable = out.ventingAvailable &&
-      GasFlow::validVentingResidualCurve(out.ventingCO2[0], out.ventingCO2[1], out.ventingCO2[2], FMTData.maximumPressure);
-}
-
-static void speedOpenValve(SpeedRecord &record, uint8_t index, float p1, unsigned long now) {
-  record = {};
-  record.fConfigured = NAN; // filled at the end of a venting test
-  record.flowVsConfig = NAN;
-  record.epoch = NTPEpoch();
-  record.p1 = p1;
-  record.pl = p1 * speedVolumeFactor;
-  record.requestedSeconds = speedRequestedSeconds(speedTest, index, p1);
-  record.tempFermP1 = ControlData.temperature;
-  record.tempAmbP1 = speedAmbient();
-  record.pClose = record.p15 = record.p30 = record.p60 = record.p2 = record.r = NAN;
-  digitalWrite(PINTRANSFERVALVE, HIGH);
-  ControlData.transferValve = true;
-  markSolenoidToggle();
-  speedStageMillis = now;
-  speedStage = 1;
-}
-
-static void speedFinish() {
-  if (speedTest == SPEED_TEST_EXPANSION) computeExpansionResults();
-  else if (speedTest == SPEED_TEST_K_FLOOR) computeKFloorResults();
-  else computeVentingResults();
-  static char result[80];
-  uint8_t valid = 0;
-  for (uint8_t i = 0; i < speedRecordCount[speedTest]; ++i) if (speedRecords[speedTest][i].valid) ++valid;
-  snprintf(result, sizeof(result), "Completed: %u/%u valid", valid, speedRecordCount[speedTest]);
-  speedStatus = result;
-  speedCalibrationActive = false;
-  showSpeedCalibrationProgress(true);
-}
-
-static void processSpeedCalibration() {
-  if (SetPointData.mode != MODE_OFF || taskWindowType != 0 ||
-      !isfinite(ControlData.pressure) || ControlData.pressure > FMTData.maximumPressure) {
-    closeSpeedValve();
-    speedStatus = "Aborted: mode, task or pressure changed";
-    speedCalibrationActive = false;
-    showSpeedCalibrationProgress(true);
-    return;
-  }
-  const unsigned long now = millis();
-  uint8_t &count = speedRecordCount[speedTest];
-  SpeedRecord &record = speedRecords[speedTest][count];
-  if (debugging && speedStage == 1) {
-    // Seconds of valve opening, capped at the requested duration even if a
-    // loop iteration runs late. Keep this pressure throughout settling.
-    const float seconds = fminf((now - speedStageMillis) / 1000.0f, record.requestedSeconds);
-    const float f = speedTest != SPEED_TEST_VENTING ? 1 - powf(100, -seconds / 10) : 1 - powf(100, -seconds / 100);
-    ControlData.pressure = record.p1 * (1. - f) + (record.pl) * f;
-  }
-  if (speedStage == 0) {
-    // First record: wait for a stable fermenter pressure, then P1 = mean.
-    speedSampleWait(now);
-    if (speedWaitDone()) {
-      const float p1 = speedAverageLast(SPEED_AVERAGE_MS);
-      if (speedTest != SPEED_TEST_VENTING && !(p1 - p1 * speedVolumeFactor > 0.0f)) {
-        speedStatus = "Aborted: pressure too low to calculate R";
-        speedCalibrationActive = false;
-        showSpeedCalibrationProgress(true);
-        return;
-      }
-      speedOpenValve(record, count, p1, now);
-      showSpeedCalibrationProgress(true);
-    }
-  } else if (speedStage == 1 && now - speedStageMillis >= (unsigned long)(record.requestedSeconds * 1000.0f)) {
-    closeSpeedValve();
-    record.openSeconds = (millis() - speedStageMillis) / 1000.0f;
-    speedResetWait(now);
-    speedStage = 2;
-    showSpeedCalibrationProgress(true);
-  } else if (speedStage == 2) {
-    speedSampleWait(now);
-    if (speedWaitDone()) {
-      record.pClose = speedHistory[0];
-      record.p15 = speedPressureAt(15000UL);
-      record.p30 = speedPressureAt(30000UL);
-      record.p60 = speedPressureAt(60000UL);
-      record.p2 = speedAverageLast(SPEED_AVERAGE_MS);
-      record.waitSeconds = speedHistoryMillis[speedHistoryCount - 1] / 1000.0f;
-      record.tempFermP2 = ControlData.temperature;
-      record.tempAmbP2 = speedAmbient();
-      if (speedTest == SPEED_TEST_VENTING) {
-        record.r = record.p2 / record.p1;
-        record.valid = isfinite(record.r) && record.p1 > SPEED_VENTING_NOISE_PRESSURE_BAR &&
-                       record.p2 > SPEED_VENTING_NOISE_PRESSURE_BAR && record.r > 0.0f && record.r < 1.0f;
-      } else {
-        record.r = (record.p2 - record.pl) / (record.p1 - record.pl);
-        record.valid = isfinite(record.r);
-      }
-      ++count;
-      const bool ventingReachedStopPressure = speedTest == SPEED_TEST_VENTING && record.p2 < 0.4f;
-      if (count >= speedRecordTarget(speedTest) || ventingReachedStopPressure) {
-        speedFinish();
-        return;
-      }
-      // The settled pressure is the next P1: same stable state.
-      if (speedTest != SPEED_TEST_VENTING && !(record.p2 - record.p2 * speedVolumeFactor > 0.0f)) {
-        speedStatus = "Aborted: pressure too low to calculate R";
-        speedCalibrationActive = false;
-        showSpeedCalibrationProgress(true);
-        return;
-      }
-      speedOpenValve(speedRecords[speedTest][count], count, record.p2, now);
-      showSpeedCalibrationProgress(true);
-    }
-  }
-  if (speedCalibrationActive) showSpeedCalibrationProgress();
-}
-
-static void speedFloatCsv(char *out, size_t size, float value, uint8_t decimals) {
-  if (!isfinite(value)) { out[0] = '\0'; return; }
-  formatFloatCsv(out, size, value, decimals);
-}
-
-void handleSpeedCalibrationCSV(AsyncWebServerRequest *request) {
-  const String type = request->hasParam("type") ? request->getParam("type")->value() : "expansion";
-  const uint8_t test = type == "venting" ? SPEED_TEST_VENTING : type == "kfloor" ? SPEED_TEST_K_FLOOR
-                                                                                 : SPEED_TEST_EXPANSION;
-  const bool venting = test == SPEED_TEST_VENTING;
-  const uint8_t count = speedRecordCount[test];
-  const bool gasCO2 = test == SPEED_TEST_EXPANSION ? speedResults.expansionGasCO2
-                    : test == SPEED_TEST_K_FLOOR ? speedResults.kFloorGasCO2 : speedResults.ventingGasCO2;
-  String csv = "data_hora;epoch;teste;gas;FMTVolume;Vr;Patm;temp_ferm_P1;temp_amb_P1;temp_ferm_P2;temp_amb_P2;";
-  csv += venting ? "liberacao;tempo_pedido_s;tempo_aberto_s;P1;P_fechamento;P_15s;P_30s;P_60s;P2;espera_s;F;valido;F_configurado_CO2;vazao_vs_config_pct\n"
-                 : "medicao;tempo_pedido_s;tempo_aberto_s;P1;P_fechamento;P_15s;P_30s;P_60s;P2;espera_s;PL;R;R_x_P1;k_efetivo\n";
-  csv.reserve(8192);
-  char common[64];
-  snprintf(common, sizeof(common), "%s;%s;", venting ? "ventilacao" : test == SPEED_TEST_K_FLOOR ? "k_piso" : "expansao",
-           gasCO2 ? "CO2" : "ar");
-  for (uint8_t i = 0; i < count; ++i) {
-    const SpeedRecord &r = speedRecords[test][i];
-    char date[24], b[18][16];
-    formatLocalEpochISO(r.epoch, date, sizeof(date));
-    speedFloatCsv(b[0], 16, FMTData.FMTVolume, 2);
-    speedFloatCsv(b[1], 16, FMTData.FMTReliefVolume, 3);
-    speedFloatCsv(b[2], 16, Patm, 4);
-    speedFloatCsv(b[3], 16, r.tempFermP1, 2);
-    speedFloatCsv(b[4], 16, r.tempAmbP1, 2);
-    speedFloatCsv(b[5], 16, r.tempFermP2, 2);
-    speedFloatCsv(b[6], 16, r.tempAmbP2, 2);
-    speedFloatCsv(b[7], 16, r.requestedSeconds, 2);
-    speedFloatCsv(b[8], 16, r.openSeconds, 3);
-    speedFloatCsv(b[9], 16, r.p1, 6);
-    speedFloatCsv(b[10], 16, r.pClose, 6);
-    speedFloatCsv(b[11], 16, r.p15, 6);
-    speedFloatCsv(b[12], 16, r.p30, 6);
-    speedFloatCsv(b[13], 16, r.p60, 6);
-    speedFloatCsv(b[14], 16, r.p2, 6);
-    speedFloatCsv(b[15], 16, r.waitSeconds, 1);
-    char line[360];
-    int len = snprintf(line, sizeof(line), "%s;%lu;%s%s;%s;%s;%s;%s;%s;%s;%u;%s;%s;%s;%s;%s;%s;%s;%s;%s;",
-                       date, (unsigned long)r.epoch, common, b[0], b[1], b[2], b[3], b[4], b[5], b[6],
-                       i + 1, b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]);
-    if (len <= 0 || len >= (int)sizeof(line)) continue;
-    char tail[96];
-    if (venting) {
-      speedFloatCsv(b[16], 16, r.r, 6);
-      speedFloatCsv(b[17], 16, r.fConfigured, 6);
-      char flowPct[16];
-      speedFloatCsv(flowPct, sizeof(flowPct), 100.0f * r.flowVsConfig, 3);
-      snprintf(tail, sizeof(tail), "%s;%s;%s;%s\n", b[16], r.valid ? "sim" : "nao", b[17], flowPct);
-    } else {
-      char pl[16], rr[16], rp[16], k[16];
-      speedFloatCsv(pl, sizeof(pl), r.pl, 6);
-      speedFloatCsv(rr, sizeof(rr), r.r, 6);
-      speedFloatCsv(rp, sizeof(rp), r.r * r.p1, 6);
-      speedFloatCsv(k, sizeof(k), (isfinite(r.r) && r.r < 1.0f) ? 1.0f / (1.0f - r.r) : NAN, 5);
-      snprintf(tail, sizeof(tail), "%s;%s;%s;%s\n", pl, rr, rp, k);
-    }
-    csv += line;
-    csv += tail;
-  }
-  AsyncWebServerResponse *response = request->beginResponse(200, "text/csv", csv);
-  response->addHeader("Content-Disposition", venting ? "attachment; filename=venting_speed.csv"
-                                             : test == SPEED_TEST_K_FLOOR ? "attachment; filename=k_floor.csv"
-                                                                          : "attachment; filename=expansion_speed.csv");
-  request->send(response);
-}
-
-bool startVolumeDetermination(bool fast, bool co2, char *reason, size_t reasonSize) {
-  if (reason && reasonSize > 0) {
-    reason[0] = '\0';
-  }
-
-  if (SetPointData.mode != MODE_OFF) {
-    if (reason && reasonSize > 0) {
-      snprintf(reason, reasonSize, "Mode must be OFF");
-    }
-    return false;
-  }
-
-  if (calibrationRoutineActive() || inTheMiddleOfRelief()) {
-    if (reason && reasonSize > 0) {
-      snprintf(reason, reasonSize, "Process in progress");
-    }
-    return false;
-  }
-
-  if (FMTData.FMTReliefVolume <= 0.0f) {
-    if (reason && reasonSize > 0) {
-      snprintf(reason, reasonSize, "Missing FMTReliefVolume");
-    }
-    return false;
-  }
-
-  // 0.3 bar, as k & floor: the test also runs at low pressure to check whether
-  // k changes with the pressure (docs/calibration-roteiro.md, test 4b).
-  if (!isfinite(ControlData.pressure) || ControlData.pressure < 0.3f) {
-    if (reason && reasonSize > 0) {
-      snprintf(reason, reasonSize, "Insufficient pressure (min 0.3 bar)");
-    }
-    return false;
-  }
-
-  if (!pressureReliefHistory) {
-    pressureReliefHistory = new(std::nothrow) PressureReliefRecord[PRESSURE_RELIEF_HISTORY_MAX];
-    if (!pressureReliefHistory) {
-      if (reason && reasonSize > 0) {
-        snprintf(reason, reasonSize, "Sem memoria para historico");
-      }
-      return false;
-    }
-  }
-
-  // Novo processo de determinacao: limpa historico de relief desta rodada.
-  pressureReliefIndex = 0;
-  pressureReliefCount = 0;
-
-  volumeDeterminationActive = true;
-  volumeDeterminationFast = fast;
-  volumeDeterminationCO2 = co2;
-  volumeCalibration = {};
-  volumeStartPressure = 0.0f;
-  volumeStartTemperatureK = 0.0f;
-  volumeStartReliefIteration = 0;
-  volumeTargetPressure = 0.5f;
-  volumeLastReliefMillis = 0;
-  volumeIteration = 0;
-  volumeAwaitingRecord = false;
-  volumeRecordIndex = -1;
-  volumeSummaryAvailable = false;
-  volumeCalculatedSoFar = 0.0f;
-  volumeCalculatedSoFarValid = false;
-  volumeFittedSoFar = NAN;
-  volumeConverged = false;
-  volumePressureSettled = false;
-  volumeAdjustedEquilibriumCaptureMillis = 0;
-  volumeAdjustedEquilibriumSnapshot = NAN;
-  if (!pressureSamples) {
-    pressureSamples = new(std::nothrow) PressureSampleRecord[PRESSURE_SAMPLES_MAX];
-  }
-
-  pressureSamplesIndex = 0;
-  pressureSamplesCount = 0;
-  pressureLastSampleMillis = 0;
-
-  if (!pressureSamples) {
-    if (reason && reasonSize > 0) {
-      snprintf(reason, reasonSize, "Sem memoria para log");
-    }
-    volumeDeterminationActive = false;
-    return false;
-  }
-
-  char line1[32];
-  char line2[32];
-  snprintf(line1, sizeof(line1), "Volume: START");
-  snprintf(line2, sizeof(line2), "P ini: %.2f bar", volumeStartPressure);
-  showCalibrationPanel(line1, line2, "Waiting...");
-
-  if (reason && reasonSize > 0) {
-    snprintf(reason, reasonSize, "Process started successfully");
-  }
-  return true;
-}
-
-bool isVolumeDeterminationActive() {
-  return volumeDeterminationActive;
-}
-
-uint16_t getVolumeDeterminationIteration() {
-  return volumeIteration;
-}
-
-float getVolumeDeterminationCalculatedSoFar() {
-  if (!volumeCalculatedSoFarValid) {
-    return NAN;
-  }
-  return volumeCalculatedSoFar;
-}
-
-VolumeKCalibration getVolumeKCalibration() {
-  return volumeCalibration;
+  return sensorZeroActive();
 }
 
 // ===== Pressure stability =====
@@ -4603,31 +2837,15 @@ static void updatePressureStability() {
 }
 
 void pressureControl() {
-  accountExpansionTankVenting(millis());
   if (beerSG == 0) {
     beerSG = BatchData.batchOG;
   }
-
-  // During a debug speed test the simulated pressure owns the reading,
-  // including the settling interval and the next measurement's P1.
-  if (!(debugging && speedCalibrationActive)) {
-    readPressure();
-  }
-  if (speedCalibrationActive) {
-    processSpeedCalibration();
-    return;
-  }
+  readPressure();
+  pressureDropFactor = 1.0f - FMTData.ventTargetDropPercent / 100.0f;
   processSensorZero();
   processSlowPressureTarget();
   updatePressureStability();
   updateCO2DissolvedStateFromEvents();
-
-  if (SetPointData.mode != MODE_OFF &&
-      !volumeDeterminationActive &&
-      !inTheMiddleOfRelief() &&
-      pressureReliefHistory) {
-    releasePressureReliefHistory();
-  }
 
   if (derivedStateRestorePending) {
     restoreDerivedStateFromCounters();
@@ -4649,52 +2867,16 @@ void pressureControl() {
   }
 
   collectPolytropicPressureSample();
+  checkValveStuckOpen();
 
-  if (volumeDeterminationActive) {
-    if (volumeConverged || volumeIteration >= VOLUME_DETERMINATION_RECORD_END_CYCLE) {
-      finalizeVolumeDeterminationSummary();
-    } else if (!inTheMiddleOfRelief() &&
-               MILLISDIFF(volumeLastReliefMillis,
-                 volumeDeterminationFast ? VOLUME_DETERMINATION_FAST_WAIT_MS : VOLUME_DETERMINATION_WAIT_MS)) {
-      pressureRelief(true);
-    }
-  } else if (ControlData.pressure > FMTData.maximumPressure) {
+  if (inTheMiddleOfRelief()) return;
+  if (ControlData.pressure > FMTData.maximumPressure) {
     soundAlarm = true;
-    pressureRelief(false);
-  } else if (gasFlowMode() && !inTheMiddleOfRelief() &&
-             (taskWindowType == 0 || MILLISDIFF(taskWindowEndTime, 0)) &&
-             shouldStartGasExpansion(millis())) {
-    pressureRelief(false);
-  } else if (!gasFlowMode() && SetPointData.mode != MODE_CONDITIONING &&
-             SetPointData.setPointPressure > 0.0f &&
-             ControlData.pressure > (SetPointData.setPointPressure / sqrt(pressureDropFactor)) &&
+    pressureRelief();
+  } else if (SetPointData.mode != MODE_CONDITIONING && SetPointData.setPointPressure > 0.0f &&
+             ControlData.pressure >= expansionPressureThreshold() &&
              (taskWindowType == 0 || MILLISDIFF(taskWindowEndTime, 0))) {
-    pressureRelief(false);
-  }
-
-  if (!pressureDumpInProgress && volumeDeterminationActive && pressureSamples) {
-    const unsigned long now = millis();
-    if (pressureLastSampleMillis == 0 || (now - pressureLastSampleMillis) >= PRESSURE_SAMPLE_MIN_MS) {
-      if (pressureSamplesCount < PRESSURE_SAMPLES_MAX) {
-        pressureLastSampleMillis = now;
-        PressureSampleRecord &sample = pressureSamples[pressureSamplesIndex];
-        char tempTs[32] = "";
-        NTPFormatedDateTime(tempTs);
-        const size_t len = strlen(tempTs);
-        if (len >= 5) {
-          strncpy(sample.timestamp, tempTs + (len - 5), sizeof(sample.timestamp) - 1);
-          sample.timestamp[sizeof(sample.timestamp) - 1] = '\0';
-        } else {
-          strncpy(sample.timestamp, "00:00", sizeof(sample.timestamp));
-          sample.timestamp[sizeof(sample.timestamp) - 1] = '\0';
-        }
-        sample.millisStamp = now;
-        sample.pressure = ControlData.pressure;
-
-        pressureSamplesIndex++;
-        pressureSamplesCount = pressureSamplesIndex;
-      }
-    }
+    pressureRelief();
   }
 }
 
@@ -4721,13 +2903,13 @@ char *getPressureControlStatus(char *st) {
 
   snprintf(tmp, sizeof(tmp), "<br>---------PRESSURE CONTROL:<br>");
     strnncat(st, tmp, PRESSURE_STATUS_SIZE);
-  if (1 || pressureSensorConnected) {
+  {
     const unsigned long now = millis();
     const float co2CalculationPressure = dissolvedCO2CalculationPressure();
     const float equilibriumCO2Mols = CO2DissolvedMols(
       co2CalculationPressure, beerSG, ControlData.temperature, beerVolume);
     const double totalCO2Mols = CountersData.totalMolsEjected
-      + CountersData.CO2InSolution + headSpaceCO2Mols + expansionTankInventoryMoles();
+      + CountersData.CO2InSolution + headSpaceCO2Mols;
 
     snprintf(tmp, sizeof(tmp),
              "Measured pressure: %.3f bar<br>Target pressure: %.3f bar<br>",
@@ -4760,7 +2942,7 @@ char *getPressureControlStatus(char *st) {
              CountersData.co2CorrectionDebt, co2ProducedDiagnosticCreditedDeltaMols);
     strnncat(st, tmp, PRESSURE_STATUS_SIZE);
 
-    strnncat(st, "<br>Expansions:<br>", PRESSURE_STATUS_SIZE);
+    strnncat(st, "<br>Vents:<br>", PRESSURE_STATUS_SIZE);
     snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;Relief count: %lu<br>",
              (unsigned long)CountersData.totalReliefCount);
     strnncat(st, tmp, PRESSURE_STATUS_SIZE);
@@ -4781,20 +2963,27 @@ char *getPressureControlStatus(char *st) {
     snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;CO2 buffers at boot: %s<br>", co2BufferStatus);
     strnncat(st, tmp, PRESSURE_STATUS_SIZE);
     {
-      // What currently holds the next expansion back (gas flow mode).
+      // docs/vent.md: the next opening at the threshold and the last vent (the
+      // parameters and the curve are on the Calibration page).
+      const VentModel::Curve &curve = FMTData.ventCurve;
       const float threshold = expansionPressureThreshold();
-      long waitMs = 0;
-      if (gasVentingActive && now - gasClosedMillis < gasMinimumVentingMilliseconds)
-        waitMs = (long)(gasMinimumVentingMilliseconds - (now - gasClosedMillis));
+      const double tK = ventGasKelvin();
+      const float headspace = ventHeadspaceForTime();
       snprintf(tmp, sizeof(tmp),
-               "&nbsp;&nbsp;&nbsp;&nbsp;Expansion time: %.2f s now (%.3f bar); %.2f s at relief threshold (%.3f bar)<br>",
-               expansionTime(ControlData.pressure), ControlData.pressure,
-               expansionTime(threshold), threshold);
+               "&nbsp;&nbsp;&nbsp;&nbsp;Next vent at %.3f bar: %.2f s (Vh %.2f L, gas %.2f C %s)%s<br>",
+               threshold, VentModel::ventSeconds(curve, FMTData.flowLevelFactor, headspace, threshold,
+                   threshold * (1.0 - FMTData.ventTargetDropPercent / 100.0), Patm, tK, FMTData.FMTEffectiveVentingExponent),
+               headspace, tK - 273.15, gasTemperatureSource(), curve.epoch ? "" : "; default curve");
+      strnncat(st, tmp, PRESSURE_STATUS_SIZE);
+      snprintf(tmp, sizeof(tmp),
+               "&nbsp;&nbsp;&nbsp;&nbsp;Last: %.2f s (%s), real %.3f s; Pm %.3f bar; %.4f mol %s; Vh %.2f L; drop %.2f%%<br>",
+               ventPlan.plannedSeconds, ventPlan.limit, ventRealSeconds, ventResult.pMeanGauge,
+               ventResult.countedMoles, ventResult.counted, ventResult.apparentHeadspace, ventResult.dropPercent);
       strnncat(st, tmp, PRESSURE_STATUS_SIZE);
     }
 
     snprintf(tmp, sizeof(tmp),
-             "<br>Volumes:<br>&nbsp;&nbsp;&nbsp;&nbsp;Headspace volume: %.2f L<br>&nbsp;&nbsp;&nbsp;&nbsp;Beer volume: %.2f L<br>&nbsp;&nbsp;&nbsp;&nbsp;Dumped volume: %.2f L<br>&nbsp;&nbsp;&nbsp;&nbsp;Expansion pressure drop factor (%%): %.3f<br>",
+             "<br>Volumes:<br>&nbsp;&nbsp;&nbsp;&nbsp;Headspace volume: %.2f L<br>&nbsp;&nbsp;&nbsp;&nbsp;Beer volume: %.2f L<br>&nbsp;&nbsp;&nbsp;&nbsp;Dumped volume: %.2f L<br>&nbsp;&nbsp;&nbsp;&nbsp;Vent pressure factor (%%): %.3f<br>",
              CountersData.headSpaceVolume, beerVolume, CountersData.dumpedVolume, pressureDropFactor * 100);
     strnncat(st, tmp, PRESSURE_STATUS_SIZE);
     // [DAILY-HS] Where the applied headspace comes from.
@@ -4814,30 +3003,23 @@ char *getPressureControlStatus(char *st) {
     appendStabilityStatus(st, "Temperature", getTempStateLabel(), CountersData.tempStableSince);
     appendStabilityStatus(st, "Pressure", getPressStateLabel(), CountersData.pressStableSince);
     if (SetPointData.setPointPressure > 0.0f) {
+      // The vent factor is a parameter: the entry band is always defined.
       const PressureStabilityBands bands = pressureStabilityBands(SetPointData.setPointPressure);
-      if (bands.entryValid)
-        snprintf(tmp, sizeof(tmp),
-                 "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;bands: entry %.3f-%.3f bar, exit %.3f-%.3f bar<br>",
-                 bands.entryLow, bands.entryHigh, bands.exitLow, bands.exitHigh);
-      else
-        snprintf(tmp, sizeof(tmp),
-                 "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;bands: entry n/a (no drop factor), exit %.3f-%.3f bar<br>",
-                 bands.exitLow, bands.exitHigh);
+      snprintf(tmp, sizeof(tmp),
+               "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;bands: entry %.3f-%.3f bar, exit %.3f-%.3f bar<br>",
+               bands.entryLow, bands.entryHigh, bands.exitLow, bands.exitHigh);
       strnncat(st, tmp, PRESSURE_STATUS_SIZE);
     }
-  } else {
-    snprintf(tmp, sizeof(tmp), "INA226 Pressure Sensor: DISCONNECTED<br>Atmospheric pressure: %.3f bar<br>", Patm);
-    strnncat(st, tmp, PRESSURE_STATUS_SIZE);
   }
   snprintf(tmp, sizeof(tmp), "Pressure sensor check: %s; valid current %.2f-%.2f mA; alarm %s<br>",
            pressureSensorProblemText[0] ? pressureSensorProblemText : "OK",
            pressureSensorCurrentLow(), pressureSensorCurrentHigh(),
            pressureSensorAlarm ? "ACTIVE" : "off");
   strnncat(st, tmp, PRESSURE_STATUS_SIZE);
-  snprintf(tmp, sizeof(tmp), "Relief check: last %s, drop %.4f / expected %.4f bar (%.2fx), run %u; alarm %s<br>",
+  snprintf(tmp, sizeof(tmp), "Vent check: %s, drop %.4f/%.4f bar (%.2fx), run %u, alarm %s; stuck open %s (fall %.4f bar)<br>",
            reliefCheckLast == RELIEF_CHECK_SKIPPED ? "none" : reliefCheckLabel(reliefCheckLast),
            reliefCheckMeasuredDrop, reliefCheckExpectedDrop, reliefCheckDropRatio, reliefCheckRun,
-           reliefCheckAlarmActive() ? reliefCheckLabel(reliefCheckAlarmKind) : "off");
+           reliefCheckAlarmActive() ? "ON" : "off", valveStuckOpenAlarmActive() ? "ALARM" : "no", stuckOpenLastFall);
   strnncat(st, tmp, PRESSURE_STATUS_SIZE);
 
   // --- Diagnóstico de relés ---
@@ -4848,20 +3030,15 @@ char *getPressureControlStatus(char *st) {
   } else {
     strnncat(st, "Cycle: ACTIVE<br>", PRESSURE_STATUS_SIZE);
     if (timeToStartExpansion) {
-      snprintf(tmp, sizeof(tmp), "Stage: waiting to open transfer (in %ld ms)<br>",
+      snprintf(tmp, sizeof(tmp), "Stage: waiting to open the valve (in %ld ms)<br>",
                (long)(timeToStartExpansion - now));
     } else if (timeToFinishExpansion) {
-      snprintf(tmp, sizeof(tmp), "Stage: transfer OPEN - closes in %ld ms<br>",
+      snprintf(tmp, sizeof(tmp), "Stage: valve OPEN - closes in %ld ms<br>",
                (long)(timeToFinishExpansion - now));
     } else if (timeToRegisterPressure) {
-      snprintf(tmp, sizeof(tmp), "Stage: transfer CLOSED - measuring pressure in %ld ms<br>",
+      snprintf(tmp, sizeof(tmp), "Stage: valve CLOSED - measuring pressure in %ld ms<br>",
                (long)(timeToRegisterPressure - now));
     }
-    strnncat(st, tmp, PRESSURE_STATUS_SIZE);
-    snprintf(tmp, sizeof(tmp),
-             "timeToStartExpansion=%lu<br>timeToFinishExpansion=%lu<br>timeToRegisterPressure=%lu<br>",
-             timeToStartExpansion, timeToFinishExpansion,
-             timeToRegisterPressure);
     strnncat(st, tmp, PRESSURE_STATUS_SIZE);
   }
 

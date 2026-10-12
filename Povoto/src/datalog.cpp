@@ -292,7 +292,6 @@ void doDataLog() {
     GLogAddData("DailyState");
     GLogAddData("gCO2Source"); // "calculated", "held" (after a reboot) or "transition"
     GLogAddData("GasCO2Rate"); // gas-phase g/L/d of the dissolved-CO2 state (empty = no decision)
-    GLogAddData("ExpansionTankTemperature"); // own Dallas, else the environment
     GLogAddData("HeadspaceTemperature");     // headspace Dallas (empty: none or no reading)
 
     headerWritten = sendLogHeader("Cold", headerAttempts);
@@ -346,7 +345,6 @@ void doDataLog() {
     GLogAddData(dailyHs.state);
     GLogAddData(getCO2EvolutionSource());
     GLogAddData(co2.gasRate, 3);
-    GLogAddData(isValidTemp(expansionTankTemp) ? expansionTankTemp : NAN, 2);
     GLogAddData(headspaceTemperature(), 2);
     GLogSend();
     if (SetPointData.mode == MODE_CONDITIONING) conditioningFinalColdPending = false;
@@ -400,8 +398,8 @@ void doReliefDataLog(const ReliefLogData &data) {
     GLogAddData("AtmosphericPressure");
     GLogAddData("AtmosphericPressureSource");
     GLogAddData("EnvironmentTemperature");
-    GLogAddData("TankReferenceTemperature"); // Tref of the expansion tank (docs/expansion-tank-k.md)
-    GLogAddData("ReliefVolume");
+    GLogAddData("GasTemperature");        // flow and headspace moles (docs/vent.md)
+    GLogAddData("GasTemperatureSource");  // headspace or liquid
     GLogAddData("EffectiveVentingExponent");
     GLogAddData("PressureOnReliefMeasured");
     GLogAddData("CurrentOnReliefMeasured");
@@ -412,15 +410,24 @@ void doReliefDataLog(const ReliefLogData &data) {
     GLogAddData("PressureAfterReliefMillis");
     GLogAddData("CurrentAfterRelief");
     GLogAddData("AdjustedPressureAfterRelief");
-    GLogAddData("AdjustedEquilibriumPressure");
-    GLogAddData("TankPressureAtClose"); // expansion tank, gauge
+    GLogAddData("VentEstimatedSeconds");
+    GLogAddData("VentSafetySeconds");
+    GLogAddData("VentPlannedSeconds");
+    GLogAddData("VentLimit");             // estimate, minimum or safety
+    GLogAddData("VentHeadspaceForTime");
+    GLogAddData("VentRealSeconds");
+    GLogAddData("VentT0Seconds");
+    GLogAddData("VentMeanPressure");
+    GLogAddData("VentCoolingFactor");
+    GLogAddData("VentFlowConstant");
+    GLogAddData("FlowLevelFactor");
+    GLogAddData("VentFlowMols");
+    GLogAddData("VentCounted");           // flow, fermenter-side or none
+    GLogAddData("VentDropPercent");
+    GLogAddData("VentTargetDropPercent");
     GLogAddData("LiquidMassInGasVentingPercent");
-    GLogAddData("GasVentingResidual");
-    GLogAddData("PreviousTankPressureAtOpenBar");
-    GLogAddData("ExpansionTankResidualMoles"); // Previous cycle, at this relief's opening.
     GLogAddData("EjectedMolsBeforeLiquidCorrectionAtLog");
     GLogAddData("InstantPressureDropFactor");
-    GLogAddData("PressureDropFactor");
     GLogAddData("HeadSpaceVolume");
     GLogAddData("BeerVolume");
     GLogAddData("EjectedMolsAtLog");
@@ -429,37 +436,23 @@ void doReliefDataLog(const ReliefLogData &data) {
     GLogAddData("DissolvedCO2Mols");
     GLogAddData("TotalCO2Mols");
     GLogAddData("BeerSG");
-    GLogAddData("GasFlowModelActive");
-    GLogAddData("GasOpeningSeconds");
-    GLogAddData("GasPreviousVentingSeconds");
-    GLogAddData("GasExpansionResidual");
-    GLogAddData("GasTankMolesAtClose");
-    GLogAddData("GasVentingResidualFactor");
-    GLogAddData("GasExpansionOptimalSeconds");
-    GLogAddData("GasPlannedExpansionSeconds");
-    GLogAddData("GasCalculatedPressureCompensation");
-    GLogAddData("GasAppliedPressureCompensation");
     GLogAddData("GasHeadspaceUpdateStatus");
     GLogAddData("PolytropicEstimatedExponent");
     GLogAddData("PolytropicSampleCount");
     GLogAddData("PolytropicFitRMSEBar");
-    GLogAddData("PreviousTankPressureAtCloseBar");
-    GLogAddData("PreviousTankEjectedMoles");
-    GLogAddData("VentingElapsedAtLogSeconds");
     // [DAILY-HS] HeadSpaceVolume above is the applied value.
-    GLogAddData("HeadSpaceMeasured");
-    GLogAddData("KCO2FromBeerVolume"); // k that matches FMTVolume - beer volume (empty: no beer volume)
+    GLogAddData("HeadSpaceMeasured");     // apparent headspace that fed the 24-hour average
+    GLogAddData("HeadSpaceApparent");     // flow moles / settled drop (passive dirt monitor)
     GLogAddData("HeadSpaceEMA");
     GLogAddData("HeadSpaceDaily");
     GLogAddData("DailyHours");
     GLogAddData("DailyState");
-    GLogAddData("ExpansionTankTemperature");
     GLogAddData("ReliefDropRatio"); // measured / expected drop (docs/alarms.md)
-    GLogAddData("ReliefCheck");     // ok, leak, no-effect or empty (not checked)
+    GLogAddData("ReliefCheck");     // ok, no-effect or empty (not checked)
     headerWritten = sendLogHeader("Relief", headerAttempts);
   }
 
-  // Send the data row separately so the first relief is logged as well.
+  // Send the data row separately so the first vent is logged as well.
   GLogBegin(datalogFolderNameInUse, batchStr, "Relief");
   GLogAddTimeStamp();
   GLogAddData(data.povotoNumber);
@@ -470,8 +463,8 @@ void doReliefDataLog(const ReliefLogData &data) {
   GLogAddData(data.atmosphericPressure, 6);
   GLogAddData(data.atmosphericPressureSource ? data.atmosphericPressureSource : "");
   GLogAddData(isValidTemp(data.environmentTemperature) ? data.environmentTemperature : NAN, 2);
-  GLogAddData(data.tankReferenceTemperature, 2);
-  GLogAddData(data.reliefVolume, 3);
+  GLogAddData(data.gasTemperature, 2);
+  GLogAddData(data.gasTemperatureSource ? data.gasTemperatureSource : "");
   GLogAddData(data.effectiveVentingExponent, 3);
   GLogAddData(data.pressureOnReliefMeasured, 6);
   GLogAddData(data.currentOnReliefMeasured, 3);
@@ -482,15 +475,24 @@ void doReliefDataLog(const ReliefLogData &data) {
   GLogAddData(data.pressureAfterReliefMillis);
   GLogAddData(data.currentAfterRelief, 3);
   GLogAddData(data.adjustedPressureAfterRelief, 6);
-  GLogAddData(data.adjustedEquilibriumPressure, 6);
-  GLogAddData(data.tankPressureAtClose, 6);
+  GLogAddData(data.ventEstimatedSeconds, 3);
+  GLogAddData(data.ventSafetySeconds, 3);
+  GLogAddData(data.ventPlannedSeconds, 3);
+  GLogAddData(data.ventLimit ? data.ventLimit : "");
+  GLogAddData(data.ventHeadspaceForTime, 3);
+  GLogAddData(data.ventRealSeconds, 4);
+  GLogAddData(data.ventT0Seconds, 4);
+  GLogAddData(data.ventMeanPressure, 6);
+  GLogAddData(data.ventCoolingFactor, 6);
+  GLogAddData(data.ventFlowConstant, 6);
+  GLogAddData(data.flowLevelFactor, 4);
+  GLogAddData(data.ventFlowMoles, 6);
+  GLogAddData(data.ventCounted ? data.ventCounted : "");
+  GLogAddData(data.ventDropPercent, 3);
+  GLogAddData(data.ventTargetDropPercent, 2);
   GLogAddData(data.liquidMassInGasVentingPercent, 3);
-  GLogAddData(data.gasVentingResidual, 6);
-  GLogAddData(data.previousTankPressureAtOpenBar, 9);
-  GLogAddData(data.expansionTankResidualMoles, 9);
   GLogAddData(data.ejectedMolsBeforeLiquidCorrection, 6);
   GLogAddData(data.instantaneousPressureDropFactor, 6);
-  GLogAddData(data.pressureDropFactor, 6);
   GLogAddData(data.headSpaceVolume, 3);
   GLogAddData(data.beerVolume, 3);
   GLogAddData(data.ejectedMols, 6);
@@ -499,31 +501,17 @@ void doReliefDataLog(const ReliefLogData &data) {
   GLogAddData((float)data.dissolvedCO2Mols, 6);
   GLogAddData((float)data.totalCO2Mols, 6);
   GLogAddData(data.beerSG, 5);
-  GLogAddData(data.gasFlowModelActive ? "yes" : "no");
-  GLogAddData(data.gasOpeningSeconds, 3);
-  GLogAddData(data.gasPreviousVentingSeconds, 3);
-  GLogAddData(data.gasExpansionResidual, 6);
-  GLogAddData(data.gasTankMolesAtClose, 8);
-  GLogAddData(data.gasVentingResidualFactor, 6);
-  GLogAddData(data.gasExpansionOptimalSeconds, 3);
-  GLogAddData(data.gasPlannedExpansionSeconds, 3);
-  GLogAddData(data.gasCalculatedPressureCompensation, 6);
-  GLogAddData(data.gasAppliedPressureCompensation, 6);
-  GLogAddData(data.gasHeadspaceUpdateStatus);
+  GLogAddData(data.ventHeadspaceStatus ? data.ventHeadspaceStatus : "");
   GLogAddData(data.polytropicEstimatedExponent, 6);
   GLogAddData(data.polytropicSampleCount);
   GLogAddData(data.polytropicFitRMSEBar, 6);
-  GLogAddData(data.previousTankPressureAtCloseBar, 6);
-  GLogAddData(data.previousTankEjectedMoles, 8);
-  GLogAddData(data.ventingElapsedAtLogSeconds, 3);
   // [DAILY-HS]
   GLogAddData(data.headSpaceMeasured, 3);
-  GLogAddData(data.kCO2FromBeerVolume, 4);
+  GLogAddData(data.headSpaceApparent, 3);
   GLogAddData(data.headSpaceEMA, 3);
   GLogAddData(data.headSpaceDaily, 3);
   GLogAddData((int)data.dailyHours);
   GLogAddData(data.dailyState ? data.dailyState : "");
-  GLogAddData(isValidTemp(data.expansionTankTemperature) ? data.expansionTankTemperature : NAN, 2);
   GLogAddData(data.reliefDropRatio, 3);
   GLogAddData(data.reliefCheck ? data.reliefCheck : "");
   GLogSend();

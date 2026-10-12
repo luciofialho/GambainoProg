@@ -7,9 +7,9 @@
 // them nothing is sent while in Conditioning.
 void requestConditioningFinalRecord();
 
-// Snapshot captured after the post-relief pressure reading and its calculations.
+// Snapshot captured after the post-vent pressure reading and its calculations.
 // Keeping this separate from the live globals preserves values that are reset
-// when the next relief cycle starts.
+// when the next vent cycle starts. The sheet keeps its name, Relief.
 struct ReliefLogData {
   int povotoNumber;
   unsigned long reliefNumber;
@@ -21,46 +21,39 @@ struct ReliefLogData {
   float atmosphericPressure;
   const char *atmosphericPressureSource; // "sensor", "sidekick" or "altitude" (docs/atmospheric-pressure.md)
   float environmentTemperature;
-  float expansionTankTemperature; // own Dallas, else the environment (docs/thermometers.md)
-  float tankReferenceTemperature; // expansion tank Tref, C (docs/expansion-tank-k.md)
-  float reliefVolume;
+  float gasTemperature;            // used for the flow and the headspace moles, C
+  const char *gasTemperatureSource; // "headspace" or "liquid" (docs/thermometers.md)
   float effectiveVentingExponent;
   float pressureOnReliefMeasured;
   float currentOnReliefMeasured;
   float pressureReachedTarget;
   float pressureOnReliefExtrapolated;
-  float pressureAfterRelief;
+  float pressureAfterRelief;       // read right after closing (gas still cold)
   float currentAfterRelief;
-  float adjustedPressureAfterRelief;
-  float adjustedEquilibriumPressure;
-  float tankPressureAtClose; // expansion tank at valve close, gauge
-  float reliefDropRatio;     // measured / expected drop (NAN = not checked, docs/alarms.md)
-  const char *reliefCheck;   // "ok", "leak", "no-effect" or "" (not checked)
+  float adjustedPressureAfterRelief; // settled, through the exponent
+  // Vent (docs/vent.md).
+  float ventEstimatedSeconds;      // target drop with the applied headspace
+  float ventSafetySeconds;         // safety drop with the smallest plausible headspace
+  float ventPlannedSeconds;
+  const char *ventLimit;           // "estimate", "minimum" or "safety"
+  float ventHeadspaceForTime;      // L
+  float ventRealSeconds;           // measured at the digitalWrite of the valve
+  float ventT0Seconds;
+  float ventMeanPressure;          // log mean of the opening and closing pressures, gauge
+  float ventCoolingFactor;
+  float ventFlowConstant;          // CO2 (ratio, Z and level included)
+  float flowLevelFactor;
+  float ventFlowMoles;             // flow model, before the liquid-mass correction
+  const char *ventCounted;         // "flow", "fermenter-side" or "none"
+  float ventDropPercent;           // settled drop / pressure at opening
+  float ventTargetDropPercent;
   float liquidMassInGasVentingPercent;
-  // Final residual of the previous tank cycle, sampled at this relief's opening.
-  float expansionTankResidualMoles;
-  float ventingElapsedAtLogSeconds;
-  float previousTankPressureAtCloseBar;
-  float previousTankPressureAtOpenBar;
-  float previousTankEjectedMoles;
   float ejectedMolsBeforeLiquidCorrection;
   float instantaneousPressureDropFactor;
-  float pressureDropFactor;
   float headSpaceVolume;
   float beerVolume;
   float ejectedMols;
-  bool gasFlowModelActive;
-  float gasOpeningSeconds;
-  float gasPreviousVentingSeconds;
-  float gasExpansionResidual;
-  float gasTankMolesAtClose;
-  float gasVentingResidualFactor;
-  float gasVentingResidual;
-  float gasExpansionOptimalSeconds;
-  float gasPlannedExpansionSeconds;
-  float gasCalculatedPressureCompensation;
-  float gasAppliedPressureCompensation;
-  const char *gasHeadspaceUpdateStatus;
+  const char *ventHeadspaceStatus;
   double totalMolsEjected;
   float headSpaceCO2Mols;
   double dissolvedCO2Mols;
@@ -73,12 +66,14 @@ struct ReliefLogData {
   float polytropicEstimatedExponent;
   float polytropicFitRMSEBar;
   // [DAILY-HS] headSpaceVolume is the applied value; these explain where it came from.
-  float headSpaceMeasured;   // this relief's instantaneous value (NAN = invalid)
-  float kCO2FromBeerVolume;  // k matching FMTVolume - beer volume (NAN = no beer volume)
+  float headSpaceMeasured;   // this vent's apparent headspace when it fed the average (NAN = not used)
+  float headSpaceApparent;   // flow moles / settled drop, always (NAN = not available)
   float headSpaceEMA;        // headspaceFiltered after the update
   float headSpaceDaily;      // 24-hour average (NAN = no hours)
   uint8_t dailyHours;
   const char *dailyState;    // "valid", "hold" or "ema"
+  float reliefDropRatio;     // measured / expected drop (NAN = not checked, docs/alarms.md)
+  const char *reliefCheck;   // "ok", "no-effect" or "" (not checked)
 };
 
 // One row of the Task log per finished or cancelled task, sent after the

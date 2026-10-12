@@ -8,7 +8,8 @@
 // section (all branches, widest values) is about 3.1 KB; keep a margin.
 constexpr size_t PRESSURE_STATUS_SIZE = 4096;
 
-void pressureRelief(bool fromVolumeDetermination);
+// Schedules one vent (docs/vent.md); the loop opens and closes the valve.
+void pressureRelief();
 void pressureControl();
 struct DissolvedCO2LogData {
   const char *mode;
@@ -35,84 +36,19 @@ bool pressureSensorAlarmActive();
 bool pressureSensorNotResponding();   // INA226 absent or not answering
 const char *pressureSensorProblem();  // "" when the reading is valid
 String describePressureSensor();      // several lines, for the alarm e-mail
-// Relief check (docs/alarms.md): drop of each relief against the expected one.
+// Vent check (docs/alarms.md): two vents in a row without effect.
 bool reliefCheckAlarmActive();
-bool reliefCheckAlarmIsLeak();        // else: relief without effect
 String describeReliefCheck();         // several lines, for the alarm e-mail
-void handlePressureHistoryCSV(AsyncWebServerRequest *request);
-void handlePressureDumpCSV(AsyncWebServerRequest *request);
-// Gas-transfer speed tests (docs/calibration-speed-evaluation.md).
-constexpr uint8_t SPEED_TEST_EXPANSION = 0;
-constexpr uint8_t SPEED_TEST_VENTING = 1;
-constexpr uint8_t SPEED_TEST_K_FLOOR = 2;
-bool startSpeedCalibration(uint8_t test, bool co2, char *reason, size_t reasonSize);
-// Results of the last run of each test (air values and CO2 conversions).
-struct SpeedCalibrationResults {
-  // Expansion: R = exp(-(a - b*P)*t) + H*exp(-t/tau) + floor/P.
-  bool expansionAvailable;
-  bool expansionGasCO2;
-  float floorRP, floorR;        // floor as R*P1 (bar) and as R
-  float heatH, heatTau;         // tank heating
-  bool flowAvailable;
-  float flowA, flowB;           // test gas
-  float flowACO2, flowBCO2;     // converted (opening-time coefficients)
-  float rmse;
-  uint8_t points;
-  float openSeconds[3];         // fermentation opening time at 0.8, 1.5, 1.9 bar
-  float kHeat[3];               // heating k at those times
-  float kAir;                   // at 1.5 bar
-  float kCO2Estimated;          // 1 + 1.3*(kAir - 1)
-  float headspaceExponent;      // empty fermenter, diagnostics
-  // k & floor.
-  bool kFloorAvailable;
-  bool kFloorGasCO2;
-  float kFloorPressure, kFloorRP, kFloorR, kFloorK, kFloorSeconds;
-  // Venting: F(P) = c*P^2 + d*P + e.
-  bool ventingAvailable;
-  bool ventingGasCO2;
-  float ventingAir[3];          // c, d, e of the test gas
-  float ventingCO2[3];          // converted
-  float ventingRmse;
-  uint8_t ventingPoints;
-  // Against the configured curve (CO2) at the end of the test
-  // (docs/calibration-speed-evaluation.md): mean and sd of the flow of each
-  // release / configured flow - 1 (fraction).
-  float ventingConfigured[3];
-  float ventingFlowVsConfig;
-  float ventingFlowVsConfigSd;
-  uint8_t ventingFlowVsConfigPoints;
-};
-SpeedCalibrationResults getSpeedCalibrationResults();
-String getSpeedCalibrationStatus();
-bool isSpeedCalibrationActive();
-// Any calibration routine (speed tests, volume determination, sensor zero).
+// Valve stuck open: the pressure still falls after a vent closed.
+bool valveStuckOpenAlarmActive();
+String describeValveStuckOpen();
+// Any calibration routine (sensor zero, ...).
 bool calibrationRoutineActive();
 // Three text lines of the calibration panel on the TFT (and the dashboard).
 void showCalibrationPanel(const char *line1, const char *line2, const char *line3);
 void drawCalibrationStatus();
 // Line 0..2 of the calibration panel; empty while the panel is hidden.
 const char *getCalibrationDisplayLine(uint8_t index);
-void handleSpeedCalibrationCSV(AsyncWebServerRequest *request);
-// fast: the fermentation's expansion time; co2: the empty fermenter was purged
-// with CO2 (k and Tref of CO2 instead of air).
-bool startVolumeDetermination(bool fast, bool co2, char *reason, size_t reasonSize);
-// k calibration of the last fast volume test against FMTVolume (empty
-// fermenter); docs/expansion-tank-k.md.
-struct VolumeKCalibration {
-  bool available;   // fast test finished with per-relief k values
-  bool co2;         // test gas
-  float kMedian;    // value to save: median of the per-relief k
-  float kSpread;    // standard deviation of the per-relief k
-  float kOverall;   // from the cumulative factor, for comparison
-  uint16_t count;
-  float fermenterC; // mean temperatures of the test
-  float expansionTankC;
-  float volume;     // volume returned with the current k
-};
-VolumeKCalibration getVolumeKCalibration();
-bool isVolumeDeterminationActive();
-uint16_t getVolumeDeterminationIteration();
-float getVolumeDeterminationCalculatedSoFar();
 // Result of a dump recalculation, for the Task log.
 struct DumpRecalcResult {
   float pressureAfterIsoBar; // P2 after the polytropic correction (NAN = not computed)

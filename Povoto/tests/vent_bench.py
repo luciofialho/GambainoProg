@@ -1,0 +1,143 @@
+"""Bench of the direct-vent counting (docs/vent.md) against a synthetic truth.
+
+Truth: a CO2 headspace of volume Vh at T0 vents through the valve for the
+real open time; the effective opening is t - t0. During the opening the
+pressure follows the empirical polytrope that defines the exponent 1.29
+(P = P_on (P_iso / P_on)^1.29, P_iso the settled pressure of the moles left,
+real gas), the temperature follows from P V = n Z R T, and the valve molar
+flow is C_air(P) * ratio(P) / sqrt(Z) * P / sqrt(T) at the instantaneous
+pressure and temperature. After closing, the gas warms back to
+T0 with tau = 30 s. The firmware reads the pressure ~0.4-0.8 s after closing;
+the exponent 1.29 was fitted on that same reading, so the main table reads at
+the closing (the definition of the exponent) and the delay is a sensitivity.
+
+Firmware: the opening time from the curve and the headspace (vent_seconds,
+then max(min(t, t_12%), 1.5 s)), the moles from the log-mean pressure of
+P_on and the pressure read after closing (vent_moles), and the apparent
+headspace from the isothermal drop (isothermal_after with 1.29).
+
+Run: python tests/vent_bench.py   (exit code 1 if a limit is exceeded)
+"""
+import math
+import sys
+import vent_model as vm
+
+PATM = 0.928573            # main site (batch 160)
+T0 = 293.15
+EXPONENT = 1.29
+TAU_THERMAL = 30.0         # s, recovery after closing (docs: 1.29 vs 24-h recovery)
+CURVE = vm.make_curve([318.6846, -296.7812, 218.9469, -55.9985], 0.020, 0.36, 1.98)  # 18/09 fit, t0 20 ms
+TARGET_DROP = 0.06
+SAFETY_DROP = 0.12
+MIN_SECONDS = 1.5
+# Firmware vs truth, any scenario. With a flat curve the formula is exact
+# (checked below); with the 18/09 cubic, C changes ~8% inside one vent near
+# 1.9 bar and C(P_mean) misses the trajectory mean by ~0.1%.
+LIMIT_MOLES_PCT = 0.15
+LIMIT_VH_PCT = 0.25
+LIMIT_FLAT_PCT = 0.01
+
+
+def true_vent(headspace, p_on_gauge, open_seconds, t0=CURVE["t0"], level=1.0, read_after=0.0,
+              t_gas=T0, exponent=EXPONENT, dt=2e-4):
+    """Returns (moles out, pressure read after closing, settled pressure), gauge bar.
+
+    The state is the moles n in the headspace. Their settled (isothermal, real
+    gas) pressure P_iso(n) and the actual pressure follow the empirical
+    polytrope that defines the exponent, P = P_on (P_iso / P_on)^k; the actual
+    temperature then comes from the real-gas law."""
+    p_on = p_on_gauge + PATM
+
+    def settled(n, t_k):  # P with n moles at t_k (real gas)
+        q = n * vm.R * t_k / headspace
+        for _ in range(4):
+            q = n * vm.co2_z(q, t_k) * vm.R * t_k / headspace
+        return q
+
+    def state(n):  # actual pressure and temperature during the opening
+        p = p_on * (settled(n, t_gas) / p_on) ** exponent
+        t_k = t_gas
+        for _ in range(4):
+            t_k = p * headspace / (n * vm.co2_z(p, t_k) * vm.R)
+        return p, t_k
+
+    def rate(n):
+        p, t_k = state(n)
+        return (vm.flow_constant_air(CURVE, p - PATM) * vm.co2_air_ratio(p - PATM, PATM)
+                / math.sqrt(vm.co2_z(p, t_k)) * level * p / math.sqrt(t_k))
+
+    n_on = p_on * headspace / (vm.co2_z(p_on, t_gas) * vm.R * t_gas)
+    n = n_on
+    effective = max(0.0, open_seconds - t0)
+    steps = max(1, int(round(effective / dt)))
+    h = effective / steps
+    for _ in range(steps):  # midpoint (RK2)
+        n -= h * rate(n - 0.5 * h * rate(n))
+    _, t_close = state(n)
+    t_read = t_gas - (t_gas - t_close) * math.exp(-read_after / TAU_THERMAL)
+    return n_on - n, settled(n, t_read) - PATM, settled(n, t_gas) - PATM
+
+
+def firmware_seconds(headspace, p_on, t_gas=T0):
+    estimate = vm.vent_seconds(CURVE, 1.0, headspace, p_on, p_on * (1 - TARGET_DROP), PATM, t_gas, EXPONENT)
+    safety = vm.vent_seconds(CURVE, 1.0, headspace, p_on, p_on * (1 - SAFETY_DROP), PATM, t_gas, EXPONENT)
+    return max(min(estimate, safety), MIN_SECONDS), estimate
+
+
+def run_case(setpoint, headspace, quiet=False, **truth):
+    p_on = setpoint / math.sqrt(1 - TARGET_DROP)
+    seconds, estimate = firmware_seconds(headspace, p_on)
+    t_firmware = truth.pop("t_firmware", T0)
+    moles_true, p_read, p_settled = true_vent(headspace, p_on, seconds, **truth)
+    moles_fw, p_mean, cooling = vm.vent_moles(CURVE, 1.0, seconds, p_on, p_read, PATM, t_firmware, EXPONENT)
+    p_iso = vm.isothermal_after(p_on, p_read, PATM, EXPONENT)
+    vh = vm.apparent_headspace(moles_fw, p_on, p_iso, PATM, t_firmware)
+    drop = 1 - p_settled / p_on
+    row = dict(setpoint=setpoint, vh=headspace, t=seconds, est=estimate, drop=100 * drop,
+               err_n=100 * (moles_fw / moles_true - 1), err_vh=100 * (vh / headspace - 1),
+               err_iso=1000 * (p_iso - p_settled), n=moles_true)
+    if not quiet:
+        print(f"{setpoint:4.1f} bar {headspace:4.0f} L  t {seconds:5.2f} s (est {estimate:5.2f})  "
+              f"drop {row['drop']:5.2f}%  moles {moles_true:.4f}  count {row['err_n']:+.3f}%  "
+              f"Vh {row['err_vh']:+.3f}%  P_iso {row['err_iso']:+.2f} mbar")
+    return row
+
+
+def main():
+    global CURVE
+    ok = True
+    print("Vents with the firmware rule t = max(min(t_6%, t_12%), 1.5 s); truth with the same valve curve,")
+    print("Patm %.4f bar, gas %.2f K, t0 %.0f ms" % (PATM, T0, 1000 * CURVE["t0"]))
+    rows = [run_case(sp, vh) for sp in (0.5, 1.0, 1.9) for vh in (20, 30, 50)]
+    worst_n = max(abs(r["err_n"]) for r in rows)
+    worst_vh = max(abs(r["err_vh"]) for r in rows)
+    print(f"worst: count {worst_n:.3f}% (limit {LIMIT_MOLES_PCT}%), Vh {worst_vh:.3f}% (limit {LIMIT_VH_PCT}%)")
+    ok = worst_n <= LIMIT_MOLES_PCT and worst_vh <= LIMIT_VH_PCT
+
+    curve, CURVE = CURVE, vm.make_curve([180.0, 0.0, 0.0, 0.0], CURVE["t0"], CURVE["p_min"], CURVE["p_max"])
+    flat = [run_case(sp, 30, quiet=True) for sp in (0.5, 1.0, 1.9)]
+    CURVE = curve
+    worst_flat = max(abs(r["err_n"]) for r in flat)
+    print(f"flat curve (tau 180 s): worst count {worst_flat:.4f}% (limit {LIMIT_FLAT_PCT}%): "
+          "Z, CO2/air ratio, cooling and t0 are exact")
+    ok = ok and worst_flat <= LIMIT_FLAT_PCT
+
+    print("\nSensitivity (1.9 bar, 30 L; the count is the moles, the error is firmware vs truth):")
+    for label, kw in [("reading 0.4 s after closing", dict(read_after=0.4)),
+                      ("reading 0.8 s after closing", dict(read_after=0.8)),
+                      ("real t0 30 ms (calibrated 20 ms)", dict(t0=0.030)),
+                      ("valve 3% slower than the curve", dict(level=0.97)),
+                      ("gas 2 K warmer than assumed", dict(t_gas=T0 + 2)),
+                      ("real exponent 1.20", dict(exponent=1.20)),
+                      ("real exponent 1.40", dict(exponent=1.40))]:
+        r = run_case(1.9, 30, quiet=True, **kw)
+        print(f"  {label:34s} count {r['err_n']:+.3f}%  Vh {r['err_vh']:+.3f}%")
+    for sp in (0.5, 1.9):
+        r = run_case(sp, 30, quiet=True, t_gas=T0 + 6, t_firmware=T0)
+        print(f"  {sp} bar, gas 6 K warmer, liquid T used   count {r['err_n']:+.3f}%  Vh {r['err_vh']:+.3f}%")
+    print("\nRESULT:", "PASS" if ok else "FAIL")
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

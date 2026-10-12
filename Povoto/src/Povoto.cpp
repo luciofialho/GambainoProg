@@ -258,10 +258,6 @@ void setup() {
   server.on("/userConfig", HTTP_GET, handleUserConfigPage);
   server.on("/userConfig/update", HTTP_POST, handleUserConfigUpdate);
   
-  server.on("/calibration/speed.csv", HTTP_GET, handleSpeedCalibrationCSV);
-  server.on("/calibration/savespeed", HTTP_POST, handleSaveSpeedCalibration);
-  server.on("/calibration/speed", HTTP_POST, handleStartSpeedCalibration);
-  server.on("/calibration/savek", HTTP_POST, handleSaveVolumeK);
   server.on("/calibration/zero/start", HTTP_POST, handleSensorZeroStart);
   server.on("/calibration/zero/abort", HTTP_POST, handleSensorZeroAbort);
   server.on("/calibration/zero/save", HTTP_POST, handleSensorZeroSave);
@@ -292,10 +288,7 @@ void setup() {
   server.on("/control/auto", HTTP_GET, handleControlAuto);
   server.on("/control/relief", HTTP_GET, handleControlReliefOnce);
   server.on("/control/relief", HTTP_POST, handleControlReliefOnce);
-  server.on("/control/startvolume", HTTP_GET, handleStartVolume);
   server.on("/control", HTTP_GET, handleControlDataPage);
-  server.on("/startvolume", HTTP_GET, handleStartVolume);
-  server.on("/startvolume", HTTP_POST, handleStartVolume);
 
   server.on("/debugparams/graphs/demo", HTTP_POST, handleGraphsGenerateDemo);
   server.on("/debugparams/update", HTTP_POST, handleDebugParamsUpdate);
@@ -349,8 +342,6 @@ void setup() {
   server.on("/tasks/cancel", HTTP_GET, handleTaskCancel);
   server.on("/tasks", HTTP_GET, handleTasksPage);
 
-  server.on("/pressurehistory", HTTP_GET, handlePressureHistoryCSV);
-  server.on("/pressuredump", HTTP_GET, handlePressureDumpCSV);
   
   server.on("/resetdisplay", HTTP_GET, handleResetDisplay);
   server.on("/net", HTTP_GET, handleReconnectNetwork);

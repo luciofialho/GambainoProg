@@ -6,35 +6,47 @@ precedência e cuida da sinalização. Cada verificação fica no seu módulo.
 | Precedência | Alarme | Condição | Bipes |
 |---|---|---|---|
 | 1 | Sensor de pressão (`checkPressureSensor()`, PressureControl.cpp) | Fermenting ou Conditioning, alvo de pressão definido, leitura inválida há 10 s | 4 por minuto |
-| 2 | Relief (`evaluateReliefCheck()`, PressureControl.cpp) | Fermenting: dois reliefs seguidos com queda > 2× a esperada (vazamento) ou < 0,25× (relief sem efeito) | 5 por minuto |
-| 3 | Termômetro do fermentador (`fermenterThermometerAlarm()`, TermperatureControl.cpp) | Fermenting ou Conditioning, alvo de temperatura definido, termômetro não atribuído ou sem leitura válida há 60 s | 3 por minuto |
+| 2 | Válvula presa aberta (`checkValveStuckOpen()`, PressureControl.cpp) | Fermenting: a pressão caiu mais de 5 mbar nos 30 s depois da leitura de fechamento de um vent | 6 por minuto |
+| 3 | Vent sem efeito (`evaluateVentCheck()`, PressureControl.cpp) | Fermenting: dois vents seguidos com queda < 0,25× a esperada | 5 por minuto |
+| 4 | Termômetro do fermentador (`fermenterThermometerAlarm()`, TermperatureControl.cpp) | Fermenting ou Conditioning, alvo de temperatura definido, termômetro não atribuído ou sem leitura válida há 60 s | 3 por minuto |
 
 Com mais de um ativo, sinaliza só o de maior precedência. O `/getstatus` mostra o
-estado de cada um ("Pressure sensor check", "Relief check" e "Fermenter
-thermometer alarm").
+estado de cada um ("Pressure sensor check", "Vent check ... stuck open" e
+"fermenter thermometer alarm").
 
-## Verificação de cada relief
+## Verificação de cada vent
 
-A queda de cada relief (fator `adjustedEquilibriumPressure / pressureOnReliefExtrap`,
-o mesmo da medição do headspace) é comparada com a esperada pelo headspace
-**aplicado** (média de 24 h, referência congelada): queda esperada = Vr / (V + Vr),
-com Vr o volume de contabilidade do tanque (k e Tref).
+A queda assentada de cada vent (de `pressureOnReliefExtrap` à pressão assentada
+pelo expoente 1,29, em P/Z) é comparada com a esperada pelos mols contados pelo
+modelo de vazão no headspace **aplicado** (média de 24 h, referência congelada;
+antes dela, o inicial): razão = queda medida / queda esperada = Vh de referência
+/ Vh aparente (docs/vent.md).
 
-- **Vazamento** (> 2×): com a ligação válvula-tanque solta, o gás vai direto para a
-  atmosfera pela válvula e a queda fica ~2,9× (a 1,9 bar) a ~3,8× (a 0,5 bar) a
-  esperada com o tanque de 2 L (ensaio de ventilação de 18/09); por isso o limiar
-  é 2× e não 4×.
-- **Relief sem efeito** (< 0,25×): válvula que não abre ou tanque que não ventilou.
-- **Quarentena:** o relief suspeito não alimenta a EMA, a média de 24 h nem as
-  amostras iniciais; o CO2 dele vem do lado do fermentador (queda × headspace de
-  referência / RT, aplicado via `tankPressureAtClose`). Dois seguidos do mesmo
-  tipo disparam o alarme; um relief normal o apaga e volta a alimentar o
-  headspace. Um suspeito isolado é descartado sem alarme.
-- Não avalia: janelas de task, determinação de volume, primeiros 3 reliefs (sem
-  headspace estabelecido), alarme do sensor de pressão ativo, pressão de debug
-  sobrescrita, pressão no relief < 0,1 bar. Fora de Fermenting o alarme não vale.
+- **Vent sem efeito** (< 0,25×): a válvula não abriu, a saída está obstruída ou
+  o TE foi religado por engano. O vent **não é contado** pelo modelo de vazão
+  (contaria mols que não saíram): o CO2 dele é a perda do lado do fermentador
+  (queda × headspace de referência / RT; ~0 se a válvula não abriu) e ele não
+  alimenta a EMA, a média de 24 h nem as amostras iniciais. Dois seguidos
+  disparam o alarme; um vent normal o apaga.
+- A verificação de queda grande do TE (vazamento entre a válvula e o tanque)
+  saiu: sem TE não há causa no equipamento para ela.
+- Não avalia: fora de Fermenting, janelas de task, alarme do sensor de pressão
+  ativo, pressão de debug sobrescrita, pressão no vent < 0,1 bar, sem a
+  referência da subida de pressão. Avalia desde o primeiro vent (o headspace
+  inicial vem do volume de cerveja informado; com ar no headspace a vazão real
+  é maior que a do CO2 e a razão fica perto de 1,27, longe de 0,25).
 - Log Relief: colunas `ReliefDropRatio` (medida/esperada) e `ReliefCheck` (ok,
-  leak, no-effect ou vazio). Relief normal: nada muda no headspace nem no CO2.
+  no-effect ou vazio) e `VentCounted` (`flow` ou `fermenter-side`).
+
+## Válvula presa aberta
+
+Depois de um vent em Fermenting a pressão só sobe: o gás esquenta de volta
+(~30 s) e a fermentação continua. Se 30 s depois da leitura de fechamento ela
+estiver mais de 5 mbar abaixo dessa leitura, a válvula não fechou: alarme na
+hora (o fermentador está perdendo a pressão). Não avalia em janelas de task (o
+dump baixa a pressão de propósito), com o alarme do sensor ativo nem com a
+pressão de debug sobrescrita. Um vent seguinte com recuperação normal apaga o
+alarme; sair de Fermenting também. E-mail com as pressões; tela "VALVE / OPEN".
 
 ## Leitura de pressão inválida
 

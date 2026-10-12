@@ -23,7 +23,7 @@ void applyDallasRoles();     // after FMTData.dallasAddress changes; applied in 
 uint8_t getDallasScan(DallasScanEntry *out, uint8_t max);
 
 bool dallasRoleAssigned(uint8_t role);
-// Environment / expansion tank / headspace: last valid reading, held for 60 s, else NOTaTEMP.
+// Environment / headspace: last valid reading, held for 60 s, else NOTaTEMP.
 float dallasRoleTemperature(uint8_t role);
 
 bool dallasOnBus(const uint8_t *address); // found by the last scan

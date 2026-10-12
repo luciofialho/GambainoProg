@@ -7,14 +7,13 @@
 A cada amostra:
 
 ```
-gás = totalMolsEjected + headSpaceCO2Mols + expansionTankInventoryMoles()
+gás = totalMolsEjected + headSpaceCO2Mols
 ```
 
 | Parcela | Origem |
 |---|---|
-| `CountersData.totalMolsEjected` | CO2 ventilado pelo tanque de expansão (reliefs), com a correção de massa líquida |
+| `CountersData.totalMolsEjected` | CO2 dos vents (modelo de vazão, docs/vent.md), com a correção de massa líquida |
 | `headSpaceCO2Mols` | P·Vh/(R·T) − P_início·Vh/(R·T_início), com pressão manométrica e o headspace aplicado; mínimo 0 |
-| `expansionTankInventoryMoles()` | CO2 que ainda está no tanque de expansão, no ciclo atual |
 
 O CO2 dissolvido **não** entra na taxa: ele é modelado, não medido, e numa transição de pressão ou temperatura o modelo erra por várias vezes (docs/dissolved-co2.md, seção 2a). O SG continua usando o balanço completo, com o dissolvido (seção 6).
 
