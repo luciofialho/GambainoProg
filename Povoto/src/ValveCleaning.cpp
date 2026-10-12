@@ -20,6 +20,8 @@ static unsigned long phaseStart = 0, phaseMs = 0, toggleMillis = 0;
 static bool energized = false;
 static uint16_t cycles = 0;
 static char lastText[96] = "Not started";
+// Set by the web handler; the loop closes the valve and ends the session.
+static volatile bool abortRequested = false;
 
 const char *valveCleaningPhaseName(uint8_t phase) {
   return phase < VALVE_CLEANING_PHASES ? PHASES[phase] : "done";
@@ -78,14 +80,15 @@ bool startValveCleaningPhase(float minutes, char *reason, size_t reasonSize) {
     return false;
   }
   if (!sessionOpen) nextPhase = 0;
+  abortRequested = false;
   sessionOpen = true;
-  phaseRunning = true;
-  phaseStart = toggleMillis = millis();
+  // The valve is driven by the loop only: it energizes on its next pass.
+  phaseStart = millis();
+  toggleMillis = phaseStart - CLEANING_OFF_MS;
   phaseMs = (unsigned long)(minutes * 60000.0f);
   cycles = 0;
-  energized = true;
-  routineValve(true);
-  showProgress(true);
+  energized = false;
+  phaseRunning = true;
   return true;
 }
 
@@ -103,13 +106,18 @@ static void endSession(const char *text, bool completed) {
   showProgress(true);
 }
 
+// Web task: only requests it; processValveCleaning() aborts in the main loop.
 void abortValveCleaning() {
-  if (!sessionOpen) return;
-  endSession("Aborted", false);
+  if (sessionOpen) abortRequested = true;
 }
 
 void processValveCleaning() {
   if (!sessionOpen) return;
+  if (abortRequested) {
+    abortRequested = false;
+    endSession("Aborted", false);
+    return;
+  }
   if (SetPointData.mode != MODE_OFF || taskWindowType != 0) {
     endSession("Aborted: mode or task changed", false);
     return;

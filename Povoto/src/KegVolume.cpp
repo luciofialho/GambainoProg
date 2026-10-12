@@ -45,6 +45,8 @@ static float kegVolume = 0.0f;
 static unsigned long stageMillis = 0, ventWaitMs = 0;
 static float simulated = NAN;
 static char statusText[96] = "Not run";
+// Set by the web handler; the loop aborts (the wait buffer is freed in the loop only).
+static volatile bool abortRequested = false;
 
 bool kegVolumeActive() { return stage != KEG_IDLE; }
 
@@ -101,8 +103,9 @@ static void finish(const char *outcome) {
   showProgress(true);
 }
 
+// Web task: only requests it; processKegVolume() aborts in the main loop.
 void abortKegVolume() {
-  if (stage != KEG_IDLE) finish("Aborted");
+  if (stage != KEG_IDLE) abortRequested = true;
 }
 
 bool startKegVolume(float volume, uint8_t count, char *reason, size_t reasonSize) {
@@ -128,6 +131,7 @@ bool startKegVolume(float volume, uint8_t count, char *reason, size_t reasonSize
   simulated = ControlData.pressure;
   wait->reset(millis());
   stageMillis = millis();
+  abortRequested = false;
   stage = KEG_WAIT_P1;
   snprintf(statusText, sizeof(statusText), "Running");
   showProgress(true);
@@ -158,6 +162,11 @@ static void computeRelief(KegRelief &k) {
 
 void processKegVolume() {
   if (stage == KEG_IDLE) return;
+  if (abortRequested) {
+    abortRequested = false;
+    finish("Aborted");
+    return;
+  }
   if (SetPointData.mode != MODE_OFF || taskWindowType != 0 || !isfinite(ControlData.pressure) ||
       ControlData.pressure > FMTData.maximumPressure) {
     finish("Aborted (mode, task or pressure)");

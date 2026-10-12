@@ -275,6 +275,8 @@ static unsigned long stageMillis = 0, openPlannedMs = 0;
 static int64_t openMicros = 0;
 static float simulatedPressure = NAN;   // debug boards
 static char statusText[96] = "Idle";
+// Set by the web handler; the loop aborts (buffers are freed in the loop only).
+static volatile bool abortRequested = false;
 
 bool ventingTestActive() {
   return stage != VT_IDLE;
@@ -356,8 +358,9 @@ static void finishTest(const char *outcome) {
   showProgress(true);
 }
 
+// Web task: only requests it; processVentingTest() aborts in the main loop.
 void abortVentingTest() {
-  if (stage != VT_IDLE) finishTest("Aborted");
+  if (stage != VT_IDLE) abortRequested = true;
 }
 
 bool startVentingTest(uint8_t label, bool co2, float volume, char *reason, size_t reasonSize) {
@@ -402,6 +405,7 @@ bool startVentingTest(uint8_t label, bool co2, float volume, char *reason, size_
   simulatedPressure = ControlData.pressure;
   wait->reset(millis());
   stageMillis = millis();
+  abortRequested = false;
   stage = VT_WAIT_P1;
   snprintf(statusText, sizeof(statusText), "Running");
   showProgress(true);
@@ -439,6 +443,11 @@ static void openRelease(float p1, unsigned long now) {
 
 void processVentingTest() {
   if (stage == VT_IDLE) return;
+  if (abortRequested) {
+    abortRequested = false;
+    finishTest("Aborted");
+    return;
+  }
   if (SetPointData.mode != MODE_OFF || taskWindowType != 0 || !isfinite(ControlData.pressure) ||
       ControlData.pressure > FMTData.maximumPressure) {
     finishTest("Aborted (mode, task or pressure)");
