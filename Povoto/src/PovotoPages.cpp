@@ -26,6 +26,7 @@
 #include "SensorZero.h"
 #include "CalibrationEvents.h"
 #include "VentingTest.h"
+#include "ValveCleaning.h"
 #include "AtmosphericPressure.h"
 
 // ========== MAIN MENU ==========
@@ -1156,6 +1157,28 @@ static String ventingTestSectionHtml() {
   return html;
 }
 
+// Valve cleaning cycle (docs/valve-cleaning.md).
+static String valveCleaningSectionHtml() {
+  String html = "<hr><h3>Valve cleaning</h3><p>Mode OFF. Detach port <b>P</b> from the fermenter and take it to the drain; "
+    "remove the muffler of port <b>R</b> and take it to the drain. Pressurized liquid (a few tenths of a bar) "
+    "<b>only on port A</b>. Each phase alternates the valve energized (A&rarr;P) and de-energized (A&rarr;R), 2 s + 2 s. "
+    "Phases: neutral detergent, water, 70% alcohol, air (drying); change the liquid on A before each one. No caustic soda "
+    "and no percarbonate (aluminium body); keep the coil dry. The first time, check that the liquid comes out alternately "
+    "through P and R.</p><p><b>" + valveCleaningStatusText() + "</b></p>";
+  if (valveCleaningRunning()) {
+    html += "<form action='/calibration/cleaning/abort' method='POST'><button>Abort</button></form>";
+  } else if (valveCleaningNextPhase() < VALVE_CLEANING_PHASES || !valveCleaningActive()) {
+    const uint8_t phase = valveCleaningActive() ? valveCleaningNextPhase() : 0;
+    html += String("<form action='/calibration/cleaning/start' method='POST'><label><input type='checkbox' name='ready' "
+      "value='1' required> ") + valveCleaningPhaseName(phase) + " is connected to port A</label> <label>Minutes "
+      "<input type='number' name='minutes' value='4' min='0.5' max='15' step='0.5' style='width:70px'></label> "
+      "<button>Valve cleaning: phase " + String(phase + 1) + "</button></form>";
+    if (valveCleaningActive())
+      html += "<form action='/calibration/cleaning/abort' method='POST'><button>Abort the cycle</button></form>";
+  }
+  return html;
+}
+
 static void sendCalibrationMessage(AsyncWebServerRequest *request, const char *title, const char *text) {
   String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta http-equiv='refresh' content='3;url=/calibration'>"
     "<style>body{font-family:Arial;text-align:center;margin-top:50px;}</style></head><body><h1>";
@@ -1207,6 +1230,25 @@ void handleVentingTestSave(AsyncWebServerRequest *request) {
     sendCalibrationMessage(request, "Curve not saved", reason);
     return;
   }
+  request->redirect("/calibration");
+}
+
+void handleValveCleaningStart(AsyncWebServerRequest *request) {
+  if (!request->hasParam("ready", true)) {
+    sendCalibrationMessage(request, "Phase not started", "Confirm the liquid on port A.");
+    return;
+  }
+  const float minutes = request->hasParam("minutes", true) ? request->getParam("minutes", true)->value().toFloat() : 4.0f;
+  char reason[100];
+  if (!startValveCleaningPhase(minutes, reason, sizeof(reason))) {
+    sendCalibrationMessage(request, "Phase not started", reason);
+    return;
+  }
+  request->redirect("/calibration");
+}
+
+void handleValveCleaningAbort(AsyncWebServerRequest *request) {
+  abortValveCleaning();
   request->redirect("/calibration");
 }
 
@@ -1431,9 +1473,9 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   const String actions = String("<div class='container' style='margin-top:20px'><h2>Calibration and maintenance</h2>") +
     "<p>Requirements: mode OFF, no task. Do not press any Save button before analysing the data "
     "(docs/manual-calibracao-manutencao.md).</p>" +
-    sensorZeroSectionHtml() + ventingTestSectionHtml() + "</div>";
+    sensorZeroSectionHtml() + ventingTestSectionHtml() + valveCleaningSectionHtml() + "</div>";
   page.replace("</body>", actions + "</body>");
-  if (sensorZeroActive() || ventingTestActive()) page.replace("<head>", "<head><meta http-equiv='refresh' content='10'>");
+  if (sensorZeroActive() || ventingTestActive() || valveCleaningRunning()) page.replace("<head>", "<head><meta http-equiv='refresh' content='10'>");
   request->send(200, "text/html", page);
   free(html);
 }

@@ -267,6 +267,8 @@ void setup() {
   server.on("/calibration/venting/abort", HTTP_POST, handleVentingTestAbort);
   server.on("/calibration/venting/save", HTTP_POST, handleVentingTestSave);
   server.on("/calibration/venting.csv", HTTP_GET, handleVentingTestCSV);
+  server.on("/calibration/cleaning/start", HTTP_POST, handleValveCleaningStart);
+  server.on("/calibration/cleaning/abort", HTTP_POST, handleValveCleaningAbort);
   server.on("/calibration", HTTP_GET, handleCalibrationDataPage);
   server.on("/calibration/refresh-current", HTTP_GET, handleCalibrationCurrentRefresh);
   server.on("/calibration/update", HTTP_POST, handleCalibrationDataUpdate);

@@ -17,6 +17,7 @@
 #include "SensorZero.h"
 #include "PovotoAlarms.h"
 #include "VentingTest.h"
+#include "ValveCleaning.h"
 #include <esp_timer.h>
 #include <math.h>
 #include <algorithm>
@@ -2740,12 +2741,12 @@ void pressureRelief() {
 }
 
 bool calibrationRoutineActive() {
-  return sensorZeroActive() || ventingTestActive();
+  return sensorZeroActive() || ventingTestActive() || valveCleaningActive();
 }
 
-// Routines that drive the valve themselves (venting test, ...).
+// Routines that drive the valve themselves: no automatic vent meanwhile.
 static bool valveRoutineActive() {
-  return ventingTestActive();
+  return ventingTestActive() || valveCleaningActive();
 }
 
 int64_t routineValve(bool open) {
@@ -2864,6 +2865,7 @@ void pressureControl() {
   pressureDropFactor = 1.0f - FMTData.ventTargetDropPercent / 100.0f;
   if (valveRoutineActive()) {
     processVentingTest();
+    processValveCleaning();
     return;
   }
   processSensorZero();
