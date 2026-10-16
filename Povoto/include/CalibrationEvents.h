@@ -12,6 +12,8 @@ void calibrationEventAppend(const char *type, const char *details);
 String calibrationEventsHtmlRows(uint8_t count);
 // Type of the newest event ("" = none).
 String lastCalibrationEventType();
+// The newest event of a type: its time and details; false when there is none.
+bool lastCalibrationEventOfType(const char *type, String &when, String &details);
 void handleCalibrationEventsText(AsyncWebServerRequest *request); // /calibration/events.txt
 // Download name PovotoCalibration-<type>-FMT<n>-yyyymmddhhmm.<extension> with
 // the local time of `epoch` ("nodate" without NTP time); "Incomplete-" in

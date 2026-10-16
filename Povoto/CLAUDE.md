@@ -12,7 +12,7 @@ O método antigo, com tanque de expansão (TE), está na tag `te-final-2026-10-1
 - `PovotoTasks.cpp`: janelas de tarefa (Dump, Gas, Liquid, Dry Hopping, Dynamic Hopping).
 - `AutoSetpoints.cpp` (+ `PovotoMail.cpp`): ações disparadas (triggered actions; nomes internos, chaves NVS, rotas e XML continuam "AutoSetpoints"). Documentação: `docs/triggered-actions.md`.
 - Persistência: `docs/NVS-storage.md` (as chaves do TE ficam gravadas, sem uso: nunca reaproveitá-las); teste estrutural: `python tests/check_storage_schema.py`.
-- CO2 dissolvido (estados inicial/equilíbrio/half-life/armado): `docs/dissolved-co2.md`; bench: `python tests/dissolved_co2_bench.py`.
+- CO2 dissolvido (estados inicial/equilíbrio/half-life/armado): `docs/dissolved-co2.md`; bench: `python tests/dissolved_co2_bench.py`. Estimativa (só registro) da janela de nucleação após dry hop: seção 8 do mesmo doc, `NucleationEstimate.h/.cpp`.
 - Termômetros Dallas (fermentador, ambiente, headspace; papéis na página Settings): `docs/thermometers.md`.
 - Alarmes de equipamento (sensor de pressão, válvula presa aberta, vent sem efeito, termômetro; bipes, tela, LEDs, attention LED): `docs/alarms.md`.
 - Modo Conditioning (geladeira simples, balanço congelado, tasks bloqueadas): `docs/conditioning.md`.

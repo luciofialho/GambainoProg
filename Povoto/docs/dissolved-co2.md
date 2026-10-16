@@ -79,7 +79,7 @@ Consequências:
 |---|---|
 | Dry hopping (4), Dynamic hopping (5), inclusive a janela de nucleação | todo gás que aparece sai do líquido: `D −= ΔG` até 0 (a nucleação libera CO2 dissolvido, não é produção). Depois da janela, a reabsorção segue a seção 3. |
 | Dump (1) | D fica parado; no fim, D é escalado pelo volume de cerveja depois/antes (`scaleDissolvedCO2ForBeerVolume()`), com rebase do buffer do gCO2 |
-| Gas (2), Liquid (3) | D fica parado (gás/volume mudam de forma desconhecida) |
+| Gas (2), Liquid (3) | D fica parado (gás/volume mudam de forma desconhecida), também durante a janela de nucleação (30 min por padrão: a janela vale para Gas, Liquid, Dry hopping e Dynamic hopping) |
 
 Nos estados de equilíbrio e inicial, D segue Henry durante as tasks, como antes.
 
@@ -110,3 +110,66 @@ Nucleação mais longa que a janela: o que sai depois da janela, com D < H, cont
 - A injeção de CO2 na task Gas também entra no total (em qualquer estado, como antes).
 - O erro do ar no headspace no início (sem correção) afeta o estado inicial e o equilíbrio como antes.
 - Os limiares do armado (0,3 por 1 h) não têm dados de calibração: nenhum lote registrou adição de fermentáveis. Com hop creep, 0,3 por 1 h pode ser atingido sem refermentação (no 159 houve sequências > 0,5 de até 73 min); o custo é voltar ao equilíbrio (Henry no limiar), que foi o comportamento de sempre durante a fermentação.
+
+## 8. Estimativa da janela de nucleação
+
+Código: `include/NucleationEstimate.h` (núcleo puro, espelho `tests/nucleation_estimate.py`) e
+`src/NucleationEstimate.cpp` (tasks, eventos). **Só registro**: o firmware nunca altera
+`nucleationWindow`; quem decide o valor é o operador, olhando os eventos.
+
+- **Padrão**: `nucleationWindow` = **30 min** (era 5). Placas com a chave NVS `nucleation` gravada
+  mantêm o valor gravado (sem migração). Não há faixa de validação do campo (página Calibration:
+  `min=0`, `step=1`, sem máximo; o restore do backup lê o inteiro sem checar faixa).
+- **A janela vale para quatro tasks**: as que chamam `endTask(FMTData.nucleationWindow)` — Gas, Liquid,
+  Dry hopping e Dynamic hopping. Com 30 min, Gas e Liquid também ficam 30 min com D parado e sem medir o
+  headspace (comportamento mantido, só documentado). A estimativa roda **só** para Dry hopping (4) e
+  Dynamic hopping (5).
+- **Grandeza**: a fase gasosa `G = totalMolsEjected + headSpaceCO2Mols` (`gasPhaseCO2Mols()`, a mesma do
+  `GasCO2Rate`): subida de pressão mais mols ventados. Não é a SG nem o resultado do modelo de D.
+  (Atualizações do volume do headspace somam saltos em G, como no `GasCO2Rate`: entram no σ da referência.)
+- **Sem buffer próprio**:
+  - **Referência**, no início da task: reta de mínimos quadrados de G sobre todo o `co2EvolutionHistory`
+    (71 amostras de 60 s, ~70 min; mesmo molde de `co2BufferTailSlope()`, com o buffer inteiro). Guarda a
+    inclinação (taxa de referência, mol/s) e o σ dos resíduos. Exige ≥ 60 amostras e nenhuma com
+    `externalStep`; senão, `no baseline`. A referência é de ~70 min, não de 1–2 h.
+  - **Observação**: do fim da task até 3 h depois, em 18 blocos de 10 min. Excesso do bloco =
+    ΔG do bloco − inclinação × duração do bloco. Guarda os 18 blocos (18 floats) e o excesso durante a task
+    (ΔG da task − inclinação × duração). Nada é gravado na flash durante a observação (só o marcador
+    "pendente" `pvt_nucl/pend`, 1 byte, gravado ao começar e apagado ao terminar, que permite ao boot
+    seguinte registrar `interrupted (reboot)`). RAM do estimador: ~150 bytes; a fila de eventos das tasks,
+    96 bytes.
+  - **Ruído de um bloco**: `σ_bloco = √2 · σ` dos resíduos (a diferença de duas leituras de G).
+- **Janela estimada**: o fim do primeiro bloco, contado do fim da task, a partir do qual **3 blocos
+  seguidos** têm excesso < `max(10% do maior bloco, 2·σ_bloco)`. Só vale depois do maior bloco (antes dele
+  ainda não houve nucleação). **Resolução de 10 min** (registrada como `ResolutionMin=10`).
+- **Mols em excesso, três parcelas**: durante a task, dentro da janela configurada (contada do fim da
+  task; o bloco que cruza o limite é dividido proporcionalmente) e depois da janela, até 3 h; ao lado da
+  queda de D que o half-life aplicou na task e na janela (`ModelDissolvedDropMol`; 0 nos estados em que D
+  segue Henry — por isso o `DissolvedCO2Mode` entra no registro: a janela só muda D no half-life e no
+  armado). A parcela "depois da janela" acumula o desvio da reta de ~70 min extrapolada por até 3 h: o
+  sinal e o tamanho dela dependem da tendência do fundo (no bench, −0,065 mol com a produção caindo); a
+  de "durante a task" e "dentro da janela" são as que se comparam com a queda de D.
+- **Flag de qualidade** (`Quality`, um só, nesta ordem de prioridade):
+  1. `interrupted (<motivo>)`: reboot, outra task (uma nova de lupulagem encerra a anterior), mudança de
+     setpoint de pressão ou temperatura (direto ou lento), mudança de modo, ou `externalStep` durante a
+     observação;
+  2. `no baseline (<motivo>)`: menos de 60 amostras ou `externalStep` na referência (sem observação);
+  3. `vented`: pressão manométrica abaixo de 0,1 bar durante a task, o fermentador estava aberto (sem
+     observação);
+  4. `noisy baseline`: o maior bloco de excesso < **4·σ_bloco**;
+  5. `not settled`: o critério da janela não foi atingido em 3 h;
+  6. `ok`.
+  Só `ok` traz `EstimatedWindowMin`; nos outros ele é `n/a`.
+- **Registro**: um evento de calibração por task, tipo `nucleation-estimate` (arquivo `/calevents.txt`,
+  seção "Calibration events" da página, `/calibration/events.txt`; nenhum arquivo de log novo), com
+  TaskType, TaskDurationMin, DissolvedCO2Mode, ConfiguredWindowMin, EstimatedWindowMin,
+  ExcessMolDuringTask, ExcessMolInsideWindow, ExcessMolAfterWindow, ModelDissolvedDropMol,
+  BaselineRate (g/L/d, a unidade do `GasCO2Rate`), BlockSigma (mol), PeakBlockExcess (mol), Quality, e
+  ainda ObservedMin e ResolutionMin.
+- **Página Calibration**, seção "Dissolved CO2 dynamics": a última estimativa (e o andamento da
+  observação) abaixo do campo "Nucleation window", só informativa, sem botão de aplicar.
+- **Threads**: as tasks terminam na task web; os ganchos só enfileiram o evento e o loop principal o
+  trata na amostra de CO2 seguinte (até 60 s de atraso, usados como instantes da referência e do fim).
+- **Bench**: `python tests/dissolved_co2_bench.py`, casos "nucleation estimate": 0,27 mol em 90 min sobre
+  produção com tendência, fundo ruidoso, não assenta, interrompido, sem referência (buffer recém-iniciado
+  e `externalStep`) e `vented`.

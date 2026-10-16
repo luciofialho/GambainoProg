@@ -28,6 +28,7 @@
 #include "VentingTest.h"
 #include "ValveCleaning.h"
 #include "KegVolume.h"
+#include "NucleationRecord.h"
 #include "AtmosphericPressure.h"
 
 // ========== MAIN MENU ==========
@@ -1207,6 +1208,26 @@ static String dissolvedCO2SectionHtml() {
   html += String("<div class='form-group'><label for='nucleationWindow'>Nucleation window (min):</label>"
                  "<input type='number' id='nucleationWindow' name='nucleationWindow' form='calForm' value='") +
           String(FMTData.nucleationWindow) + "' step='1' min='0'></div>";
+  // Information only: the firmware estimates the window after each hopping task and never changes the field.
+  html += "<p style='font-size:0.9em'><b>Estimate of the window</b> (information only, never applied; one event per "
+          "dry / dynamic hopping task, 3 h after it, in 10-min blocks: docs/dissolved-co2.md, section 8). BaselineRate in g/L/d; "
+          "mols in mol.</p>";
+  const String progress = nucleationEstimateStatusText();
+  if (progress.length()) html += "<p style='font-size:0.9em'>" + progress + "</p>";
+  String when, details;
+  if (lastCalibrationEventOfType("nucleation-estimate", when, details)) {
+    html += "<p style='font-size:0.9em'>Last (" + when + "): ";
+    for (size_t i = 0; i < details.length(); ++i) {
+      const char c = details[i];
+      if (c == '<') html += "&lt;";
+      else if (c == '>') html += "&gt;";
+      else if (c == '&') html += "&amp;";
+      else html += c;
+    }
+    html += "</p>";
+  } else {
+    html += "<p style='font-size:0.9em'>No estimate yet.</p>";
+  }
   return html;
 }
 

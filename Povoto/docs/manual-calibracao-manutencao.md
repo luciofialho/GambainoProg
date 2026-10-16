@@ -1,6 +1,7 @@
 # Povoto: manual de calibração e manutenção
 
-Versão 1 (11/10/2026), método de **ventilação direta** (sem tanque de expansão).
+Versão 1 (11/10/2026), método de **ventilação direta** (o vent não usa tanque de expansão; um tanque
+simples de volume conhecido só serve para medir o volume do fermentador, P4b).
 Firmware: branch `povoto-vent` (`docs/sem-te-plano.md`; detalhes em
 `docs/vent.md`, `docs/venting-test.md`, `docs/keg-volume.md`,
 `docs/valve-cleaning.md`, `docs/pressure-sensor-zero.md`,
@@ -15,6 +16,21 @@ Regras gerais:
   O que vale é o CSV e o histórico.
 - Telas e páginas do Povoto são em inglês; os nomes de botões e mensagens
   aparecem aqui como na tela.
+- Navegação: `http://<ip>/menu` é o menu (o antigo `/config` redireciona para ele; o ícone de menu do
+  dashboard e o QR da TFT abrem o menu). Toda página aberta do menu volta para o menu em Save e em Cancel;
+  as ações de rotina da Calibration (Start, Abort, Save zero, Save curve and t0, Save as new FMT volume)
+  voltam para `/calibration`.
+- Onde ficam os campos: **Settings** — FMT volume, Maximum security pressure (2,0–3,0 bar), Maximum
+  pressure setpoint (abaixo da pressão de segurança; nenhum setpoint de pressão, nem de regra ou da nuvem,
+  passa dele), Target drop of the gauge pressure per vent (1–15%), altitude, termômetros, Backup settings /
+  Restore settings from backups. **Calibration**, em ordem: Pressure sensor (pontos A e B, reta; Sensor
+  zero), Fermenter volume, Venting test, Vent (Flow level factor e Effective Venting Exponent; a abertura
+  mínima de 1,5 s e a queda de segurança de 2× a alvo são fixas), Dissolved CO2 dynamics (Nucleation
+  window), Valve cleaning; um único Save/Cancel no fim grava os campos editáveis, e os eventos de
+  calibração ficam no final da página.
+- Arquivos baixados: `PovotoCalibration-<tipo>-FMT<n>-yyyymmddhhmm.csv` (hora local do início do ensaio;
+  `nodate` sem NTP). Tipos: `Venting`, `VentingHistory` (todos, hora do download) e `FermenterVolume`;
+  `Incomplete-` na frente se baixado antes do fim; eventos: `PovotoCalibration-Events-FMT<n>-<hora>.txt`.
 - Anote tudo na folha de registro (seção 6) e guarde os arquivos em
   `A:\Nuvem\Povoto\Calibracoes` com a data na frente (`AAAA-MM-DD_...`).
 
@@ -28,7 +44,7 @@ flowchart TD
     D --> E{Volume do fermentador<br/>conhecido?}
     E -- não --> F{Dá para pesar<br/>com água?}
     F -- sim --> G[P4a Pesagem com água]
-    F -- não --> H[P4b Volume pelo barril]
+    F -- não --> H[P4b Volume pelo tanque de expansão]
     E -- sim --> K
     G --> K
     H --> K
@@ -73,7 +89,7 @@ perdas ficarem sempre < 1%.
 - Garrafa PET seca com conexão de entrada pelo fundo (testemunha) e silenciador
   de baixa resistência, se for usar.
 - Para P4a: balança para a massa de água do fermentador.
-- Para P4b: barril de 19–50 L, pesado vazio e cheio de água (balança de ~0,1 kg),
+- Para P4b: tanque de expansão de 2–50 L, pesado vazio e cheio de água (balança de ~0,1 kg),
   mangueira para a porta A da válvula.
 - Para P10: recipiente pressurizável com detergente neutro, água e álcool 70%; ar
   comprimido; mangueira para a porta A; recipiente de dreno.
@@ -101,12 +117,12 @@ rotina usa a corrente bruta do sensor.
    repita. O botão de gravar não aparece nesse caso.
 5. Resultado: diferença entre a corrente medida e o zero gravado, em mA e em
    mbar (sem corte). Dentro de ±2 mbar: não precisa gravar.
-6. Fora disso: "Save zero" (desloca os três pontos da calibração pela mesma
+6. Fora disso: "Save zero" (desloca os dois pontos da calibração pela mesma
    diferença, sem mudar o ganho). Repita para conferir.
-7. Ganho (conferência grosseira): feche o fermentador, pressurize a ~1,9 bar e
-   compare a pressão sem corte mostrada na mesma página com o manômetro
-   analógico do fermentador. Diferença maior que a incerteza de leitura dele
-   (alguns %): registre (ver seção 5).
+7. Ganho: a conversão é a reta pelos pontos A e B. Para uma conferência grosseira, feche o
+   fermentador, pressurize a ~1,9 bar e compare a pressão sem corte do `/getstatus` com o
+   manômetro analógico; diferença maior que a incerteza de leitura dele (alguns %):
+   registre (ver seção 5).
 
 ### P2. Intercalibração dos Dallas (fermentador × ambiente × headspace)
 
@@ -138,27 +154,27 @@ Quando: fermentador novo. O volume não muda depois. Site principal: 129,6 L.
    cheio). Volume = massa / densidade da água na temperatura medida.
 2. Grave o FMT volume (Settings).
 
-### P4b. Volume do fermentador pelo barril
+### P4b. Volume do fermentador pelo tanque de expansão
 
 Quando: fermentador grande demais para pesar, ou para conferir a pesagem.
 
-1. Pese o barril vazio e cheio de água: V_E = massa da água / densidade. Esvazie e
-   seque.
-2. Ligue o barril na porta A da válvula, sem válvula de retenção na saída de
-   ventilação.
+1. Tenha um tanque de expansão de volume conhecido V_E (pesado vazio e cheio de água: V_E = massa
+   da água / densidade). Esvazie e seque.
+2. Ligue o tanque na porta A da válvula, sem válvula de retenção na saída de ventilação.
 3. P1 (zero) antes.
-4. Barril e fermentador à sombra, no mesmo lugar. O barril se acerta com o
-   ambiente sozinho; o fermentador (isolado, pressurizado com ar quente do
-   compressor) fica com temperatura própria: o cálculo usa as duas.
-5. Pressurize o fermentador a ~1,9 bar e espere a pressão estabilizar
-   (< 0,1 mbar/min).
-6. Calibration → "Keg volume" (volume do barril e número de reliefs, 4): ela
-   abre a válvula até equalizar, espera estabilizar, lê P2 e as temperaturas,
-   ventila o barril e repete. Nada é gravado: o volume aceito vai para o FMT
-   volume na página Settings.
-7. Repita partindo de ~1,2 bar e de ~0,6 bar.
-8. Resultado: V_F por relief e média. Os três níveis de pressão devem dar o mesmo
-   volume dentro de ~0,3–0,5%.
+4. Tanque e fermentador à sombra, no mesmo lugar. O tanque se acerta com o ambiente sozinho; o
+   fermentador (isolado, pressurizado com ar quente do compressor) fica com temperatura própria:
+   o cálculo usa as duas.
+5. Pressurize o fermentador a ~2,0 bar, espere 15 min e aperte Start em Calibration → "Fermenter
+   volume" (o campo traz o último volume do tanque; o número de reliefs é calculado e mostrado).
+   A rotina leva 2–3 h e desce sozinha até ~0,5 bar: espera a pressão estável, abre a válvula
+   para o tanque, espera de novo, fecha e ventila o tanque.
+6. Resultado: V_F por relief e a média e o desvio dos reliefs estáveis ("n of m reliefs used"),
+   com o FMT volume configurado ao lado. Reliefs instáveis ficam fora da média (e no CSV).
+7. Aceito o resultado (pelo menos 2 reliefs estáveis), aperte "Save as new FMT volume" (pede
+   confirmação; grava o FMT volume e um evento de calibração). O CSV fica em
+   `PovotoCalibration-FermenterVolume-FMT<n>-yyyymmddhhmm.csv`.
+8. Para conferir, repita partindo de ~1,2 bar: o volume deve ser o mesmo dentro de ~0,3–0,5%.
 
 ### P5. Ensaio de ventilação
 
@@ -170,13 +186,14 @@ mudança na saída (garrafa, silenciador); qualquer suspeita sobre a válvula.
 3. Pressurize **acima da maior pressão de fermentação mais a margem do dente de
    serra** (~3%): para setpoint de 1,9 bar, ~2,0–2,05 bar. O sensor é certificado
    até 2 bar, mas mede razoavelmente um pouco acima. Espere ~10 min.
-4. Calibration → "Venting test"; escolha a **etiqueta** (`as-is` /
+4. Calibration → "Venting test" (sempre ar e o FMT volume do Settings); escolha a **etiqueta** (`as-is` /
    `muffler-cleaned` / `valve-cleaned` / `new-valve` / `after-cleaning-cycle`).
 5. O ensaio alterna durações (2, 0,5, 8, 1, 4, 2 s) em patamares do topo até
    **abaixo da menor pressão de fermentação usada** (com fermentações a 0,3 bar,
    o último patamar fica em ~0,25 bar), com uma abertura longa entre eles; mede o tempo real
-   de cada abertura e grava cada liberação no histórico (~40–50 min). Não mexa
-   no equipamento.
+   de cada abertura e grava cada liberação no histórico (~55–65 min). Não mexa
+   no equipamento. Durante o ensaio, "Current test CSV" baixa as liberações já concluídas
+   (arquivo `Incomplete-...`).
 6. Resultado: curva τ(P) cúbica, t0 ± erro padrão, resíduo de forma, deriva
    (por patamar) ± erro padrão, e a diferença contra a curva de referência e a
    gravada em 1,8 / 1,2 / 0,8 bar. `python tests/venting_fit.py arquivo.csv`
@@ -226,6 +243,29 @@ Exemplo: calculada 1,012, medida 1,010 → 2 pontos → +5%.
   de dry hop.
 - Só entre lotes. Campo "Flow level factor" da página Calibration.
 
+### P7b. Janela de nucleação (dry hop)
+
+Quando: depois de cada dry hop ou dynamic hop, para decidir o campo "Nucleation window"
+(Calibration, seção "Dissolved CO2 dynamics"; padrão **30 min**; placas com valor já gravado o mantêm).
+
+A janela vale para as quatro tasks que a usam: **Gas, Liquid, Dry hopping e Dynamic hopping**. Com
+30 min, depois de Gas e Liquid o dissolvido também fica parado e o headspace não é medido por 30 min
+(a estimativa abaixo só roda para Dry hopping e Dynamic hopping).
+
+1. O firmware estima a janela sozinho (docs/dissolved-co2.md, seção 8) e **não** altera o campo.
+2. No início da task ele traça uma reta sobre os ~70 min de G (fase gasosa) anteriores; depois do fim da
+   task observa 3 h em blocos de 10 min. Não mexa em setpoints (pressão ou temperatura), não rode outra
+   task e não reinicie a placa nas 3 h; não deixe o fermentador aberto (pressão < 0,1 bar) durante a task.
+3. 3 h depois do fim da task, o evento `nucleation-estimate` aparece em Calibration → "Calibration
+   events" (e na linha "Last" abaixo do campo). Compare `EstimatedWindowMin` (resolução de 10 min) com
+   `ConfiguredWindowMin`; `ExcessMolDuringTask` e `ExcessMolInsideWindow` com `ModelDissolvedDropMol`; e
+   `ExcessMolAfterWindow` (que carrega o desvio da reta extrapolada por 3 h) como ordem de grandeza.
+   `DissolvedCO2Mode` diz se o modelo mexeu em D (só no half-life e no armado).
+4. Só vale com `Quality=ok`. `noisy baseline` (maior bloco < 4·σ_bloco), `not settled` (não assentou em
+   3 h), `vented`, `no baseline` (menos de 60 amostras ou gás adicionado na referência) e `interrupted`
+   não dão estimativa.
+5. Decida o valor depois de vários lotes e grave em "Nucleation window" (Save). Sem faixa de validação.
+
 ## 4. Procedimentos de manutenção
 
 ### P8. Fim de lote
@@ -271,10 +311,10 @@ Não use soda nem Vanish em pó (corpo de alumínio). Não molhe a bobina.
 |---|---|---|
 | P1: "Unstable reading" | fermentador mal aberto, gás saindo, sensor derivando | mais aberturas (em cima e embaixo), esperar, repetir; se persistir, verificar o sensor |
 | Zero do sensor fora de ±2 mbar | deriva do sensor ou do shunt | gravar o zero (P1); se voltar a sair entre lotes, verificar hardware (INA226, shunt, fonte do 4–20 mA) |
-| Ganho fora (pressão sem corte muito diferente do manômetro analógico) | calibração de 3 pontos desatualizada | refazer a calibração de 3 pontos do sensor |
+| Ganho fora (pressão sem corte muito diferente do manômetro analógico) | pontos A e B da calibração desatualizados | refazer os pontos A e B (Calibration → Pressure sensor, "Use actual") |
 | Diferença dos Dallas > 0,7 °C | sensor ruim ou não original | trocar e repetir P2 |
 | Headspace (FMT1): leitura muda muito ao puxar a sonda 3–4 cm | condução pela haste/poço | isolar melhor a conexão por fora; registrar e avaliar se vale manter atribuído |
-| P4b: volume muda com a pressão inicial | offset do sensor ou pressão residual no barril | repetir P1; ventilar o barril por mais tempo; conferir retenção na saída |
+| P4b: volume muda com a pressão inicial | offset do sensor ou pressão residual no tanque | repetir P1; ventilar o tanque por mais tempo; conferir retenção na saída |
 | P4b: dispersão entre reliefs > 0,5% | pressão não estabilizada | esperar mais antes de P1/P2 |
 | P5: erro padrão do t0 > 5 ms, ou deriva maior que 2× o seu erro padrão | solenoide ou fonte da bobina instável | conferir a tensão; trocar a válvula |
 | P5: resíduo de forma > 1% | leituras sem estabilizar, ou forma diferente | repetir com espera maior; mandar para análise (com ruído de leitura normal, ~0,15 mbar, ele fica em ~0,5%) |
@@ -283,7 +323,8 @@ Não use soda nem Vanish em pó (corpo de alumínio). Não molhe a bobina.
 | P5: perda < 3% mas volta só com a limpeza | sujeira por lote | manter P10 em todo fim de lote |
 | Líquido na garrafa testemunha | krausen chegando à válvula | registrar; avaliar separador antes da válvula; P10 |
 | P7: correção > 5% num lote | leitura de SG ou condição atípica | não aplicar; medir de novo no próximo lote |
-| Alarme de queda pequena | válvula não abriu, saída obstruída, TE religado por engano | verificar a montagem com o equipamento em OFF; o vent não foi contado |
+| Alarme de vent abaixo do esperado (2 vents seguidos com a queda < 80% da esperada) | válvula não abriu, saída obstruída, TE religado por engano, mudança brusca de volume (líquido adicionado fora de uma task) | verificar a montagem com o equipamento em OFF; esses vents foram contados pelo lado do fermentador e ficaram fora da média de 24 h e da EMA. Um vent isolado abaixo de 80% só fica marcado no log (`ReliefCheck` = partial / no-effect) |
+| `HeadSpaceDaily` subindo devagar, sem alarme | sujeira gradual na válvula ou no silenciador (a razão do vent só enxerga mudanças bruscas, pois a referência vem do próprio modelo de vazão) | P8: ensaio de ventilação de fim de lote e comparação com a curva de referência |
 | Alarme de válvula presa aberta | êmbolo preso, sujeira no assento, falha no acionamento | fechar a linha manualmente; P10 ou trocar a válvula |
 
 ## 6. Folha de registro
@@ -305,6 +346,7 @@ Uma linha por evento. Guarde junto com os CSV.
 | P5 calibração | instalação; válvula nova; mudança na saída (garrafa, silenciador) |
 | P5 manutenção | fim de cada lote (sequência P8) |
 | P6/P7 | fim de cada lote |
+| P7b Janela de nucleação | depois de cada dry hop / dynamic hop (informativo; o campo só muda por decisão sua) |
 | P9/P10/P11 | fim de cada lote |
 
 ## 8. Visita de migração do TE para a ventilação direta
@@ -315,7 +357,8 @@ rodando sozinho).
 **Antes de sair de casa**
 - [ ] Firmware novo revisado; binário da tag `te-final-2026-10-11` guardado (fallback;
       `A:\Nuvem\Povoto\Firmware\te-final-2026-10-11`, com `littlefs.bin` das páginas).
-- [ ] Backup das configurações do Povoto (Settings, `povoto-settings.json`).
+- [ ] Backup das configurações do Povoto (Settings → "Backup settings", `povoto-settings.json`; volta com
+      "Restore settings from backups").
 - [ ] Garrafa PET preparada (entrada pelo fundo, topo aberto), conexões para a
       porta A, silenciador/filtro para a porta R.
 - [ ] Compressor no local, recipiente com água para os Dallas; para o FMT1,

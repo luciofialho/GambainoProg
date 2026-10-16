@@ -1,5 +1,6 @@
 #include "PressureControl.h"
 #include "VentModel.h"
+#include "NucleationRecord.h"
 #include "TemperatureControl.h"
 #include "PovotoData.h"
 #include "PovotoCommon.h"
@@ -511,6 +512,12 @@ static double gasPhaseCO2Mols() {
   return CountersData.totalMolsEjected + double(headSpaceCO2Mols);
 }
 
+// Dissolved CO2 taken out by the half-life model while a hopping task (or its
+// nucleation window) is open: a running total; the estimate record uses the
+// difference between its end and its start.
+static double nucleationModelDrop = 0.0;
+double nucleationModelDropMols() { return nucleationModelDrop; }
+
 // State changes are persisted at once, so a reboot keeps the state.
 static void setCO2DissolvedState(CO2DissolvedState next, const char *reason) {
   if (next == co2DissolvedState) return;
@@ -789,7 +796,9 @@ static void recomputeDissolvedCO2MolsFromCurrentState() {
     double dissolved = CountersData.CO2InSolution;
     if (deltaGas > 0.0) {
       const double releasable = hopTask ? dissolved : fmax(0.0, dissolved - equilibrium);
-      dissolved -= fmin(deltaGas, releasable);
+      const double released = fmin(deltaGas, releasable);
+      dissolved -= released;
+      if (hopTask) nucleationModelDrop += released;
     } else if (deltaGas < 0.0) {
       dissolved += fmin(-deltaGas, fmax(0.0, equilibrium - dissolved));
     }
@@ -797,6 +806,16 @@ static void recomputeDissolvedCO2MolsFromCurrentState() {
   }
   co2GasBaselineMols = gas;
   co2GasBaselineValid = true;
+}
+
+// Line over the whole CO2 buffer for the nucleation estimate (include/NucleationEstimate.h).
+Nucleation::Reference nucleationFitReference() {
+  return Nucleation::fitReference(co2EvolutionCount, [](uint16_t i, uint32_t &ms, double &gas, bool &external) {
+    const CO2EvolutionSample &s = co2EvolutionHistory[(co2EvolutionStart + i) % CO2_EVOLUTION_HISTORY_SIZE];
+    ms = (uint32_t)s.millisStamp;
+    gas = s.gasMols;
+    external = s.externalStep;
+  });
 }
 
 // CO2 in the headspace above the start: real gas (Z of CO2) at the gas
@@ -1228,6 +1247,7 @@ static void recomputeBeerCO2EvolutionFromCurrentState() {
   const uint16_t index = (co2EvolutionStart + co2EvolutionCount) % CO2_EVOLUTION_HISTORY_SIZE;
   co2EvolutionHistory[index] = {now, ControlData.pressure, gasMols, externalStep};
   ++co2EvolutionCount;
+  nucleationEstimateSample(gasMols, ControlData.pressure, externalStep); // once per CO2 sample
   addHenrySample(now);
   if (co2BufferLastSaveMillis == 0) co2BufferLastSaveMillis = now;
   else if (now - co2BufferLastSaveMillis >= CO2_BUFFER_SAVE_MS) saveCO2Buffers();

@@ -6,6 +6,7 @@
 #include "PressureControl.h"
 #include "PovotoCommon.h"
 #include "datalog.h"
+#include "NucleationRecord.h"
 #include "IOTK.h"
 #include <IOTK_NTP.h>
 
@@ -99,6 +100,7 @@ void collectTaskLogSamples() {
 
 static void startTask(byte type) {
   if (!tasksAllowed()) return;
+  nucleationTaskStarted(type); // reference of the nucleation estimate (hopping) or a disturbance
   openTaskLog(type);
   taskRestWindowActive = false;
   lastTaskMillis = millis();
@@ -121,6 +123,7 @@ static void endTask(unsigned long restWindowMinutes) {
 
 
 void cancelActiveTask() {
+  nucleationTaskCancelled();
   closeTaskLog("cancelled", nullptr);
   if (taskWindowType != 0) endTask(0);
 }
@@ -168,12 +171,14 @@ void endLiquidTask() {
 void endDryHoppingTask() {
   clearDailyHeadspace("dryhop");
   closeTaskLog(taskEndOutcome, nullptr);
+  nucleationTaskEnded(4);
   endTask(FMTData.nucleationWindow);
 }
 
 void endDynamicHoppingTask() {
   clearDailyHeadspace("dynhop");
   closeTaskLog(taskEndOutcome, nullptr);
+  nucleationTaskEnded(5);
   endTask(FMTData.nucleationWindow);
 }
 

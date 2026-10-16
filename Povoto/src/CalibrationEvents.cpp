@@ -97,6 +97,24 @@ String lastCalibrationEventType() {
   return b < 0 ? String() : line.substring(a + 1, b);
 }
 
+bool lastCalibrationEventOfType(const char *type, String &when, String &details) {
+  const String text = readEvents();
+  int end = text.length();
+  while (end > 0) {
+    if (text[end - 1] == '\n') --end;
+    const int start = text.lastIndexOf('\n', end - 1) + 1;
+    const String line = text.substring(start, end);
+    end = start;
+    const int a = line.indexOf(';');
+    const int b = a < 0 ? -1 : line.indexOf(';', a + 1);
+    if (b < 0 || line.substring(a + 1, b) != type) continue;
+    when = line.substring(0, a);
+    details = line.substring(b + 1);
+    return true;
+  }
+  return false;
+}
+
 String calibrationFileName(const char *type, uint32_t epoch, bool incomplete, const char *extension) {
   char iso[24];
   formatLocalEpochISO(epoch >= 1600000000UL ? epoch : 0, iso, sizeof(iso)); // YYYY-MM-DDTHH:MM:SS

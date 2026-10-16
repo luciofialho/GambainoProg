@@ -10,6 +10,7 @@ Run: python tests/dissolved_co2_bench.py
 import math
 import random
 import statistics
+import nucleation_estimate as ne
 
 R = 0.0831446      # L.bar/(mol.K)
 PATM = 0.93
@@ -492,6 +493,119 @@ check("quick reboot, buffers restored: display continues",
       max(abs(v - 8.6) for v in after if math.isfinite(v)) < 0.6,
       f"before {min(before):.2f}..{max(before):.2f}, after {min(after):.2f}..{max(after):.2f} g/L/d "
       f"(0.26 mol of ejected lost)")
+
+# 15. Nucleation window estimate (docs/dissolved-co2.md, section 8): information
+# only. Gas-phase CO2 (ejected + headspace), a line over the CO2 buffer (71
+# samples of 60 s) as the reference, and 3 h of observation in 10-min blocks.
+def nuc_run(extra_mol, nuc_min, noise_bar, configured=30.0, bg0=6.0, bg_slope=-0.1, task_min=5,
+            disturb_at_min=None, vent_in_task=False, reboot_min_before=None, step_in_reference=False,
+            seed=7, step_gpld=0.0):
+    random.seed(seed)
+    fer = Fermenter(temp=20.0)
+    fer.noise_bar = noise_bar
+    fer.gen_gpld = bg0
+    fw = Firmware(fer, state=1)
+    est = ne.Estimator()
+    hours = [0.0]
+    stepped = [False]
+    out = {}
+
+    def feed(f):
+        hours[0] += DT / 3600
+        f.fer.gen_gpld = bg0 + bg_slope * hours[0] + (step_gpld if stepped[0] else 0.0)
+        if f.hist:
+            _, gas, ext = f.hist[-1]
+            est.sample(int(f.now * 1000), gas, f.fer.p, ext)
+        r = est.take_result()
+        if r:
+            out["res"] = r
+
+    def reference():
+        return ne.fit_reference([(int(t * 1000), g, e) for t, g, e in fw.hist])
+    run(fw, 24 * 3600, each=feed)       # the beer settles at its slowly falling production
+    if step_in_reference:
+        run(fw, 30 * 60, each=feed)
+        fer.n += 4.0                    # gas added outside a relief: externalStep in the buffer
+        run(fw, 60, relief=False, each=feed)
+        run(fw, 19 * 60, each=feed)
+    elif reboot_min_before is not None:
+        run(fw, 60 * 60, each=feed)
+        fw.reboot()                     # the buffer restarts (a reboot without the saved buffers)
+        run(fw, reboot_min_before * 60, each=feed)
+    else:
+        run(fw, 60 * 60, each=feed)
+    ref = reference()
+    out["ref"] = ref
+    g_start = fer.measured_gas() if noise_bar == 0 else None
+    est.task_started(int(fw.now * 1000), fer.measured_gas(), ref, fer.p)
+    stepped[0] = True
+    fer.extra_release = extra_mol / (nuc_min * 60) if extra_mol else 0.0
+    if vent_in_task:
+        fer.n *= 0.01                   # opened to the atmosphere for the addition
+    run(fw, task_min * 60, each=feed)
+    g0 = fer.measured_gas() if noise_bar == 0 else None
+    out['g_start'] = g_start
+    est.task_ended(int(fw.now * 1000), fer.measured_gas(), configured, fer.p)
+    elapsed = task_min
+    while elapsed < 190 and "res" not in out:
+        if elapsed >= nuc_min:
+            fer.extra_release = 0.0
+        if disturb_at_min is not None and abs(elapsed - disturb_at_min) < 0.5:
+            est.disturb("setpoint change", int(fw.now * 1000))
+        run(fw, 60, each=feed)
+        elapsed += 1
+        if noise_bar == 0 and elapsed == task_min + 30:
+            out['g30'] = fer.measured_gas()
+    out["g_obs"] = fer.measured_gas() - g0 if g0 is not None else None
+    return out
+
+
+t0run = nuc_run(0.0, 90, 0.0)
+t1run = nuc_run(0.27, 90, 0.0)
+truth_early = (t1run['g30'] - t1run['g_start']) - (t0run['g30'] - t0run['g_start'])  # task + first 30 min
+r = nuc_run(0.27, 90, 0.001)["res"]
+early = r["during_task"] + r["inside"]
+check("nucleation estimate: window and mols (0.27 mol in 90 min, trending background)",
+      r["quality"] == ne.OK and 70 <= r["estimated_min"] <= 100 and abs(early - truth_early) < 0.02
+      and r["inside"] > 0.05 and r["during_task"] > 0.0,
+      f"window {r['estimated_min']:.0f} min (10-min blocks; configured 30), excess {r['during_task']:.3f} during the task "
+      f"+ {r['inside']:.3f} inside = {early:.3f} mol (true {truth_early:.3f}); after the window {r['after']:+.3f} mol "
+      f"(the line of a 70-min reference drifts from the real background over 3 h), "
+      f"sigma_block {r['block_sigma']:.4f} mol, largest block {r['peak_block']:.3f} mol, {r['quality']}")
+
+r = nuc_run(0.27, 90, 0.012)["res"]
+check("nucleation estimate: noisy baseline", r["quality"] == ne.NOISY_BASELINE and math.isnan(r["estimated_min"]),
+      f"sigma_block {r['block_sigma']:.3f} mol, largest block {r['peak_block']:.3f} mol (needs 4 sigma), {r['quality']}")
+
+r = nuc_run(0.0, 90, 0.0005, step_gpld=3.0)["res"]
+check("nucleation estimate: not settled in 3 h (generation up by 3 g/L/d for good)",
+      r["quality"] == ne.NOT_SETTLED and math.isnan(r["estimated_min"]) and r["after"] > 0.0,
+      f"largest block {r['peak_block']:.3f} mol, sigma_block {r['block_sigma']:.4f} mol, observed {r['observed_min']:.0f} min, "
+      f"excess {r['inside'] + r['after']:.3f} mol, {r['quality']}")
+
+r = nuc_run(0.27, 90, 0.001, disturb_at_min=60)["res"]
+check("nucleation estimate: interrupted during the observation (setpoint change)",
+      r["quality"] == ne.INTERRUPTED and r["reason"] == "setpoint change" and math.isnan(r["estimated_min"])
+      and 50 < r["observed_min"] < 70,
+      f"{r['quality']} ({r['reason']}) after {r['observed_min']:.0f} min, excess so far "
+      f"{r['inside'] + r['after']:.3f} mol")
+
+o = nuc_run(0.27, 90, 0.001, reboot_min_before=20)
+r = o["res"]
+check("nucleation estimate: no baseline (buffer restarted 20 min before the task)",
+      r["quality"] == ne.NO_BASELINE and r["observed_min"] == 0.0 and not o["ref"]["ok"],
+      f"{r['quality']} ({r['reason']})")
+
+o = nuc_run(0.27, 90, 0.001, step_in_reference=True)
+r = o["res"]
+check("nucleation estimate: no baseline (external step in the reference)",
+      r["quality"] == ne.NO_BASELINE and r["reason"] == "external step" and r["observed_min"] == 0.0,
+      f"{r['quality']} ({r['reason']})")
+
+r = nuc_run(0.27, 90, 0.001, vent_in_task=True)["res"]
+check("nucleation estimate: vented (fermenter open during the task)",
+      r["quality"] == ne.VENTED and r["observed_min"] == 0.0 and math.isnan(r["estimated_min"]),
+      f"{r['quality']}")
 
 print(f"\n{sum(c for _, c in results)}/{len(results)} passed")
 raise SystemExit(0 if all(c for _, c in results) else 1)

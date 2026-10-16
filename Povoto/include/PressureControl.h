@@ -2,6 +2,7 @@
 #define PRESSURECONTROL_H
 
 #include <Arduino.h>
+#include "NucleationEstimate.h"
 #include <ESPAsyncWebServer.h>
 
 // Size of the buffer passed to getPressureControlStatus(). Worst case of the
@@ -23,6 +24,11 @@ DissolvedCO2LogData getDissolvedCO2LogData();
 void notifyFermentablesAdded();
 void resetCO2DissolvedStateForNewBatch();
 void scaleDissolvedCO2ForBeerVolume(float volumeBefore, float volumeAfter);
+// Nucleation window estimate (docs/dissolved-co2.md, section 8): line of the gas-phase CO2
+// over the CO2 buffer (main loop only), and the dissolved CO2 that the half-life model took
+// out during hopping tasks (running total).
+Nucleation::Reference nucleationFitReference();
+double nucleationModelDropMols();
 uint8_t getCO2DissolvedState(); // CountersData.co2DissolvedMode values
 const char *getCO2DissolvedStateLabel(uint8_t state);
 bool setCO2DissolvedStateManually(uint8_t state); // Counters page
