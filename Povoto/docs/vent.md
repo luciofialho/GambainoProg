@@ -101,11 +101,19 @@ mols  = C_ar(P̄)·razão(P̄)/√Z(P̄)·nível · P̄/√T_gás · fator · (t
   do fermentador (`VentFermenterSideMols` = queda assentada de P/Z × headspace de
   referência / RT, o aplicado: média de 24 h). A razão lado do fermentador /
   vazão (`ReliefDropRatio`, = queda medida / esperada) vai para o log Relief em
-  todo vent. **Razão < 0,5**: a saída passou bem menos que a curva diz (válvula
+  todo vent. **Razão < 0,8**
+  (`VENT_FERMENTER_SIDE_RATIO`): a saída passou menos que a curva diz (válvula
   que não abriu, saída parcial ou totalmente obstruída, TE religado por engano):
   o vent é contado pelo lado do fermentador (`VentCounted` = `fermenter-side`) e
-  não alimenta o Vh. Contado pela vazão, uma queda de 60% da esperada seria
-  contada 67% a mais. A troca só vale onde a verificação vale (docs/alarms.md).
+  fica fora da média de 24 h e da EMA. Contado pela vazão, uma queda de 60% da
+  esperada seria contada 67% a mais. A troca só vale onde a verificação vale
+  (docs/alarms.md). **Limite da razão**: a referência é o Vh de 24 h, que vem do
+  próprio modelo de vazão; a razão só enxerga mudanças bruscas (válvula que não
+  abre, obstrução súbita, líquido adicionado). A sujeira gradual não aparece
+  nela: aparece no `HeadSpaceDaily` subindo e no ensaio de fim de lote. O rebase
+  da média de 24 h no Dump e a limpeza dela no Liquid / Dry Hopping / Dynamic
+  Hopping continuam valendo; sem eles, uma adição de líquido daria razão ~0,83
+  por até 24 h.
 - **Fora da faixa calibrada**: se `P_on` passa da pressão máxima do ensaio
   (`pMax` da curva) ou a leitura de fechamento fica abaixo da mínima (`pMin`),
   com 5 mbar de tolerância, a curva usou o valor da ponta: coluna
@@ -142,10 +150,11 @@ subida pela fermentação durante a abertura, como antes) e a pressão assentada
 
 ## 6. Verificações (docs/alarms.md)
 
-- **Razão < 0,5** (`ReliefCheck` = `partial`): contado pelo lado do fermentador,
-  sem alimentar o Vh, sem alarme.
-- **Vent sem efeito**, razão < 0,25 (`no-effect`): o mesmo, e dois seguidos dão
-  alarme.
+- **Razão < 0,8** (`ReliefCheck` = `partial`): contado pelo lado do fermentador,
+  fora da média de 24 h e da EMA. Um vent isolado só fica marcado no log; **dois
+  seguidos** abaixo de 0,8 dão alarme.
+- **Vent sem efeito**, razão < 0,25 (`no-effect`): contado do mesmo jeito; conta
+  para os dois seguidos.
 - **Válvula presa aberta**: 30 s depois da leitura de fechamento, a pressão caiu
   mais de 5 mbar (a recuperação térmica e a fermentação só sobem a pressão):
   alarme na hora.

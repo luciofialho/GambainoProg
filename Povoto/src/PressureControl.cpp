@@ -2053,22 +2053,26 @@ String describePressureSensor() {
 // ===== Vent check (docs/alarms.md) =====
 // Each vent is counted twice: by the flow model and on the fermenter side
 // (settled drop of P/Z x applied headspace, the 24-hour average as a frozen
-// reference, / RT). Their ratio is the measured / expected drop. Below 0.5
-// the outlet passed much less than the curve says (partly or fully blocked,
-// valve not opening, expansion tank reconnected by mistake): the vent is
-// counted on the fermenter side and does not feed the headspace (counted by
-// the flow, a 60% drop would be counted 40% too high). Below 0.25 twice in a
-// row: alarm; a normal vent clears it.
+// reference, / RT). Their ratio is the measured / expected drop. Below 0.8
+// the outlet passed less than the curve says (partly or fully blocked, valve
+// not opening, expansion tank reconnected by mistake): the vent is counted on
+// the fermenter side and stays out of the 24-hour average and the EMA. The
+// reference is the 24-hour headspace, which comes from the flow model itself,
+// so the ratio only sees abrupt changes (gradual fouling shows in the rising
+// HeadSpaceDaily and in the end-of-batch venting test). Two vents in a row
+// below 0.8 raise the alarm; a single one is only marked in the log
+// (VentCounted = fermenter-side, ReliefCheck partial / no-effect). A normal
+// vent clears it. Below 0.25 the vent is labelled no-effect.
 static constexpr float RELIEF_NO_EFFECT_DROP_RATIO = 0.25f;
-static constexpr float VENT_FERMENTER_SIDE_RATIO = 0.5f;
+static constexpr float VENT_FERMENTER_SIDE_RATIO = 0.8f;
 static constexpr uint8_t RELIEF_CHECK_CONSECUTIVE = 2;
 static constexpr float RELIEF_CHECK_MIN_PRESSURE = 0.1f; // bar
 static constexpr uint8_t RELIEF_CHECK_SKIPPED = 0;
 static constexpr uint8_t RELIEF_CHECK_OK = 1;
 static constexpr uint8_t RELIEF_CHECK_NO_EFFECT = 3; // value kept from the expansion-tank check
-static constexpr uint8_t RELIEF_CHECK_PARTIAL = 4;   // ratio 0.25-0.5: counted on the fermenter side
+static constexpr uint8_t RELIEF_CHECK_PARTIAL = 4;   // ratio 0.25-0.8: counted on the fermenter side
 static uint8_t reliefCheckLast = RELIEF_CHECK_SKIPPED;  // last evaluated vent
-static uint8_t reliefCheckRun = 0;                      // consecutive vents without effect
+static uint8_t reliefCheckRun = 0;                      // consecutive vents below VENT_FERMENTER_SIDE_RATIO
 static bool reliefCheckAlarm = false;
 static float reliefCheckDropRatio = NAN;
 static float reliefCheckExpectedDrop = NAN;
@@ -2112,15 +2116,13 @@ static uint8_t evaluateVentCheck(float ratio, bool taskWindow) {
     result = ratio < RELIEF_NO_EFFECT_DROP_RATIO ? RELIEF_CHECK_NO_EFFECT
            : ratio < VENT_FERMENTER_SIDE_RATIO ? RELIEF_CHECK_PARTIAL : RELIEF_CHECK_OK;
   }
-  if (result == RELIEF_CHECK_NO_EFFECT) {
-    reliefCheckRun = reliefCheckLast == RELIEF_CHECK_NO_EFFECT ? reliefCheckRun + 1 : 1;
+  if (result == RELIEF_CHECK_NO_EFFECT || result == RELIEF_CHECK_PARTIAL) {
+    const bool previousLow = reliefCheckLast == RELIEF_CHECK_NO_EFFECT || reliefCheckLast == RELIEF_CHECK_PARTIAL;
+    reliefCheckRun = previousLow ? reliefCheckRun + 1 : 1;
     if (reliefCheckRun >= RELIEF_CHECK_CONSECUTIVE) reliefCheckAlarm = true;
-    Serial.printf("[VENT] without effect: drop %.4f bar, expected %.4f bar (%.2fx), run %u\n",
-                  reliefCheckMeasuredDrop, reliefCheckExpectedDrop, reliefCheckDropRatio, reliefCheckRun);
-  } else if (result == RELIEF_CHECK_PARTIAL) {
-    reliefCheckRun = 0;
-    Serial.printf("[VENT] partial: drop %.4f bar, expected %.4f bar (%.2fx): counted on the fermenter side\n",
-                  reliefCheckMeasuredDrop, reliefCheckExpectedDrop, ratio);
+    Serial.printf("[VENT] %s: drop %.4f bar, expected %.4f bar (%.2fx), run %u: counted on the fermenter side\n",
+                  result == RELIEF_CHECK_NO_EFFECT ? "without effect" : "partial",
+                  reliefCheckMeasuredDrop, reliefCheckExpectedDrop, ratio, reliefCheckRun);
   } else if (result == RELIEF_CHECK_OK) {
     reliefCheckRun = 0;
     reliefCheckAlarm = false;
@@ -2137,11 +2139,11 @@ bool reliefCheckAlarmActive() {
 String describeReliefCheck() {
   char text[320];
   snprintf(text, sizeof(text),
-           "Vent check: %s\nLast vent drop: %.4f bar, expected %.4f bar from the counted CO2 (%.2fx; alarm below %.2fx)\n"
+           "Vent check: %s\nLast vent drop: %.4f bar, expected %.4f bar from the counted CO2 (%.2fx; alarm after 2 vents in a row below %.2fx)\n"
            "Pressure at the vent: %.3f bar\nReference headspace: %.2f L\n",
-           reliefCheckAlarm ? "no pressure drop (valve not opening or outlet blocked?)" : "ok",
+           reliefCheckAlarm ? "pressure drop below expected (valve not opening or outlet blocked?)" : "ok",
            reliefCheckMeasuredDrop, reliefCheckExpectedDrop, reliefCheckDropRatio,
-           RELIEF_NO_EFFECT_DROP_RATIO, reliefCheckPressure, reliefCheckReference);
+           VENT_FERMENTER_SIDE_RATIO, reliefCheckPressure, reliefCheckReference);
   return String(text);
 }
 
@@ -2460,7 +2462,7 @@ void processPressure(bool afterRelief) {
     ventResult.dropPercent = isfinite(instantPressureDropFactor) ? 100.0f * (1.0f - instantPressureDropFactor) : NAN;
 
     // Both counts, always; the fermenter side replaces the flow model when
-    // their ratio is below 0.5 (docs/vent.md).
+    // their ratio is below 0.8 (docs/vent.md).
     const double fermenterSide = fermenterSideMoles(ventGasK);
     ventResult.fermenterSideMoles = fermenterSide;
     ventResult.ratio = (isfinite(fermenterSide) && count.moles > 0.0) ? float(fermenterSide / count.moles) : NAN;
@@ -3099,7 +3101,7 @@ String getVentStatusHtml() {
   html += "<h3>Checks</h3><p>Vent check: last " +
           String(reliefCheckLast == RELIEF_CHECK_SKIPPED ? "none" : reliefCheckLabel(reliefCheckLast)) + ", drop " +
           num(reliefCheckMeasuredDrop, 5) + " / expected " + num(reliefCheckExpectedDrop, 5) + " bar (ratio " +
-          num(reliefCheckDropRatio, 3) + "; fermenter side below 0.5, alarm below 0.25 twice), run " +
+          num(reliefCheckDropRatio, 3) + "; fermenter side and alarm (2 in a row) below 0.8, no-effect below 0.25), run " +
           String(reliefCheckRun) + ", alarm " + (reliefCheckAlarmActive() ? "ON" : "off") +
           "<br>Valve stuck open: " + (valveStuckOpenAlarmActive() ? "<b>ALARM</b>" : "no") + " (last fall " +
           num(stuckOpenLastFall, 5) + " bar in " + String(STUCK_OPEN_CHECK_MS / 1000UL) + " s; alarm above " +

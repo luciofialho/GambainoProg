@@ -70,7 +70,7 @@ static void sendAlarmMail(PovotoAlarm alarm, unsigned long activeMs) {
       break;
     case ALARM_RELIEF:
       body += describeReliefCheck();
-      body += "\nThe vents do not lower the pressure: check the valve, its outlet and the witness bottle "
+      body += "\nThe vents lower the pressure less than expected (two in a row below 80%): check the valve, its outlet and the witness bottle "
               "(and that the expansion tank was not reconnected). These vents are not counted by the flow model.\n";
       break;
     case ALARM_VALVE_STUCK_OPEN:
@@ -95,7 +95,7 @@ static void sendAlarmMail(PovotoAlarm alarm, unsigned long activeMs) {
 const char *povotoAlarmLabel(PovotoAlarm alarm) {
   switch (alarm) {
     case ALARM_PRESSURE_SENSOR: return "pressure sensor";
-    case ALARM_RELIEF: return "vent without effect";
+    case ALARM_RELIEF: return "vent below expected drop";
     case ALARM_VALVE_STUCK_OPEN: return "valve stuck open";
     case ALARM_FERMENTER_THERMOMETER: return "fermenter thermometer";
     default: return "none";

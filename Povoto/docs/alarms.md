@@ -7,7 +7,7 @@ precedência e cuida da sinalização. Cada verificação fica no seu módulo.
 |---|---|---|---|
 | 1 | Sensor de pressão (`checkPressureSensor()`, PressureControl.cpp) | Fermenting ou Conditioning, alvo de pressão definido, leitura inválida há 10 s | 4 por minuto |
 | 2 | Válvula presa aberta (`checkValveStuckOpen()`, PressureControl.cpp) | Fermenting: a pressão caiu mais de 5 mbar nos 30 s depois da leitura de fechamento de um vent | 6 por minuto |
-| 3 | Vent sem efeito (`evaluateVentCheck()`, PressureControl.cpp) | Fermenting: dois vents seguidos com razão < 0,25 (lado do fermentador / vazão) | 5 por minuto |
+| 3 | Vent sem efeito (`evaluateVentCheck()`, PressureControl.cpp) | Fermenting: dois vents seguidos com razão < 0,8 (lado do fermentador / vazão; < 0,25 é rotulado `no-effect`) | 5 por minuto |
 | 4 | Termômetro do fermentador (`fermenterThermometerAlarm()`, TermperatureControl.cpp) | Fermenting ou Conditioning, alvo de temperatura definido, termômetro não atribuído ou sem leitura válida há 60 s | 3 por minuto |
 
 Com mais de um ativo, sinaliza só o de maior precedência. O `/getstatus` mostra o
@@ -24,14 +24,18 @@ referência congelada; antes dela, o inicial — / RT). A razão lado do
 fermentador / vazão é a queda medida / esperada (= Vh de referência / Vh
 aparente) e vai para o log em todo vent.
 
-- **Razão < 0,5** (`partial`): a saída passou bem menos que a curva diz (saída
+- **Razão < 0,8** (`partial`): a saída passou menos que a curva diz (saída
   parcialmente obstruída, por exemplo). O vent é contado pelo lado do
   fermentador e não alimenta a EMA, a média de 24 h nem as amostras iniciais.
-  Sem alarme.
+  Um vent isolado só fica marcado no log, sem alarme; **dois seguidos** abaixo de
+  0,8 disparam o alarme.
+- **Alcance da verificação**: a referência é o Vh de 24 h, que vem do próprio
+  modelo de vazão. A razão detecta só mudanças bruscas; a sujeira gradual aparece
+  no `HeadSpaceDaily` subindo e no ensaio de fim de lote.
 - **Vent sem efeito** (< 0,25, `no-effect`): a válvula não abriu, a saída está
   obstruída ou o TE foi religado por engano. Contado do mesmo jeito (~0 se a
-  válvula não abriu). Dois seguidos disparam o alarme; um vent normal (≥ 0,5) o
-  apaga.
+  válvula não abriu). Conta para os dois seguidos que disparam o alarme; um vent
+  normal (≥ 0,8) o apaga.
 - A verificação de queda grande do TE (vazamento entre a válvula e o tanque)
   saiu: sem TE não há causa no equipamento para ela.
 - Não avalia: fora de Fermenting, janelas de task, alarme do sensor de pressão

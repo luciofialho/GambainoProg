@@ -36,7 +36,7 @@ bool pressureSensorAlarmActive();
 bool pressureSensorNotResponding();   // INA226 absent or not answering
 const char *pressureSensorProblem();  // "" when the reading is valid
 String describePressureSensor();      // several lines, for the alarm e-mail
-// Vent check (docs/alarms.md): two vents in a row without effect.
+// Vent check (docs/alarms.md): two vents in a row with a drop below 0.8 of the expected one.
 bool reliefCheckAlarmActive();
 String describeReliefCheck();         // several lines, for the alarm e-mail
 // Valve stuck open: the pressure still falls after a vent closed.
