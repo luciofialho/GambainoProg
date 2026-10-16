@@ -241,11 +241,13 @@ void setup() {
   initPeerEspNowReceive();  // must be after GLogEspNowInit (which calls esp_now_init)
   setExtraEspNowHandler(handlePovotoEspNow);
 
-  // The browser opens on the dashboard; its menu icon leads to /config.
+  // The browser opens on the dashboard; its menu icon leads to /menu.
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
     request->redirect(povotoWiFiConfigurationActive() ? "/wifi" : "/dashboard/");
   });
-  server.on("/config", HTTP_GET, handleMainMenu);
+  server.on("/menu", HTTP_GET, handleMainMenu);
+  // Old bookmarks and the previous dashboard point to /config.
+  server.on("/config", HTTP_GET, [](AsyncWebServerRequest *request) { request->redirect("/menu"); });
   // Logos, with the web pages in LittleFS (data/www/assets); the cloud copies
   // the same files.
   server.on("/assets/povoto.svg", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -275,6 +277,7 @@ void setup() {
   server.on("/calibration/cleaning/abort", HTTP_POST, handleValveCleaningAbort);
   server.on("/calibration/keg/start", HTTP_POST, handleKegVolumeStart);
   server.on("/calibration/keg/abort", HTTP_POST, handleKegVolumeAbort);
+  server.on("/calibration/keg/save", HTTP_POST, handleKegVolumeSave);
   server.on("/calibration/keg.csv", HTTP_GET, handleKegVolumeCSV);
   server.on("/calibration", HTTP_GET, handleCalibrationDataPage);
   server.on("/calibration/refresh-current", HTTP_GET, handleCalibrationCurrentRefresh);

@@ -87,7 +87,7 @@ float getTotalCO2Mols();
 // g CO2/L/day; presentation clamps negative evolution to zero.
 float getBeerCO2EvolutionGramsPerLiterPerDay();
 // Rate for the automatic rules: NAN unless the window has 30 min, and in a
-// transition unless the beer releases CO2 (docs/automatic-actions.md).
+// transition unless the beer releases CO2 (docs/triggered-actions.md).
 float getRuleCO2EvolutionGramsPerLiterPerDay();
 // After a pressure/temperature change, until the rate settles (docs/gco2-rate.md).
 bool co2RateInTransition();

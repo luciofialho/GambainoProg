@@ -758,7 +758,7 @@ void forceScreenSaver(bool enable) {
 void showConfigQRCode() {
   char url[100];
   IPAddress ip = WiFi.localIP();
-  sprintf(url, "http://%d.%d.%d.%d/config", ip[0], ip[1], ip[2], ip[3]);
+  sprintf(url, "http://%d.%d.%d.%d/menu", ip[0], ip[1], ip[2], ip[3]);
   
   Serial.printf(">>> MOSTRANDO QR CODE: %s <<<\n", url);
   

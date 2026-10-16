@@ -2,6 +2,7 @@
 #include "CalibrationEvents.h"
 #include "PovotoFilesystem.h"
 #include "datalog.h"
+#include "PovotoData.h"
 
 unsigned long int NTPEpoch(); // IOTK_NTP (not #included: see AtmosphericPressure.cpp)
 
@@ -96,8 +97,19 @@ String lastCalibrationEventType() {
   return b < 0 ? String() : line.substring(a + 1, b);
 }
 
+String calibrationFileName(const char *type, uint32_t epoch, bool incomplete, const char *extension) {
+  char iso[24];
+  formatLocalEpochISO(epoch >= 1600000000UL ? epoch : 0, iso, sizeof(iso)); // YYYY-MM-DDTHH:MM:SS
+  String stamp = "nodate";
+  if (iso[0]) stamp = String(iso).substring(0, 4) + String(iso).substring(5, 7) + String(iso).substring(8, 10) +
+                      String(iso).substring(11, 13) + String(iso).substring(14, 16);
+  return String(incomplete ? "Incomplete-" : "") + "PovotoCalibration-" + type + "-FMT" + String(FMTData.PovotoNum) + "-" +
+         stamp + "." + extension;
+}
+
 void handleCalibrationEventsText(AsyncWebServerRequest *request) {
   AsyncWebServerResponse *response = request->beginResponse(200, "text/plain; charset=utf-8", readEvents());
-  response->addHeader("Content-Disposition", "attachment; filename=calibration_events.txt");
+  response->addHeader("Content-Disposition",
+                      "attachment; filename=\"" + calibrationFileName("Events", NTPEpoch(), false, "txt") + "\"");
   request->send(response);
 }

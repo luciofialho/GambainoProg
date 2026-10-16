@@ -59,10 +59,7 @@ String savePovotoSettingsBackup() {
   json = "{\n  \"format\": \"povoto-settings\",\n  \"version\": 1,\n";
   appendNumber(json, "PovotoNum", FMTData.PovotoNum, 0);
   appendNumber(json, "FMTVolume", FMTData.FMTVolume, 6);
-  appendNumber(json, "liquidMassInGasVentingPercent", FMTData.liquidMassInGasVentingPercent, 6);
   appendNumber(json, "ventTargetDropPercent", FMTData.ventTargetDropPercent, 6);
-  appendNumber(json, "ventMinSeconds", FMTData.ventMinSeconds, 6);
-  appendNumber(json, "ventSafetyDropPercent", FMTData.ventSafetyDropPercent, 6);
   appendNumber(json, "flowLevelFactor", FMTData.flowLevelFactor, 6);
   appendCurve(json, "ventCurve", FMTData.ventCurve);
   appendCurve(json, "ventReferenceCurve", FMTData.ventReferenceCurve);
@@ -72,9 +69,9 @@ String savePovotoSettingsBackup() {
   appendNumber(json, "pressure0Current", FMTData.pressure0Current, 6);
   appendNumber(json, "pressure1Bar", FMTData.pressure1Bar, 6);
   appendNumber(json, "pressure1Current", FMTData.pressure1Current, 6);
-  appendNumber(json, "pressure2Bar", FMTData.pressure2Bar, 6);
-  appendNumber(json, "pressure2Current", FMTData.pressure2Current, 6);
   appendNumber(json, "maximumPressure", FMTData.maximumPressure, 6);
+  appendNumber(json, "maxSetPointPressure", FMTData.maxSetPointPressure, 6);
+  appendNumber(json, "lastExpTankVolume", FMTData.lastExpTankVolume, 6);
   appendNumber(json, "nucleationWindow", FMTData.nucleationWindow, 0);
   appendBool(json, "heaterEnabled", FMTData.heater.enabled);
   appendNumber(json, "heaterOnMinutes", FMTData.heater.onMinutes, 6);
@@ -231,15 +228,12 @@ bool loadPovotoSettingsBackup(const String &settings) {
   povotoNumber = loadedFmt.PovotoNum;
   if (hasKey(json, "PovotoNum") && !readInt(json, "PovotoNum", povotoNumber)) return false;
   READ_BACKUP_FLOAT("FMTVolume", loadedFmt.FMTVolume);
-  // Expansion-tank fields of older files (te-final tag) are ignored.
-  READ_BACKUP_FLOAT("liquidMassInGasVentingPercent", loadedFmt.liquidMassInGasVentingPercent);
+  // Expansion-tank fields of older files (te-final tag), and the retired
+  // liquidMassInGasVentingPercent, ventMinSeconds, ventSafetyDropPercent and
+  // pressure2* fields, are ignored.
   READ_BACKUP_FLOAT("ventTargetDropPercent", loadedFmt.ventTargetDropPercent);
-  READ_BACKUP_FLOAT("ventMinSeconds", loadedFmt.ventMinSeconds);
-  READ_BACKUP_FLOAT("ventSafetyDropPercent", loadedFmt.ventSafetyDropPercent);
   READ_BACKUP_FLOAT("flowLevelFactor", loadedFmt.flowLevelFactor);
-  if (!(loadedFmt.liquidMassInGasVentingPercent >= 0.0f && loadedFmt.liquidMassInGasVentingPercent <= 100.0f) ||
-      !isValidVentTargetDrop(loadedFmt.ventTargetDropPercent) || !isValidVentMinSeconds(loadedFmt.ventMinSeconds) ||
-      !isValidVentSafetyDrop(loadedFmt.ventSafetyDropPercent) || !isValidFlowLevelFactor(loadedFmt.flowLevelFactor))
+  if (!isValidVentTargetDrop(loadedFmt.ventTargetDropPercent) || !isValidFlowLevelFactor(loadedFmt.flowLevelFactor))
     return false;
   if (!readCurve(json, "ventCurve", loadedFmt.ventCurve, false) ||
       !readCurve(json, "ventReferenceCurve", loadedFmt.ventReferenceCurve, true)) return false;
@@ -250,9 +244,13 @@ bool loadPovotoSettingsBackup(const String &settings) {
   READ_BACKUP_FLOAT("pressure0Current", loadedFmt.pressure0Current);
   READ_BACKUP_FLOAT("pressure1Bar", loadedFmt.pressure1Bar);
   READ_BACKUP_FLOAT("pressure1Current", loadedFmt.pressure1Current);
-  READ_BACKUP_FLOAT("pressure2Bar", loadedFmt.pressure2Bar);
-  READ_BACKUP_FLOAT("pressure2Current", loadedFmt.pressure2Current);
   READ_BACKUP_FLOAT("maximumPressure", loadedFmt.maximumPressure);
+  READ_BACKUP_FLOAT("maxSetPointPressure", loadedFmt.maxSetPointPressure);
+  READ_BACKUP_FLOAT("lastExpTankVolume", loadedFmt.lastExpTankVolume);
+  // The security pressure is 2.0-3.0 bar and the highest set point is below it.
+  if (!isValidMaximumPressure(loadedFmt.maximumPressure) ||
+      !isValidMaxSetPointPressure(loadedFmt.maxSetPointPressure, loadedFmt.maximumPressure) ||
+      !(loadedFmt.lastExpTankVolume > 0.0f)) return false;
   READ_BACKUP_INT("nucleationWindow", loadedFmt.nucleationWindow);
   READ_BACKUP_BOOL("heaterEnabled", loadedFmt.heater.enabled);
   READ_BACKUP_FLOAT("heaterOnMinutes", loadedFmt.heater.onMinutes);

@@ -7,8 +7,6 @@
 #include "CalibrationEvents.h"
 
 // docs/pressure-sensor-zero.md
-static constexpr float SENSOR_ZERO_MIN_MINUTES = 1.0f;
-static constexpr float SENSOR_ZERO_MAX_MINUTES = 15.0f;
 static constexpr unsigned long SENSOR_ZERO_SAMPLE_MS = 1000UL;
 static constexpr unsigned long SENSOR_ZERO_BLOCK_MS = 10000UL;
 // Stability limits, as pressure near zero.
@@ -62,13 +60,13 @@ static void showProgress(bool force) {
   showCalibrationPanel(line1, line2, line3);
 }
 
-bool startSensorZero(float minutes, char *reason, size_t reasonSize) {
+bool startSensorZero(char *reason, size_t reasonSize) {
+  // Fixed at 5 min: the stability criteria were designed for it.
+  const float minutes = SENSOR_ZERO_DEFAULT_MINUTES;
   const char *blocked = nullptr;
   if (SetPointData.mode != MODE_OFF) blocked = "Mode must be OFF";
   else if (taskWindowType != 0 || calibrationRoutineActive()) blocked = "Process in progress";
   else if (!pressureSensorConnected) blocked = "Pressure sensor (INA226) not connected";
-  else if (!isfinite(minutes) || minutes < SENSOR_ZERO_MIN_MINUTES || minutes > SENSOR_ZERO_MAX_MINUTES)
-    blocked = "Duration must be from 1 to 15 min";
   else if (!isfinite(barPerMilliamp())) blocked = "Invalid pressure calibration (point B current must be above point A)";
   if (!blocked) {
     releaseSamples();
@@ -230,7 +228,6 @@ bool saveSensorZero(char *reason, size_t reasonSize) {
   const float shift = result.meanCurrent - FMTData.pressure0Current;
   FMTData.pressure0Current += shift;
   FMTData.pressure1Current += shift;
-  if (FMTData.pressure2Bar != 0.0f && FMTData.pressure2Current != 0.0f) FMTData.pressure2Current += shift;
   if (!writeFMTDataToNIV()) {
     snprintf(reason, reasonSize, "Could not save to NVS");
     return false;

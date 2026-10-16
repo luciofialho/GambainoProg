@@ -31,19 +31,17 @@ mesma curva de calibração sem o corte.
   de 1 mbar sem nenhum problema.
 - Placa ligada há menos de 30 min no início da medição (aquecimento do
   transmissor e do INA226): aviso, sem botão de gravar.
-- **"Save zero"** desloca `pressure0Current`, `pressure1Current` e, se
-  calibrado, `pressure2Current` pela mesma diferença (um desvio de zero do
+- **"Save zero"** desloca `pressure0Current` e `pressure1Current` pela mesma diferença (um desvio de zero do
   transmissor ou do shunt é aditivo: o ganho fica). Nada é gravado sem o botão;
   o mesmo resultado não é gravado duas vezes. A gravação entra nos eventos de
   calibração.
 
-## Conferência de ganho
+## Ganho
 
-Na mesma seção: corrente e pressão sem corte ao vivo, para comparar com o
-manômetro analógico do fermentador com ele fechado e pressurizado. É uma
-conferência grosseira; recalibrar o ganho é a calibração de 3 pontos (mesma
-página). O `/getstatus` mostra a corrente filtrada e momentânea e a pressão sem
-corte.
+A conversão é uma reta pelos pontos A (0 bar) e B (página Calibration). O antigo ponto C (curva
+quadrática) e a conferência de ganho da seção foram retirados; a corrente filtrada e a pressão sem
+corte continuam no `/getstatus` para comparar com o manômetro analógico. A duração da rotina é fixa
+em 5 min (os critérios de estabilidade foram pensados para ela).
 
 ## Eventos de calibração
 

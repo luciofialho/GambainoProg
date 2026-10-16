@@ -26,8 +26,12 @@ change: their keys (`expTimeA`, `expTimeB`, `targetResidual`, `kCO2`, `kAir`,
 pvt_settings, unused, for a fallback to the tag (docs/sem-te-plano.md, section 1).
 A schema rewrite copies them back after clearing the namespace. Never reuse
 these keys with another meaning.
-Direct vent (docs/vent.md): `ventDrop`, `ventMinSec`, `ventSafeDrop`,
-`flowLevel` (floats) and the blobs `ventCurve` / `ventRefCurve`
+Pressure limits (Settings page): `maxPressure` (security pressure, 2-3 bar) and `maxSetPress`
+(highest pressure set point, default 2.0, always below `maxPressure`; a missing or invalid value falls back to
+the default kept below `maxPressure`). `lastExpTankVol` is the last expansion tank volume typed on the
+fermenter volume routine (initial value of its field).
+Direct vent (docs/vent.md): `ventDrop`, `flowLevel` (floats; `ventMinSec`, `ventSafeDrop` and
+`liquidGasMass` are no longer read or written and stay in NVS, unused) and the blobs `ventCurve` / `ventRefCurve`
 (VentModel::Curve, 28 bytes: a0..a3, t0, pMin, pMax, epoch); a blob of another
 size or an invalid curve keeps the default (18/09) curve and no reference.
 FMTData.dallasAddress holds the Dallas ROM address of each thermometer role,
@@ -78,7 +82,7 @@ persists the factory defaults for the data namespaces.
 
 Run structural checks with: python tests/check_storage_schema.py
 
-Automatic set point rules live in `pvt_autosp` (AutoSetpoints.cpp): one
+Triggered action rules (internally "automatic set points") live in `pvt_autosp` (AutoSetpoints.cpp): one
 blob per rule (`rule0`..`rule7`, NAN = empty field) and the trigger times
 (`trig0`..`trig7`, local NTP epoch, 0 = not triggered). Trigger times are written only when a rule fires or is reset, so
 saving definitions never re-arms a rule. Stored rules that fail validation, or
@@ -95,6 +99,6 @@ debug-only setting, outside the schema rewrite, factory reset and
 `povoto-settings.json`. See docs/cloud-log.md.
 
 Schema 2 merges calibration fields into FMTData/pvt_settings. The retired
-pvt_calib namespace is cleared on schema change, with no migration. Pressure
-point 2 defaults to zero for both pressure and current. The calibration-page
-checkbox is derived from pressure2Bar and is not persisted separately.
+pvt_calib namespace is cleared on schema change, with no migration. The
+pressure conversion is a straight line through points A and B; the keys `p2Bar` and `p2Current` of the former third
+point are no longer read or written and stay in NVS, unused.

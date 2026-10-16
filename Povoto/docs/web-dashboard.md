@@ -36,7 +36,7 @@ sits in a rounded frame like the chart of `/graphs`, with a line above it
 and, below it, the Povoto logo on the left and the Brewtal logo on the right. The line above has, on the left, `← Back`
 in the cloud only (to the Povoto list, from `back` in `status.json`); on the
 right, the statistics icon (when `status.json` has `stats`) and, on the
-device only, the menu icon (`/config`, the former home page). The device's
+device only, the menu icon (`/menu`; `/config` redireciona, the former home page). The device's
 root `/` opens the dashboard (or `/wifi` while the setup access point is
 on), so pages whose Back/Cancel lead to `/` now return to the dashboard.
 

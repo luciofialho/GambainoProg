@@ -13,6 +13,8 @@
 #include "AtmosphericPressure.h"
 #include "CalibrationEvents.h"
 #include "datalog.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/portmacro.h>
 
 unsigned long int NTPEpoch(); // IOTK_NTP (not #included: see AtmosphericPressure.cpp)
 
@@ -302,11 +304,31 @@ bool ventingTestActive() {
   return stage != VT_IDLE;
 }
 
+// The page (web task) copies the finished releases of the running test while
+// the loop writes it: `test`, its count and its deletion change under this lock.
+// Nothing is written to flash for the copy.
+static portMUX_TYPE testLock = portMUX_INITIALIZER_UNLOCKED;
+
 static void releaseBuffers() {
-  delete test;
-  delete wait;
+  portENTER_CRITICAL(&testLock);
+  VentTestRecord *oldTest = test;
   test = nullptr;
+  portEXIT_CRITICAL(&testLock);
+  delete oldTest;
+  delete wait;
   wait = nullptr;
+}
+
+// Copy of the running test with its finished releases; false when none runs.
+static bool copyRunningTest(VentTestRecord &out) {
+  bool ok = false;
+  portENTER_CRITICAL(&testLock);
+  if (stage != VT_IDLE && test) {
+    memcpy(&out, test, sizeof(out));
+    ok = true;
+  }
+  portEXIT_CRITICAL(&testLock);
+  return ok;
 }
 
 static float ambientNow() {
@@ -507,7 +529,9 @@ void processVentingTest() {
       x.p2 = wait->mean(VT_AVERAGE_MS);
       x.p2Noise = currentP1Noise = wait->meanStandardError(VT_AVERAGE_MS); // the next P1
       x.waitSeconds = wait->lastSampleElapsed() / 1000.0f;
+      portENTER_CRITICAL(&testLock);
       ++test->count;
+      portEXIT_CRITICAL(&testLock);
       // Next release: the next duration, the step down, or the end.
       if (x.kind == VT_KIND_STEP) {
         ++currentLevel;
@@ -547,6 +571,7 @@ struct VentCsvExport {
   uint8_t releaseIndex;  // next release of the current test
   bool headerSent;
   bool loaded;
+  bool live;             // the running test (a copy of its finished releases)
   VentTestRecord record;
 };
 
@@ -556,7 +581,7 @@ static bool appendCsvRow(VentCsvExport &e, String &line) {
   char date[24];
   formatLocalEpochISO(r.epoch, date, sizeof(date));
   line = "";
-  line += String(e.testIndex) + ';' + date + ';' + String(r.epoch) + ';' + String(r.batch) + ';' +
+  line += (e.live ? String("current") : String(e.testIndex)) + ';' + date + ';' + String(r.epoch) + ';' + String(r.batch) + ';' +
           ventingTestLabelName(r.label) + ';' + (r.co2 ? "CO2" : "air") + ';';
   csvNumber(line, r.volume, 3);
   csvNumber(line, r.patm, 5);
@@ -590,21 +615,44 @@ static bool appendCsvRow(VentCsvExport &e, String &line) {
 void handleVentingTestCSV(AsyncWebServerRequest *request) {
   const String which = request->hasParam("test") ? request->getParam("test")->value() : "0";
   const uint8_t count = ventingTestHistoryCount();
-  if (count == 0) {
-    request->send(404, "text/plain", "No venting test in the history");
-    return;
-  }
   // Freed with the response, also when the client disconnects.
   std::shared_ptr<VentCsvExport> e(new (std::nothrow) VentCsvExport);
   if (!e) {
     request->send(500, "text/plain", "Out of memory");
     return;
   }
-  e->testIndex = which == "all" ? count - 1 : (int16_t)constrain(which.toInt(), 0, count - 1);
-  e->lastTest = which == "all" ? 0 : e->testIndex; // oldest first when exporting all
+  e->live = false;
+  String fileName;
+  if (which == "current") {
+    if (!copyRunningTest(e->record)) {
+      request->send(404, "text/plain", "No venting test is running");
+      return;
+    }
+    // Only finished releases; the fit columns do not exist yet.
+    e->live = true;
+    e->record.fitted = 0;
+    e->record.t0SeMs = e->record.shapeRmsPercent = e->record.chiSquare = NAN;
+    e->record.driftPercent = e->record.driftSePercent = NAN;
+    for (uint8_t i = 0; i < 3; ++i) e->record.vsReference[i] = e->record.vsSaved[i] = NAN;
+    fileName = calibrationFileName("Venting", e->record.epoch, true);
+  } else if (count == 0) {
+    request->send(404, "text/plain", "No venting test in the history");
+    return;
+  }
+  if (e->live) {
+    e->testIndex = e->lastTest = 0;
+  } else {
+    e->testIndex = which == "all" ? count - 1 : (int16_t)constrain(which.toInt(), 0, count - 1);
+    e->lastTest = which == "all" ? 0 : e->testIndex; // oldest first when exporting all
+    if (which == "all") {
+      fileName = calibrationFileName("VentingHistory", NTPEpoch(), false);
+    } else {
+      fileName = calibrationFileName("Venting", readRecord((uint8_t)e->testIndex, e->record) ? e->record.epoch : 0, false);
+    }
+  }
   e->releaseIndex = 0;
   e->headerSent = false;
-  e->loaded = false;
+  e->loaded = e->live;
   AsyncWebServerResponse *response = request->beginChunkedResponse("text/csv",
       [e](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
         (void)index;
@@ -640,6 +688,6 @@ void handleVentingTestCSV(AsyncWebServerRequest *request) {
         }
         return len;
       });
-  response->addHeader("Content-Disposition", "attachment; filename=venting_test.csv");
+  response->addHeader("Content-Disposition", "attachment; filename=\"" + fileName + "\"");
   request->send(response);
 }

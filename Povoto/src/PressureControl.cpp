@@ -345,7 +345,7 @@ struct VentResult {
   float pMeanGauge;        // log mean of P_on and the pressure right after closing
   float cooling;
   float flowConstant;      // CO2, with ratio, Z and level
-  float flowMoles;         // flow model, before the liquid-mass correction
+  float flowMoles;         // flow model, total moles (CO2 + vapor)
   float fermenterSideMoles; // settled drop x reference headspace / RT (NAN = not available)
   float ratio;             // fermenter side / flow model (= measured / expected drop)
   float countedMoles;      // flow model, or fermenter side when the ratio is below 0.5
@@ -353,8 +353,9 @@ struct VentResult {
   const char *outOfRange;  // "above" / "below" the pressure range of the flow curve, or 
   float apparentHeadspace; // flow moles / isothermal drop (NAN = not available)
   float dropPercent;       // isothermal drop / P_on extrapolated
+  float vaporFraction;     // y: vapor of the liquid in the vented gas
 };
-static VentResult ventResult = {NAN, NAN, NAN, NAN, NAN, NAN, NAN, "none", "", NAN, NAN};
+static VentResult ventResult = {NAN, NAN, NAN, NAN, NAN, NAN, NAN, "none", "", NAN, NAN, 0.0f};
 // Vents outside the pressure range of the flow curve since the boot (status).
 static uint32_t ventOutOfRangeCount = 0;
 static uint32_t ventOutOfRangeLastEpoch = 0;
@@ -404,15 +405,15 @@ static void planVent(float pOnGauge) {
   ventPlan.estimatedSeconds = VentModel::ventSeconds(curve, FMTData.flowLevelFactor, ventPlan.headspace, pOnGauge,
       pOnGauge * (1.0 - FMTData.ventTargetDropPercent / 100.0), Patm, tK, exponent);
   ventPlan.safetySeconds = VentModel::ventSeconds(curve, FMTData.flowLevelFactor, ventPlan.smallestHeadspace, pOnGauge,
-      pOnGauge * (1.0 - FMTData.ventSafetyDropPercent / 100.0), Patm, tK, exponent);
+      pOnGauge * (1.0 - VENT_SAFETY_DROP_FACTOR * FMTData.ventTargetDropPercent / 100.0), Patm, tK, exponent);
   float seconds = ventPlan.estimatedSeconds;
   ventPlan.limit = "estimate";
   if (isfinite(ventPlan.safetySeconds) && (!isfinite(seconds) || seconds > ventPlan.safetySeconds)) {
     seconds = ventPlan.safetySeconds;
     ventPlan.limit = "safety";
   }
-  if (!isfinite(seconds) || seconds < FMTData.ventMinSeconds) {
-    seconds = FMTData.ventMinSeconds;
+  if (!isfinite(seconds) || seconds < VENT_MIN_SECONDS) {
+    seconds = VENT_MIN_SECONDS;
     ventPlan.limit = "minimum";
   }
   ventPlan.plannedSeconds = fminf(seconds, VENT_MAX_SECONDS);
@@ -1891,38 +1892,11 @@ static void resetCurrentMedianFilter() {
 // result is negative (sensor zero check, docs/pressure-sensor-zero.md).
 float convertCurrentToPressureUnclipped(float current) {
   float pressure = 0.0f;
-  if (FMTData.pressure2Bar != 0.0f && FMTData.pressure2Current != 0.0f) { // quadratic interpolation using Lagrange polynomials
-    const float x0 = FMTData.pressure0Current;
-    const float y0 = 0.0f;
-    const float x1 = FMTData.pressure1Current;
-    const float y1 = FMTData.pressure1Bar;
-    const float x2 = FMTData.pressure2Current;
-    const float y2 = FMTData.pressure2Bar;
-
-    const float d0 = (x0 - x1) * (x0 - x2);
-    const float d1 = (x1 - x0) * (x1 - x2);
-    const float d2 = (x2 - x0) * (x2 - x1);
-
-    if (fabsf(d0) > 0.000001f && fabsf(d1) > 0.000001f && fabsf(d2) > 0.000001f) {
-      const float l0 = ((current - x1) * (current - x2)) / d0;
-      const float l1 = ((current - x0) * (current - x2)) / d1;
-      const float l2 = ((current - x0) * (current - x1)) / d2;
-      pressure = y0 * l0 + y1 * l1 + y2 * l2;
-    }
-    else {
-      const float denom = FMTData.pressure2Current - FMTData.pressure1Current;
-      if (fabsf(denom) > 0.000001f) {
-        float ratio = (current - FMTData.pressure1Current) / denom;
-        pressure = FMTData.pressure1Bar + ratio * (FMTData.pressure2Bar - FMTData.pressure1Bar);
-      }
-    }
-  }
-  else { // linear interpolation
-    const float denom = FMTData.pressure1Current - FMTData.pressure0Current;
-    if (fabsf(denom) > 0.000001f) {
-      float ratio = (current - FMTData.pressure0Current) / denom;
-      pressure = ratio * FMTData.pressure1Bar;
-    }
+  // Straight line through point A (0 bar at pressure0Current) and point B.
+  const float denom = FMTData.pressure1Current - FMTData.pressure0Current;
+  if (fabsf(denom) > 0.000001f) {
+    float ratio = (current - FMTData.pressure0Current) / denom;
+    pressure = ratio * FMTData.pressure1Bar;
   }
   return pressure;
 }
@@ -2010,12 +1984,8 @@ static bool pressureSensorAlarm = false;
 static bool pressureSensorNoResponse = false;
 static const char *pressureSensorProblemText = "";
 
-// Calibration current at a gauge pressure: straight line through points 0-1,
-// or 1-2 above point 1 when point 2 is calibrated.
+// Calibration current at a gauge pressure: straight line through points A and B.
 static float currentAtPressure(float bar) {
-  if (FMTData.pressure2Bar > FMTData.pressure1Bar && bar > FMTData.pressure1Bar)
-    return FMTData.pressure1Current + (bar - FMTData.pressure1Bar) *
-        (FMTData.pressure2Current - FMTData.pressure1Current) / (FMTData.pressure2Bar - FMTData.pressure1Bar);
   if (!(FMTData.pressure1Bar > 0.0f)) return NAN;
   return FMTData.pressure0Current + bar * (FMTData.pressure1Current - FMTData.pressure0Current) / FMTData.pressure1Bar;
 }
@@ -2518,8 +2488,12 @@ void processPressure(bool afterRelief) {
       ventResult.counted = "none";
     }
     ventResult.countedMoles = moles;
-    ejectedMolsBeforeLiquidCorrection = moles;
-    ejectedMols = moles * (1.0f - FMTData.liquidMassInGasVentingPercent / 100.0f);
+    // The vented gas is saturated with the vapor of the liquid (docs/vent.md): only 1 - y of the
+    // counted moles is CO2, on the flow side and on the fermenter side alike.
+    ventResult.vaporFraction = float(VentModel::ventVaporFraction(ControlData.temperature, beerABV,
+                                                                  count.pMeanGauge + Patm));
+    ejectedMolsBeforeLiquidCorrection = moles; // total moles, with the vapor
+    ejectedMols = moles * (1.0f - ventResult.vaporFraction);
     CountersData.totalMolsEjected += ejectedMols;
 
     // Apparent headspace of the vent: the 24-hour average and the EMA, except
@@ -2630,7 +2604,7 @@ void processPressure(bool afterRelief) {
     reliefLog.ventCounted = ventResult.counted;
     reliefLog.ventDropPercent = ventResult.dropPercent;
     reliefLog.ventTargetDropPercent = FMTData.ventTargetDropPercent;
-    reliefLog.liquidMassInGasVentingPercent = FMTData.liquidMassInGasVentingPercent;
+    reliefLog.ventVaporFraction = ventResult.vaporFraction;
     reliefLog.ejectedMolsBeforeLiquidCorrection = ejectedMolsBeforeLiquidCorrection;
     reliefLog.instantaneousPressureDropFactor = instantPressureDropFactor;
     reliefLog.headSpaceVolume = CountersData.headSpaceVolume;
@@ -3087,9 +3061,9 @@ String getVentStatusHtml() {
          "<title>Vent status</title><style>body{font-family:Arial,sans-serif;margin:16px}</style></head><body>"
          "<h2>Vent status</h2><p><a href='/calibration'>Calibration</a> | <a href='/getstatus'>Status</a></p>";
   html += "<h3>Parameters</h3><p>Target drop " + num(FMTData.ventTargetDropPercent, 2) + "%, minimum opening " +
-          num(FMTData.ventMinSeconds, 2) + " s, safety drop " + num(FMTData.ventSafetyDropPercent, 1) +
-          "%, level factor " + num(FMTData.flowLevelFactor, 4) + ", liquid mass " +
-          num(FMTData.liquidMassInGasVentingPercent, 2) + "%, exponent " + num(FMTData.FMTEffectiveVentingExponent, 3) +
+          num(VENT_MIN_SECONDS, 2) + " s, safety drop " + num(VENT_SAFETY_DROP_FACTOR * FMTData.ventTargetDropPercent, 1) +
+          "%, level factor " + num(FMTData.flowLevelFactor, 4) + ", last vapor fraction " +
+          num(100.0f * ventResult.vaporFraction, 2) + "%, exponent " + num(FMTData.FMTEffectiveVentingExponent, 3) +
           "<br>Flow curve: " + curveText(FMTData.ventCurve) + "<br>Reference curve: " +
           curveText(FMTData.ventReferenceCurve) + "<br>Patm " + num(1000.0 * Patm, 2) + " hPa (" +
           atmosphericPressureSourceLabel() + "); gas " + num(ventGasKelvin() - 273.15, 2) + " C (" +

@@ -50,6 +50,9 @@ void handleMainMenu(AsyncWebServerRequest *request) {
   html += "body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; }";
   html += ".container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); }";
   html += "h1 { color: #333; text-align: center; margin-bottom: 30px; font-size: 28px; }";
+  html += "h1 a { color: inherit; text-decoration: none; }";
+  html += ".back-row { text-align: right; margin-top: 20px; }";
+  html += ".back-button { display: inline-block; padding: 10px 28px; background: #eee; color: #333; text-decoration: none; border-radius: 8px; font-size: 16px; }";
   html += ".brand{display:flex;align-items:center;justify-content:space-between;gap:14px}.brand-name{display:flex;align-items:center;gap:14px}.brand img{width:78px;height:78px;object-fit:contain}";
   html += ".signature{text-align:center;margin-top:26px}.signature img{display:block;width:220px;max-width:65%;height:auto;margin:0 auto}";
   html += ".status-box { background: #f7f7ff; border: 1px solid #e0e0ff; padding: 14px 18px; border-radius: 10px; margin-bottom: 20px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: 18px; }";
@@ -69,8 +72,8 @@ void handleMainMenu(AsyncWebServerRequest *request) {
   html += "</style></head><body>";
   html += "<div class='container'>";
   // Logo and name on the left, the fermenter on the right.
-  html += "<h1 class='brand'><span class='brand-name'><img src='/assets/povoto.svg' alt='Povoto logo'>Povoto</span>"
-          "<span>FMT " + String(FMTData.PovotoNum) + "</span></h1>";
+  html += "<h1 class='brand'><a class='brand-name' href='/dashboard'><img src='/assets/povoto.svg' alt='Povoto logo'>Povoto</a>"
+          "<a href='/dashboard'>FMT " + String(FMTData.PovotoNum) + "</a></h1>";
   html += "<div class='status-box'>";
   html += "<div class='status-item'><strong>Temperature:</strong> " + String(ControlData.temperature, 1) + " °C</div>";
   html += "<div class='status-item'><strong>Pressure:</strong> " + String(ControlData.pressure, 2) + " bar</div>";
@@ -108,13 +111,13 @@ void handleMainMenu(AsyncWebServerRequest *request) {
   html += "<a href='/control' class='menu-button'><span class='icon'>&#128736;</span>Control</a>";
   html += "<a href='/calibration' class='menu-button'><span class='icon'>&#128200;</span>Calibration</a>";
   html += "<a href='/graphs' class='menu-button'><span class='icon'>&#128202;</span>Graphs</a>";
-  html += "<a href='/dashboard' class='menu-button'><span class='icon'>&#128421;&#65039;</span>Dashboard</a>";
   html += "<a href='/fmtdata' class='menu-button'><span class='icon'>&#9881;</span>Settings</a>";
   html += "<a href='/userConfig' class='menu-button'><span class='icon'>&#127899;&#65039;</span>User Configuration</a>";
   if (debugging) {
     html += "<a href='/debugparams' class='menu-button'><span class='icon'>&#128295;</span>Debug Params</a>";
   }
   html += "</div>";
+  html += "<div class='back-row'><a href='/dashboard' class='back-button'>Back</a></div>";
   html += "<div class='footer-link'><a href='/getstatus'>full status</a></div>";
   html += "<div class='signature'><img src='/assets/brewtal.svg' alt='Brewtal'></div>";
   html += "</div>";
@@ -501,7 +504,7 @@ void handleDebugParamsPage(AsyncWebServerRequest *request) {
 
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<button type='submit'>Save</button> "
-               "<button type='button' class='btn-secondary' onclick='window.location=\"/\"'>Cancel</button>"
+               "<button type='button' class='btn-secondary' onclick='window.location=\"/menu\"'>Cancel</button>"
                "</form><hr><h2>Graph history preview</h2>"
                "<p>Replace the current graph history with 14 days of synthetic data. "
                "The replacement is persisted in LittleFS; new Fermenting samples follow it.</p>"
@@ -596,7 +599,7 @@ void handleDebugParamsUpdate(AsyncWebServerRequest *request) {
 
   String html = "<!DOCTYPE html><html><head>";
   html += "<meta charset='UTF-8'>";
-  html += "<meta http-equiv='refresh' content='2;url=/'>";
+  html += "<meta http-equiv='refresh' content='2;url=/menu'>";
   html += "<style>body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }</style>";
   html += "</head><body>";
   html += "<h1>Debug Params Saved!</h1>";
@@ -731,7 +734,7 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
                 "</head><body>"
                 "<div class='container'>"
                 "<h1>Settings</h1>"
-                "<form action='/fmtdata/update' method='POST'>");
+                "<form id='settingsForm' action='/fmtdata/update' method='POST'>");
   
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='form-group'>"
@@ -757,8 +760,8 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
   // (an unchecked checkbox is not posted).
   snprintf(buffer, sizeof(buffer),
            "<div class='form-group'><input type='hidden' name='cloudEditsField' value='1'>"
-           "<label><input type='checkbox' name='cloudEdits' value='1'%s> Accept cloud edits</label>"
-           "<small>Set points and automatic rules changed on the cloud site.</small></div>",
+           "<label><input type='checkbox' name='cloudEdits' value='1'%s> Accept new setpoints and triggered actions from cloud</label>"
+           "<small>Set points and triggered action rules changed on the cloud site are applied by this Povoto.</small></div>",
            cloudEditsAccepted() ? " checked" : "");
   strncat(html, buffer, BUFFER_SIZE - strlen(html) - 1);
   
@@ -770,6 +773,28 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "</div>", remaining);
+
+  // Pressure limits, the vent drop and the altitude, in this order.
+  snprintf(buffer, sizeof(buffer),
+           "<div class='form-group'><label for='maximumPressure'>Maximum security pressure (bar):</label>"
+           "<input type='number' id='maximumPressure' name='maximumPressure' value='%.2f' step='0.01' min='2.01' max='2.99'>"
+           "<small>2.0 to 3.0 bar. The valve opens above it.</small></div>", FMTData.maximumPressure);
+  strncat(html, buffer, BUFFER_SIZE - strlen(html) - 1);
+  snprintf(buffer, sizeof(buffer),
+           "<div class='form-group'><label for='maxSetPointPressure'>Maximum pressure setpoint (bar):</label>"
+           "<input type='number' id='maxSetPointPressure' name='maxSetPointPressure' value='%.2f' step='0.01' min='0.1' max='2.98'>"
+           "<small>Highest pressure set point accepted (page, triggered actions, cloud); below the security pressure.</small></div>",
+           FMTData.maxSetPointPressure);
+  strncat(html, buffer, BUFFER_SIZE - strlen(html) - 1);
+  snprintf(buffer, sizeof(buffer),
+           "<div class='form-group'><label for='ventTargetDropPercent'>Target drop of the gauge pressure per vent (%%):</label>"
+           "<input type='number' id='ventTargetDropPercent' name='ventTargetDropPercent' value='%.2f' step='any' min='1' max='15' required>"
+           "</div>", FMTData.ventTargetDropPercent);
+  strncat(html, buffer, BUFFER_SIZE - strlen(html) - 1);
+  snprintf(buffer, sizeof(buffer),
+           "<div class='form-group'><label for='FMTAltitude'>Altitude (m):</label>"
+           "<input type='number' id='FMTAltitude' name='FMTAltitude' value='%.1f' step='0.1' min='0'></div>", FMTData.FMTAltitude);
+  strncat(html, buffer, BUFFER_SIZE - strlen(html) - 1);
 
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<h2>Cooling cycle</h2><table style='width:100%;table-layout:fixed'>"
@@ -807,37 +832,21 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
   appendDallasRolesSection(html, BUFFER_SIZE);
 
   remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='form-group'>"
-               "<label for='FMTAltitude'>Altitude (m):</label>", remaining);
-  sprintf(buffer, "<input type='number' id='FMTAltitude' name='FMTAltitude' value='%.1f' step='0.1' min='0'>", FMTData.FMTAltitude);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, buffer, remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div>", remaining);
-  
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='form-group'>"
-               "<label for='FMTEffectiveVentingExponent' title='Effective polytropic exponent used to correct the temporary pressure drop caused by gas cooling during venting. Use 1.00 for isothermal venting and approximately 1.29 for adiabatic CO2 venting.'>Effective Venting Exponent:</label>", remaining);
-  sprintf(buffer, "<input type='number' id='FMTEffectiveVentingExponent' name='FMTEffectiveVentingExponent' value='%.3f' step='0.001'>", FMTData.FMTEffectiveVentingExponent);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, buffer, remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div>", remaining);
+  strncat(html, "</form>"
+                "<div class='settings-actions'>"
+                "<button type='button' class='btn-secondary' onclick='window.location=\"/wifi/reconfigure\"'>Reconfigure WiFi</button>"
+                "<button type='button' onclick='window.location=\"/fmtdata/save\"'>Backup settings</button>"
+                "<button type='button' class='btn-secondary' onclick='document.getElementById(\"settingsFile\").click()'>Restore settings from backups</button>"
+                "<input id='settingsFile' type='file' accept='application/json,.json' hidden>"
+                "</div>"
+                "<div class='settings-actions'>"
+                "<button type='submit' form='settingsForm'>Save</button>"
+                "<button type='button' class='btn-secondary' onclick='window.location=\"/menu\"'>Cancel</button>"
+                "</div>"
+                "<script>document.getElementById('settingsFile').addEventListener('change',async function(){const file=this.files[0];if(!file)return;try{const response=await fetch('/fmtdata/load',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'settings='+encodeURIComponent(await file.text())});const message=await response.text();if(!response.ok){alert(message);return;}alert(message);window.location='/fmtdata';}catch(error){alert('Could not restore the settings file.');}finally{this.value='';}});</script>"
+                "</div>"
+                "</body></html>", remaining);
 
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-    strncat(html, "<button type='submit'>Apply page changes</button> "
-                 "<button type='button' class='btn-secondary' onclick='window.location=\"/\"'>Cancel</button>"
-                 "</form>"
-                 "<div class='settings-actions'>"
-                 "<button type='button' class='btn-secondary' onclick='window.location=\"/wifi/reconfigure\"'>Reconfigure WiFi network</button>"
-                 "<button type='button' onclick='window.location=\"/fmtdata/save\"'>Save settings</button>"
-                 "<button type='button' class='btn-secondary' onclick='document.getElementById(\"settingsFile\").click()'>Load settings</button>"
-                 "<input id='settingsFile' type='file' accept='application/json,.json' hidden>"
-                 "</div>"
-                 "<script>document.getElementById('settingsFile').addEventListener('change',async function(){const file=this.files[0];if(!file)return;try{const response=await fetch('/fmtdata/load',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'settings='+encodeURIComponent(await file.text())});const message=await response.text();if(!response.ok){alert(message);return;}alert(message);window.location='/fmtdata';}catch(error){alert('Could not load settings file.');}finally{this.value='';}});</script>"
-                 "</div>"
-                 "</body></html>", remaining);
-  
   request->send(200, "text/html", html);
   free(html);
 }
@@ -872,6 +881,24 @@ void handleFMTDataUpdate(AsyncWebServerRequest *request) {
   if (!(cooling[0].onMinutes > cooling[1].onMinutes + 1.0f && cooling[1].onMinutes > cooling[2].onMinutes + 1.0f) ||
       !(cooling[0].offMinutes > cooling[1].offMinutes + 1.0f && cooling[1].offMinutes > cooling[2].offMinutes + 1.0f)) {
     request->send(400, "text/plain", "Cooling times must decrease by more than 1 minute at each temperature step.");
+    return;
+  }
+  const auto postedFloat = [request](const char *name, float current) {
+    return request->hasParam(name, true) ? request->getParam(name, true)->value().toFloat() : current;
+  };
+  const float maximumPressure = postedFloat("maximumPressure", FMTData.maximumPressure);
+  const float maxSetPointPressure = postedFloat("maxSetPointPressure", FMTData.maxSetPointPressure);
+  const float ventDrop = postedFloat("ventTargetDropPercent", FMTData.ventTargetDropPercent);
+  if (!isValidMaximumPressure(maximumPressure) || !(FMTData.pressure1Bar < maximumPressure)) {
+    request->send(400, "text/plain", "Maximum security pressure must be between 2.0 and 3.0 bar and above calibration point B.");
+    return;
+  }
+  if (!isValidMaxSetPointPressure(maxSetPointPressure, maximumPressure)) {
+    request->send(400, "text/plain", "Maximum pressure setpoint must be above 0 and below the maximum security pressure.");
+    return;
+  }
+  if (!isValidVentTargetDrop(ventDrop)) {
+    request->send(400, "text/plain", "Target drop of the gauge pressure per vent must be between 1 and 15%.");
     return;
   }
   float heaterOn = FMTData.heater.onMinutes;
@@ -913,6 +940,9 @@ void handleFMTDataUpdate(AsyncWebServerRequest *request) {
   if (request->hasParam("FMTAltitude", true)) {
     FMTData.FMTAltitude = request->getParam("FMTAltitude", true)->value().toFloat();
   }
+  FMTData.maximumPressure = maximumPressure;
+  FMTData.maxSetPointPressure = maxSetPointPressure;
+  FMTData.ventTargetDropPercent = ventDrop;
   if (request->hasParam("dataLogIntervalSeconds", true)) {
     const int interval = request->getParam("dataLogIntervalSeconds", true)->value().toInt();
     if (!isValidDataLogIntervalSeconds(interval)) {
@@ -926,14 +956,6 @@ void handleFMTDataUpdate(AsyncWebServerRequest *request) {
     request->send(500, "text/plain", "Could not save Accept cloud edits.");
     return;
   }
-  if (request->hasParam("FMTEffectiveVentingExponent", true)) {
-    const float exponent = request->getParam("FMTEffectiveVentingExponent", true)->value().toFloat();
-    if (exponent < 1.0f || exponent > 1.30f) {
-      request->send(400, "text/plain", "Effective venting exponent must be between 1.00 and 1.30.");
-      return;
-    }
-    FMTData.FMTEffectiveVentingExponent = exponent;
-  }
   if (dallasConfig) memcpy(FMTData.dallasAddress, dallasAddress, sizeof(dallasAddress));
   writeFMTDataToNIV();
   updatePatmFromFMTAltitude();
@@ -941,7 +963,7 @@ void handleFMTDataUpdate(AsyncWebServerRequest *request) {
 
   String html = "<!DOCTYPE html><html><head>";
   html += "<meta charset='UTF-8'>";
-  html += "<meta http-equiv='refresh' content='2;url=/'>";
+  html += "<meta http-equiv='refresh' content='2;url=/menu'>";
   html += "<style>body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }</style>";
   html += "</head><body>";
   html += "<h1>FMT Data Saved!</h1>";
@@ -1001,7 +1023,8 @@ void handleCalibrationCurrentRefresh(AsyncWebServerRequest *request) {
   request->redirect(target);
 }
 
-// Vent parameters and flow curves (docs/vent.md), inside the calibration form.
+// Vent parameters and flow curves (docs/vent.md). The editable fields belong to
+// the one form of the page (form='calForm'), saved by the Save button at the end.
 static String curveText(const VentModel::Curve &curve) {
   if (!VentModel::validCurve(curve)) return "none";
   char when[20];
@@ -1012,22 +1035,23 @@ static String curveText(const VentModel::Curve &curve) {
     (when[0] ? String("test of ") + when : String("default: venting test of 18/09, t0 not measured"));
 }
 
+static String calibrationField(const char *name, const char *label, float value, int decimals, const char *range,
+                               const char *title = "") {
+  return String("<div class='form-group'><label for='") + name + "' title='" + title + "'>" + label + "</label><input type='number' id='" +
+    name + "' name='" + name + "' form='calForm' step='any' " + range + " required value='" + String(value, decimals) + "'></div>";
+}
+
 static String ventSettingsHtml() {
-  auto field = [](const char *name, const char *label, float value, int decimals, const char *range) {
-    return String("<div class='form-group'><label for='") + name + "'>" + label + "</label><input type='number' id='" + name +
-      "' name='" + name + "' step='any' " + range + " required value='" + String(value, decimals) + "'></div>";
-  };
-  String html = "<h2>Vent</h2><p>The valve vents the fermenter to the atmosphere for a time estimated from the flow curve "
-    "and the headspace; the CO2 is counted from the real opening time (docs/vent.md).</p>";
-  html += field("ventTargetDropPercent", "Target drop of the gauge pressure per vent (%)", FMTData.ventTargetDropPercent, 2,
-                "min='1' max='15'");
-  html += field("ventMinSeconds", "Minimum opening (s)", FMTData.ventMinSeconds, 2, "min='0.2' max='10'");
-  html += field("ventSafetyDropPercent", "Safety drop with the smallest plausible headspace (%)", FMTData.ventSafetyDropPercent, 1,
-                "min='2' max='30'");
-  html += field("flowLevelFactor", "Flow level factor (degassed SG, between batches only)", FMTData.flowLevelFactor, 4,
-                "min='0.5' max='1.5'");
-  html += field("liquidMassInGasVentingPercent", "Liquid mass in gas venting (%)", FMTData.liquidMassInGasVentingPercent, 3,
-                "min='0' max='100'");
+  String html = "<hr><h2>Vent</h2><p>The valve vents the fermenter to the atmosphere for a time estimated from the flow curve "
+    "and the headspace; the CO2 is counted from the real opening time (docs/vent.md). The target drop per vent is on the "
+    "Settings page. The opening is at least " + String(VENT_MIN_SECONDS, 1) + " s and at most the time that gives " +
+    String(VENT_SAFETY_DROP_FACTOR, 0) + " times the target drop with the smallest plausible headspace (the minimum wins).</p>";
+  html += calibrationField("flowLevelFactor", "Flow level factor (degassed SG, between batches only)", FMTData.flowLevelFactor, 4,
+                           "min='0.5' max='1.5'");
+  html += calibrationField("FMTEffectiveVentingExponent", "Effective Venting Exponent", FMTData.FMTEffectiveVentingExponent, 3,
+                           "min='1' max='1.3'",
+                           "Effective polytropic exponent used to correct the temporary pressure drop caused by gas cooling during "
+                           "venting. Use 1.00 for isothermal venting and approximately 1.29 for adiabatic CO2 venting.");
   html += "<p><b>Flow curve:</b> " + curveText(FMTData.ventCurve) + "<br><b>Reference curve:</b> " +
     curveText(FMTData.ventReferenceCurve) + "<br>Last vents: <a href='/ventstatus'>/ventstatus</a></p>";
   // Opening times with the current headspace and the gas temperature.
@@ -1046,25 +1070,49 @@ static String ventSettingsHtml() {
   return html;
 }
 
-// Sensor zero (docs/pressure-sensor-zero.md) and the gain check.
-static String sensorZeroSectionHtml() {
+// Pressure sensor: points A and B (a straight line) and the sensor zero
+// routine (docs/pressure-sensor-zero.md).
+static String pressureSensorSectionHtml(float pageCurrentReading, bool usingAverageCurrent) {
   auto num = [](float v, int d) { return isfinite(v) ? String(v, d) : String("n/a"); };
+  char buffer[420];
+  snprintf(buffer, sizeof(buffer),
+    "<h2>Pressure sensor</h2><div class='current-row'><div class='current-badge'>&#128268; Actual current reading%s: <b>%.2f mA</b>"
+    "</div><a class='btn-refresh' href='/calibration/refresh-current'>Update</a></div>",
+    usingAverageCurrent ? " (30s avg)" : "", pageCurrentReading);
+  String html = buffer;
+  html += "<div class='point-row'><div class='point-caption'>Point A</div><div class='form-group'><label>Pressure (bar):</label>"
+          "<input type='number' value='0.00' disabled></div>";
+  snprintf(buffer, sizeof(buffer),
+    "<div class='form-group'><label for='pressure0Current'>Current (mA):</label><div class='input-row'>"
+    "<input type='number' id='pressure0Current' name='pressure0Current' form='calForm' value='%.2f' step='0.01'>"
+    "<button type='button' class='btn-use' onclick=\"document.getElementById('pressure0Current').value='%.2f'\">Use actual</button>"
+    "</div></div></div>", FMTData.pressure0Current, pageCurrentReading);
+  html += buffer;
+  snprintf(buffer, sizeof(buffer),
+    "<div class='point-row'><div class='point-caption'>Point B</div><div class='form-group'>"
+    "<label for='pressure1Bar'>Pressure (bar):</label>"
+    "<input type='number' id='pressure1Bar' name='pressure1Bar' form='calForm' value='%.2f' step='0.01'></div>",
+    FMTData.pressure1Bar);
+  html += buffer;
+  snprintf(buffer, sizeof(buffer),
+    "<div class='form-group'><label for='pressure1Current'>Current (mA):</label><div class='input-row'>"
+    "<input type='number' id='pressure1Current' name='pressure1Current' form='calForm' value='%.2f' step='0.01'>"
+    "<button type='button' class='btn-use' onclick=\"document.getElementById('pressure1Current').value='%.2f'\">Use actual</button>"
+    "</div></div></div>", FMTData.pressure1Current, pageCurrentReading);
+  html += buffer;
+
   const SensorZeroResult r = getSensorZeroResult();
-  const float mbarPerMilliamp = (FMTData.pressure1Current > FMTData.pressure0Current)
-      ? 1000.0f * FMTData.pressure1Bar / (FMTData.pressure1Current - FMTData.pressure0Current) : NAN;
-  String html = "<hr><h3>Sensor zero</h3>"
+  html += "<h3>Sensor zero</h3>"
     "<p>Open the fermenter to the atmosphere (ideally one opening at the top and one at the bottom), wait a few minutes "
-    "and confirm. The routine opens no valve: it averages the filtered sensor current and compares it with the stored zero "
-    "(the pressure shown elsewhere is clipped at zero and hides a zero that is too high). Requirements: mode OFF, board on for "
-    "at least 30 min (now " + String(millis() / 60000UL) + " min).</p>";
+    "and confirm. The routine takes 5 min and opens no valve: it averages the filtered sensor current and compares it with the "
+    "stored zero (the pressure shown elsewhere is clipped at zero and hides a zero that is too high). Requirements: mode OFF, "
+    "board on for at least 30 min (now " + String(millis() / 60000UL) + " min).</p>";
   if (sensorZeroActive()) {
     html += "<p><b>Running:</b> " + String(sensorZeroProgressMinutes(), 1) + " min; current " + num(currentReading, 3) +
       " mA. <form action='/calibration/zero/abort' method='POST'><button>Abort</button></form></p>";
   } else {
     html += "<form action='/calibration/zero/start' method='POST'><label><input type='checkbox' name='open' value='1' required> "
-      "The fermenter is open to the atmosphere</label> <label>Duration (min) <input type='number' name='minutes' value='" +
-      String(SENSOR_ZERO_DEFAULT_MINUTES, 0) + "' min='1' max='15' step='1' style='width:70px'></label> "
-      "<button>Sensor zero</button></form>";
+      "The fermenter is open to the atmosphere</label> <button>Sensor zero</button></form>";
   }
   if (r.available) {
     html += "<p>Mean current " + num(r.meanCurrent, 4) + " mA over " + num(r.minutes, 1) + " min (" + String(r.samples) +
@@ -1080,15 +1128,8 @@ static String sensorZeroSectionHtml() {
     if (r.saved) html += "<p>Saved.</p>";
     if (r.canSave)
       html += "<form action='/calibration/zero/save' method='POST'><button>Save zero</button> "
-        "(shifts the three calibration currents by the difference; the gain is kept)</form>";
+        "(shifts the two calibration currents by the difference; the gain is kept)</form>";
   }
-  html += "<p><b>Gain check</b> (fermenter closed and pressurized, against the analog gauge): current " +
-    num(currentReading, 3) + " mA, pressure without clipping " + num(convertCurrentToPressureUnclipped(currentReading), 4) +
-    " bar (" + num(mbarPerMilliamp, 1) + " mbar/mA near zero). <a href='/calibration'>Refresh</a></p>";
-  const String events = calibrationEventsHtmlRows(10);
-  if (events.length())
-    html += "<p><b>Calibration events</b> (newest first; <a href='/calibration/events.txt'>all</a>)</p>"
-      "<table style='width:100%;font-size:0.9em'><tr><th>Time</th><th>Event</th><th>Details</th></tr>" + events + "</table>";
   return html;
 }
 
@@ -1099,23 +1140,22 @@ static String pct(float fraction) {
 
 static String ventingTestSectionHtml() {
   auto num = [](float v, int d) { return isfinite(v) ? String(v, d) : String("n/a"); };
-  String html = "<hr><h3>Venting test</h3><p>Empty fermenter with air, the volume of the test below, the valve outlet "
-    "in its working assembly (witness bottle). Pressurize above the highest fermentation pressure + ~3% (2.0-2.05 bar "
-    "for 1.9) and wait ~10 min. The test alternates openings of 2, 0.5, 8, 1, 4 and 2 s at the start pressure and at "
+  String html = "<hr><h2>Venting test</h2><p>Empty fermenter with air (the configured FMT volume, " + String(FMTData.FMTVolume, 1) +
+    " L), the valve outlet in its working assembly (witness bottle). Pressurize above the highest fermentation pressure + ~3% "
+    "(2.0-2.05 bar for 1.9) and wait ~10 min. The test alternates openings of 2, 0.5, 8, 1, 4 and 2 s at the start pressure and at "
     "~1.9, 1.5, 1.1, 0.8, 0.5 and 0.25 bar (a long opening steps down between levels), waits for a stable pressure "
     "after each one (0.3 mbar in 30 s, 45-180 s) and measures the real opening time. About 55-65 min. Vents outside "
     "the pressure range of the saved curve are flagged. Do not touch the equipment.</p>";
   if (ventingTestActive()) {
     html += "<p><b>" + ventingTestProgressText() + "</b></p><form action='/calibration/venting/abort' method='POST'>"
-      "<button>Abort</button></form>";
+      "<button>Abort</button></form><p><a href='/calibration/venting.csv?test=current'>Current test CSV</a> "
+      "(the finished releases so far)</p>";
   } else {
     const uint8_t preset = defaultVentingTestLabel();
     html += "<form action='/calibration/venting/start' method='POST'><label>Label <select name='label'>";
     for (uint8_t i = 0; i < VENTING_LABEL_COUNT; ++i)
       html += String("<option value='") + i + "'" + (i == preset ? " selected" : "") + ">" + ventingTestLabelName(i) + "</option>";
-    html += "</select></label> <label>Gas <select name='gas'><option value='air'>Air</option><option value='co2'>CO2</option>"
-      "</select></label> <label>Test volume (L) <input type='number' name='volume' step='0.01' min='1' style='width:90px' value='" +
-      String(FMTData.FMTVolume, 2) + "'></label> <button>Venting test</button></form><p>" + ventingTestProgressText() + "</p>";
+    html += "</select></label> <button>Venting test</button></form><p>" + ventingTestProgressText() + "</p>";
   }
   const uint8_t count = ventingTestHistoryCount();
   VentingTestSummary s;
@@ -1162,9 +1202,17 @@ static String ventingTestSectionHtml() {
   return html;
 }
 
+static String dissolvedCO2SectionHtml() {
+  String html = "<hr><h2>Dissolved CO2 dynamics</h2>";
+  html += String("<div class='form-group'><label for='nucleationWindow'>Nucleation window (min):</label>"
+                 "<input type='number' id='nucleationWindow' name='nucleationWindow' form='calForm' value='") +
+          String(FMTData.nucleationWindow) + "' step='1' min='0'></div>";
+  return html;
+}
+
 // Valve cleaning cycle (docs/valve-cleaning.md).
 static String valveCleaningSectionHtml() {
-  String html = "<hr><h3>Valve cleaning</h3><p>Mode OFF. Detach port <b>P</b> from the fermenter and take it to the drain; "
+  String html = "<hr><h2>Valve cleaning</h2><p>Mode OFF. Detach port <b>P</b> from the fermenter and take it to the drain; "
     "remove the muffler of port <b>R</b> and take it to the drain. Pressurized liquid (a few tenths of a bar) "
     "<b>only on port A</b>. Each phase alternates the valve energized (A&rarr;P) and de-energized (A&rarr;R), 2 s + 2 s. "
     "Phases: neutral detergent, water, 70% alcohol, air (drying); change the liquid on A before each one. No caustic soda "
@@ -1184,29 +1232,46 @@ static String valveCleaningSectionHtml() {
   return html;
 }
 
-// Fermenter volume by a weighed keg (docs/keg-volume.md).
-static String kegVolumeSectionHtml() {
-  String html = "<hr><h3>Keg volume</h3><p>Fermenter volume by a keg of known volume (weighed with water, then emptied and "
-    "dried) on port A, no check valve on the vent. Run the sensor zero first. Keg and fermenter in the shade, in the same "
-    "place. Pressurize the fermenter (~1.9, then ~1.2 and ~0.6 bar) and let it settle. Each relief waits for a stable "
-    "pressure (below 0.1 mbar/min over 2 min, 2-15 min), opens the valve until the pressure is stable again, reads P2 and "
-    "the temperatures, then vents the keg through R before the next one. The volume comes from the full mole balance "
-    "with the fermenter (Dallas) and keg (environment) temperatures and Patm.</p><p><b>" + kegVolumeStatusText() + "</b></p>";
+// Fermenter volume with an expansion tank (docs/keg-volume.md).
+static String fermenterVolumeSectionHtml() {
+  const KegVolumeResult r = getKegVolumeResult();
+  String html = "<hr><h2>Fermenter volume</h2><p>Fermenter volume determination &mdash; measures the fermenter volume (FMT volume) "
+    "with an expansion tank of known volume.<br>Connect the expansion tank to port A.<br>Pressurize the fermenter to ~2.0 bar, "
+    "wait 15 min and press Start.<br>The routine takes about 2&ndash;3 h and repeats by itself down to ~0.5 bar: it waits for a "
+    "stable pressure, opens the valve to the tank, waits again, closes and vents the tank.<br>Result: the fermenter volume "
+    "(mean of the stable steps) and its spread. If accepted, press Save as new FMT volume.</p><p><b>" + kegVolumeStatusText() +
+    "</b></p>";
   if (kegVolumeActive()) {
     html += "<form action='/calibration/keg/abort' method='POST'><button>Abort</button></form>";
   } else {
-    html += "<form action='/calibration/keg/start' method='POST'><label>Keg volume (L) <input type='number' name='keg' "
-      "step='0.001' min='0.5' style='width:90px' required></label> <label>Reliefs <input type='number' name='reliefs' "
-      "value='4' min='1' max='8' style='width:60px'></label> <button>Keg volume</button></form>";
+    html += "<form action='/calibration/keg/start' method='POST'><label>Expansion tank volume (L) <input type='number' name='keg' "
+      "id='tankVolume' step='0.001' min='0.5' style='width:90px' required value='" + String(FMTData.lastExpTankVolume, 3) +
+      "'></label> <button>Start</button></form><p>Planned at the current pressure (" + String(ControlData.pressure, 2) +
+      " bar) with this tank: <b>" + String(kegVolumePlannedReliefs(ControlData.pressure, FMTData.lastExpTankVolume)) +
+      "</b> reliefs (computed again at the start).</p>";
   }
-  const KegVolumeResult r = getKegVolumeResult();
+  if (r.total > 0) {
+    html += "<p><a href='/calibration/keg.csv'>" + String(kegVolumeActive() ? "Current run CSV" : "CSV") + "</a> (every relief, "
+      "with its stability marks)</p>";
+  }
   if (r.available) {
-    html += "<p>Keg " + String(r.kegVolume, 3) + " L: fermenter <b>" + String(r.mean, 2) + " L</b>" +
+    html += "<p>Expansion tank " + String(r.tankVolume, 3) + " L: fermenter <b>" + String(r.mean, 2) + " L</b>" +
       (isfinite(r.sd) ? " (sd " + String(r.sd, 2) + " L = " + String(100.0f * r.sd / r.mean, 2) + "%)" : String("")) +
-      ", simple formula " + String(r.simpleMean, 2) + " L. Not saved: enter it as FMT volume on the Settings page if "
-      "accepted. <a href='/calibration/keg.csv'>CSV</a></p><table style='width:100%;font-size:0.85em'><tr><th>#</th>"
-      "<th>P1 bar</th><th>P2 bar</th><th>T ferm &deg;C</th><th>T keg &deg;C</th><th>V L</th><th>simple L</th>"
-      "<th>stable</th></tr>" + kegVolumeRowsHtml() + "</table>";
+      ", " + String(r.reliefs) + " of " + String(r.total) + " reliefs used; simple formula " + String(r.simpleMean, 2) +
+      " L.<br>Configured FMT volume: <b>" + String(r.fmtVolume, 2) + " L</b>.</p>";
+    if (r.canSave) {
+      html += "<form action='/calibration/keg/save' method='POST' onsubmit=\"return confirm('Save " + String(r.mean, 2) +
+        " L as the new FMT volume (now " + String(r.fmtVolume, 2) + " L)?')\"><button>Save as new FMT volume</button></form>";
+    } else if (!kegVolumeActive()) {
+      html += "<p>At least 2 stable reliefs are needed to save the volume.</p>";
+    }
+  } else if (r.total > 0) {
+    html += "<p>No stable relief yet (" + String(r.total) + " done).<br>Configured FMT volume: <b>" + String(r.fmtVolume, 2) +
+      " L</b>.</p>";
+  }
+  if (r.total > 0) {
+    html += "<table style='width:100%;font-size:0.85em'><tr><th>#</th><th>P1 bar</th><th>P2 bar</th><th>T ferm &deg;C</th>"
+      "<th>T tank &deg;C</th><th>V L</th><th>simple L</th><th>stable</th></tr>" + kegVolumeRowsHtml() + "</table>";
   }
   return html;
 }
@@ -1226,23 +1291,19 @@ void handleSensorZeroStart(AsyncWebServerRequest *request) {
     sendCalibrationMessage(request, "Sensor zero not started", "Confirm that the fermenter is open to the atmosphere.");
     return;
   }
-  const float minutes = request->hasParam("minutes", true)
-      ? request->getParam("minutes", true)->value().toFloat() : SENSOR_ZERO_DEFAULT_MINUTES;
   char reason[100];
-  if (!startSensorZero(minutes, reason, sizeof(reason))) {
+  if (!startSensorZero(reason, sizeof(reason))) {
     sendCalibrationMessage(request, "Sensor zero not started", reason);
     return;
   }
   request->redirect("/calibration");
 }
 
+// Always air, in the fermenter with the configured FMT volume.
 void handleVentingTestStart(AsyncWebServerRequest *request) {
   const uint8_t label = request->hasParam("label", true) ? request->getParam("label", true)->value().toInt() : 0;
-  const bool co2 = request->hasParam("gas", true) && request->getParam("gas", true)->value() == "co2";
-  const float volume = request->hasParam("volume", true) ? request->getParam("volume", true)->value().toFloat()
-                                                         : FMTData.FMTVolume;
   char reason[100];
-  if (!startVentingTest(label, co2, volume, reason, sizeof(reason))) {
+  if (!startVentingTest(label, false, FMTData.FMTVolume, reason, sizeof(reason))) {
     sendCalibrationMessage(request, "Venting test not started", reason);
     return;
   }
@@ -1285,11 +1346,10 @@ void handleValveCleaningAbort(AsyncWebServerRequest *request) {
 }
 
 void handleKegVolumeStart(AsyncWebServerRequest *request) {
-  const float keg = request->hasParam("keg", true) ? request->getParam("keg", true)->value().toFloat() : NAN;
-  const int count = request->hasParam("reliefs", true) ? request->getParam("reliefs", true)->value().toInt() : 4;
+  const float tank = request->hasParam("keg", true) ? request->getParam("keg", true)->value().toFloat() : NAN;
   char reason[100];
-  if (!startKegVolume(keg, (uint8_t)constrain(count, 0, 255), reason, sizeof(reason))) {
-    sendCalibrationMessage(request, "Keg volume not started", reason);
+  if (!startKegVolume(tank, reason, sizeof(reason))) {
+    sendCalibrationMessage(request, "Fermenter volume not started", reason);
     return;
   }
   request->redirect("/calibration");
@@ -1297,6 +1357,15 @@ void handleKegVolumeStart(AsyncWebServerRequest *request) {
 
 void handleKegVolumeAbort(AsyncWebServerRequest *request) {
   abortKegVolume();
+  request->redirect("/calibration");
+}
+
+void handleKegVolumeSave(AsyncWebServerRequest *request) {
+  char reason[100];
+  if (!saveKegVolumeAsFmtVolume(reason, sizeof(reason))) {
+    sendCalibrationMessage(request, "FMT volume not saved", reason);
+    return;
+  }
   request->redirect("/calibration");
 }
 
@@ -1322,281 +1391,92 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
     usingAverageCurrent = true;
   }
 
-  const size_t BUFFER_SIZE = 8000;
-  char* html = (char*)malloc(BUFFER_SIZE);
-  if (!html) {
-    request->send(500, "text/plain", "Out of memory");
-    return;
-  }
-
-  size_t remaining;
-  strcpy(html, "<!DOCTYPE html><html><head>");
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<meta charset='UTF-8'>", remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<meta name='viewport' content='width=device-width, initial-scale=1'>", remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<title>Calibration Data</title>", remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<style>", remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "body { font-family: Arial, sans-serif; margin: 20px; background: #f0f0f0; }", remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, ".container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }", remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "h1 { color: #333; text-align: center; }", remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, ".form-group { margin-bottom: 15px; }", remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "label { display: block; margin-bottom: 5px; color: #666; font-weight: bold; }", remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, ".input-row { display: flex; gap: 8px; align-items: center; }", remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, ".point-row { display: grid; grid-template-columns: 80px 1fr 1.35fr; gap: 12px; align-items: end; } .point-row > .form-group { margin-bottom: 15px; } .point-caption { font-weight: bold; padding-bottom: 24px; }", remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, ".input-row input { flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }", remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "input[type='number']:not(.input-row input) { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }", remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "button { padding: 8px 14px; margin: 2px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }", remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "button[type='submit'] { background: #4CAF50; color: white; font-size: 16px; padding: 10px 20px; }", remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, ".btn-secondary { background: #999; color: white; font-size: 16px; padding: 10px 20px; }", remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, ".btn-use { background: #2196F3; color: white; white-space: nowrap; }", remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, ".btn-refresh { background: #ff9800; color: white; white-space: nowrap; text-decoration: none; display: inline-block; padding: 8px 14px; border-radius: 4px; font-size: 14px; }", remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, ".current-badge { background: #e8f5e9; border: 1px solid #a5d6a7; border-radius: 6px; padding: 8px 14px; margin-bottom: 18px; font-size: 1.1em; color: #2e7d32; }", remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, ".current-row { display: flex; gap: 10px; align-items: center; margin-bottom: 18px; }", remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, ".current-row .current-badge { flex: 1; margin-bottom: 0; }", remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</style></head><body>", remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='container'>", remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<h1>Calibration Data</h1>", remaining);
-
-  // Corrente medida atual / media 30s
-  char buffer[300];
-  snprintf(buffer, sizeof(buffer),
-    "<div class='current-row'><div class='current-badge'>&#128268; Actual current reading%s: <b>%.2f mA</b></div><a class='btn-refresh' href='/calibration/refresh-current'>Update</a></div>",
-    usingAverageCurrent ? " (30s avg)" : "",
-    pageCurrentReading);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, buffer, remaining);
-
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<form action='/calibration/update' method='POST'>", remaining);
-
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<h2>Pressure sensor</h2>", remaining);
-
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='point-row'><div class='point-caption'>Point A</div><div class='form-group'><label>Pressure (bar):</label><input type='number' value='0.00' disabled></div>", remaining);
-
-  // Pressure 0 Current
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='form-group'>"
-               "<label for='pressure0Current'>Current (mA):</label>"
-               "<div class='input-row'>", remaining);
-  snprintf(buffer, sizeof(buffer),
-    "<input type='number' id='pressure0Current' name='pressure0Current' value='%.2f' step='0.01'>"
-    "<button type='button' class='btn-use' onclick=\"document.getElementById('pressure0Current').value='%.2f'\">Use actual</button>",
-    FMTData.pressure0Current, pageCurrentReading);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, buffer, remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div></div></div>", remaining);
-
-  // Pressure 1 (point B)
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='point-row'><div class='point-caption'>Point B</div><div class='form-group'>"
-               "<label for='pressure1Bar'>Pressure (bar):</label>", remaining);
-  snprintf(buffer, sizeof(buffer),
-    "<input type='number' id='pressure1Bar' name='pressure1Bar' value='%.2f' step='0.01'>",
-    FMTData.pressure1Bar);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, buffer, remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div>", remaining);
-
-  // Pressure 1 Current
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='form-group'>"
-               "<label for='pressure1Current'>Current (mA):</label>"
-               "<div class='input-row'>", remaining);
-  snprintf(buffer, sizeof(buffer),
-    "<input type='number' id='pressure1Current' name='pressure1Current' value='%.2f' step='0.01'>"
-    "<button type='button' class='btn-use' onclick=\"document.getElementById('pressure1Current').value='%.2f'\">Use actual</button>",
-    FMTData.pressure1Current, pageCurrentReading);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, buffer, remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div></div></div>", remaining);
-
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<label><input type='checkbox' name='threePoint' value='1' onclick=\"document.getElementById('thirdPointFields').hidden=!this.checked; if(!this.checked){document.getElementById('pressure2Bar').value='0';document.getElementById('pressure2Current').value='0';}\"", remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, FMTData.pressure2Bar != 0.0f ? " checked" : "", remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "> Three point quadratic curve</label><div id='thirdPointFields'", remaining);
-  if (FMTData.pressure2Bar == 0.0f) {
-    remaining = BUFFER_SIZE - strlen(html) - 1;
-    strncat(html, " hidden", remaining);
-  }
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, ">", remaining);
-
-  // Pressure 2 Bar
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='point-row'><div class='point-caption'>Point C</div><div class='form-group'>"
-               "<label for='pressure2Bar'>Pressure (bar):</label>", remaining);
-  snprintf(buffer, sizeof(buffer),
-    "<input type='number' id='pressure2Bar' name='pressure2Bar' value='%.2f' step='0.01'>",
-    FMTData.pressure2Bar);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, buffer, remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div>", remaining);
-
-  // Pressure 2 Current
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='form-group'>"
-               "<label for='pressure2Current'>Current (mA):</label>"
-               "<div class='input-row'>", remaining);
-  snprintf(buffer, sizeof(buffer),
-    "<input type='number' id='pressure2Current' name='pressure2Current' value='%.2f' step='0.01'>"
-    "<button type='button' class='btn-use' onclick=\"document.getElementById('pressure2Current').value='%.2f'\">Use actual</button>",
-    FMTData.pressure2Current, pageCurrentReading);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, buffer, remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div></div></div>", remaining);
-
-  // End of fields controlled by the three-point checkbox.
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div>", remaining);
-
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<h2>Dissolved CO2 dynamics</h2>", remaining);
-
-  // Maximum security pressure
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='form-group'>"
-               "<label for='maximumPressure'>Maximum security pressure (bar):</label>", remaining);
-  snprintf(buffer, sizeof(buffer),
-    "<input type='number' id='maximumPressure' name='maximumPressure' value='%.2f' step='0.01' min='0'>",
-    FMTData.maximumPressure);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, buffer, remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div>", remaining);
-
-
-  // Nucleation window
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='form-group'>"
-               "<label for='nucleationWindow'>Nucleation window (min):</label>", remaining);
-  snprintf(buffer, sizeof(buffer),
-    "<input type='number' id='nucleationWindow' name='nucleationWindow' value='%d' step='1' min='0'>",
-    FMTData.nucleationWindow);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, buffer, remaining);
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div>", remaining);
-
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<button type='submit'>Save</button> "
-               "<button type='button' class='btn-secondary' onclick='window.location=\"/\"'>Cancel</button>"
-               "</form>"
-               "</div>"
-               "</body></html>", remaining);
-
-  String page(html);
-  page.replace("<button type='submit'>Save</button>", ventSettingsHtml() + "<button type='submit'>Save</button>");
-  const String actions = String("<div class='container' style='margin-top:20px'><h2>Calibration and maintenance</h2>") +
-    "<p>Requirements: mode OFF, no task. Do not press any Save button before analysing the data "
-    "(docs/manual-calibracao-manutencao.md). Vent diagnostics: <a href='/ventstatus'>/ventstatus</a>.</p>" +
-    sensorZeroSectionHtml() + kegVolumeSectionHtml() + ventingTestSectionHtml() + valveCleaningSectionHtml() + "</div>";
-  page.replace("</body>", actions + "</body>");
-  if (sensorZeroActive() || ventingTestActive() || valveCleaningRunning() || kegVolumeActive()) page.replace("<head>", "<head><meta http-equiv='refresh' content='10'>");
+  // Sections in order, with a dividing line; the editable fields of all of them
+  // belong to the empty form 'calForm', saved by the Save button at the end.
+  String page = "<!DOCTYPE html><html><head><meta charset='UTF-8'>"
+    "<meta name='viewport' content='width=device-width, initial-scale=1'><title>Calibration</title><style>"
+    "body { font-family: Arial, sans-serif; margin: 20px; background: #f0f0f0; }"
+    ".container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }"
+    "h1 { color: #333; text-align: center; }"
+    "hr { border: 0; border-top: 2px solid #ddd; margin: 26px 0 18px; }"
+    ".form-group { margin-bottom: 15px; }"
+    "label { display: block; margin-bottom: 5px; color: #666; font-weight: bold; }"
+    ".input-row { display: flex; gap: 8px; align-items: center; }"
+    ".point-row { display: grid; grid-template-columns: 80px 1fr 1.35fr; gap: 12px; align-items: end; }"
+    ".point-row > .form-group { margin-bottom: 15px; } .point-caption { font-weight: bold; padding-bottom: 24px; }"
+    ".input-row input { flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }"
+    "input[type='number']:not(.input-row input) { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }"
+    "input[type='checkbox'] { width: auto; } label > input[type='checkbox'] { margin-right: 6px; }"
+    "button { padding: 8px 14px; margin: 2px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }"
+    "button[type='submit'] { background: #4CAF50; color: white; font-size: 16px; padding: 10px 20px; }"
+    ".btn-secondary { background: #999; color: white; font-size: 16px; padding: 10px 20px; }"
+    ".btn-use { background: #2196F3; color: white; white-space: nowrap; }"
+    ".btn-refresh { background: #ff9800; color: white; white-space: nowrap; text-decoration: none; display: inline-block; padding: 8px 14px; border-radius: 4px; font-size: 14px; }"
+    ".current-badge { background: #e8f5e9; border: 1px solid #a5d6a7; border-radius: 6px; padding: 8px 14px; font-size: 1.1em; color: #2e7d32; }"
+    ".current-row { display: flex; gap: 10px; align-items: center; margin-bottom: 18px; } .current-row .current-badge { flex: 1; }"
+    "</style></head><body><div class='container'><h1>Calibration</h1>"
+    "<p>Requirements of the routines: mode OFF, no task. Do not press Save before analysing the data "
+    "(docs/manual-calibracao-manutencao.md). Vent diagnostics: <a href='/ventstatus'>/ventstatus</a>.</p>"
+    "<form id='calForm' action='/calibration/update' method='POST'></form>";
+  page += pressureSensorSectionHtml(pageCurrentReading, usingAverageCurrent);
+  page += fermenterVolumeSectionHtml();
+  page += ventingTestSectionHtml();
+  page += ventSettingsHtml();
+  page += dissolvedCO2SectionHtml();
+  page += valveCleaningSectionHtml();
+  page += "<hr><div><button type='submit' form='calForm'>Save</button> "
+          "<button type='button' class='btn-secondary' onclick='window.location=\"/menu\"'>Cancel</button></div>";
+  const String events = calibrationEventsHtmlRows(10);
+  if (events.length())
+    page += "<hr><h3>Calibration events</h3><p>Newest first; <a href='/calibration/events.txt'>all</a></p>"
+      "<table style='width:100%;font-size:0.9em'><tr><th>Time</th><th>Event</th><th>Details</th></tr>" + events + "</table>";
+  page += "</div></body></html>";
+  if (sensorZeroActive() || ventingTestActive() || valveCleaningRunning() || kegVolumeActive())
+    page.replace("<head>", "<head><meta http-equiv='refresh' content='10'>");
   request->send(200, "text/html", page);
-  free(html);
 }
 
 void handleCalibrationDataUpdate(AsyncWebServerRequest *request) {
   auto value = [request](const char *name, float current) {
     return request->hasParam(name, true) ? request->getParam(name, true)->value().toFloat() : current;
   };
-  const float liquidMass = value("liquidMassInGasVentingPercent", FMTData.liquidMassInGasVentingPercent);
-  const float ventDrop = value("ventTargetDropPercent", FMTData.ventTargetDropPercent);
-  const float ventMin = value("ventMinSeconds", FMTData.ventMinSeconds);
-  const float ventSafety = value("ventSafetyDropPercent", FMTData.ventSafetyDropPercent);
+  const float exponent = value("FMTEffectiveVentingExponent", FMTData.FMTEffectiveVentingExponent);
   const float level = value("flowLevelFactor", FMTData.flowLevelFactor);
   const float p1 = value("pressure1Bar", FMTData.pressure1Bar);
-  const float p2 = value("pressure2Bar", FMTData.pressure2Bar);
   const float c0 = value("pressure0Current", FMTData.pressure0Current);
   const float c1 = value("pressure1Current", FMTData.pressure1Current);
-  const float c2 = value("pressure2Current", FMTData.pressure2Current);
-  const float maxP = value("maximumPressure", FMTData.maximumPressure);
-  const bool threePoint = request->hasParam("threePoint", true);
-  if (!(liquidMass >= 0.0f && liquidMass <= 100.0f) || !isValidVentTargetDrop(ventDrop) || !isValidVentMinSeconds(ventMin) ||
-      !isValidVentSafetyDrop(ventSafety) || !(ventSafety > ventDrop) || !isValidFlowLevelFactor(level)) {
-    request->send(400, "text/plain", "Invalid vent parameters: target drop 1-15%, minimum opening 0.2-10 s, "
-                  "safety drop 2-30% and above the target, level factor 0.5-1.5, liquid mass 0-100%.");
+  if (!isValidFlowLevelFactor(level)) {
+    request->send(400, "text/plain", "Invalid flow level factor: it must be from 0.5 to 1.5.");
     return;
   }
-  if (!(p1 > 0.5f && p1 < maxP) || (threePoint && p2 != 0.0f && !(p2 > p1 + 0.5f && p2 < maxP)) || !(c1 > c0) || (threePoint && p2 != 0.0f && !(c2 > c1)) || !(maxP > 2.0f && maxP < 3.0f)) {
-    request->send(400, "text/plain", "Invalid calibration values. Check pressure, current and maximum pressure limits.");
+  if (!(exponent >= 1.0f && exponent <= 1.30f)) {
+    request->send(400, "text/plain", "Effective venting exponent must be between 1.00 and 1.30.");
     return;
   }
-  if (request->hasParam("pressure0Current", true)) {
-    FMTData.pressure0Current = request->getParam("pressure0Current", true)->value().toFloat();
+  if (!(p1 > 0.5f && p1 < FMTData.maximumPressure) || !isfinite(c0) || !isfinite(c1) || !(c1 > c0)) {
+    request->send(400, "text/plain", "Invalid calibration values: point B must be above 0.5 bar and below the maximum security "
+                  "pressure, and its current above that of point A.");
+    return;
   }
-  if (request->hasParam("pressure1Bar", true)) {
-    FMTData.pressure1Bar = request->getParam("pressure1Bar", true)->value().toFloat();
-  }
-  if (request->hasParam("pressure1Current", true)) {
-    FMTData.pressure1Current = request->getParam("pressure1Current", true)->value().toFloat();
-  }
-  if (request->hasParam("pressure2Bar", true)) {
-    FMTData.pressure2Bar = request->getParam("pressure2Bar", true)->value().toFloat();
-  }
-  if (request->hasParam("pressure2Current", true)) {
-    FMTData.pressure2Current = request->getParam("pressure2Current", true)->value().toFloat();
-  }
-  if (!request->hasParam("threePoint", true)) {
-    FMTData.pressure2Bar = 0.0f;
-    FMTData.pressure2Current = 0.0f;
-  }
-  if (request->hasParam("maximumPressure", true)) {
-    FMTData.maximumPressure = request->getParam("maximumPressure", true)->value().toFloat();
-  }
-
+  FMTData.pressure0Current = c0;
+  FMTData.pressure1Bar = p1;
+  FMTData.pressure1Current = c1;
+  FMTData.flowLevelFactor = level;
+  FMTData.FMTEffectiveVentingExponent = exponent;
   if (request->hasParam("nucleationWindow", true)) {
     FMTData.nucleationWindow = request->getParam("nucleationWindow", true)->value().toInt();
   }
-  
-  FMTData.liquidMassInGasVentingPercent = liquidMass;
-  FMTData.ventTargetDropPercent = ventDrop;
-  FMTData.ventMinSeconds = ventMin;
-  FMTData.ventSafetyDropPercent = ventSafety;
-  FMTData.flowLevelFactor = level;
   writeFMTDataToNIV();
-  
+
   String html = "<!DOCTYPE html><html><head>";
   html += "<meta charset='UTF-8'>";
-  html += "<meta http-equiv='refresh' content='2;url=/'>";
+  html += "<meta http-equiv='refresh' content='2;url=/menu'>";
   html += "<style>body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }</style>";
   html += "</head><body>";
   html += "<h1>Calibration Data Saved!</h1>";
   html += "<p>Redirecting back to menu...</p>";
   html += "</body></html>";
-  
+
   request->send(200, "text/html", html);
 }
 
@@ -1732,7 +1612,7 @@ void handleBatchDataPage(AsyncWebServerRequest *request) {
 
   remaining = BUFFER_SIZE - strlen(html) - 1;
     strncat(html, "<button type='submit'>Save</button> "
-                 "<button type='button' class='btn-secondary' onclick='window.location=\"/\"'>Cancel</button>"
+                 "<button type='button' class='btn-secondary' onclick='window.location=\"/menu\"'>Cancel</button>"
                  "</form>"
                  "</div>"
                  "</body></html>", remaining);
@@ -1787,7 +1667,7 @@ void handleBatchDataUpdate(AsyncWebServerRequest *request) {
   
   String html = "<!DOCTYPE html><html><head>";
   html += "<meta charset='UTF-8'>";
-  html += "<meta http-equiv='refresh' content='2;url=/'>";
+  html += "<meta http-equiv='refresh' content='2;url=/menu'>";
   html += "<style>body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }</style>";
   html += "</head><body>";
   html += "<h1>Batch Data Saved!</h1>";
@@ -2043,7 +1923,7 @@ void handleCountersDataPage(AsyncWebServerRequest *request) {
   strncat(html, "</div>", remaining);
 
   remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<button type='submit'>Save</button> <button type='button' class='btn-secondary' onclick='window.location=\"/\"'>Cancel</button></form></div></body></html>", remaining);
+  strncat(html, "<button type='submit'>Save</button> <button type='button' class='btn-secondary' onclick='window.location=\"/menu\"'>Cancel</button></form></div></body></html>", remaining);
 
   request->send(200, "text/html", html);
   free(html);
@@ -2136,7 +2016,7 @@ void handleCountersDataUpdate(AsyncWebServerRequest *request) {
 
   String html = "<!DOCTYPE html><html><head>";
   html += "<meta charset='UTF-8'>";
-  html += "<meta http-equiv='refresh' content='2;url=/counters'>";
+  html += "<meta http-equiv='refresh' content='2;url=/menu'>";
   html += "<style>body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }</style>";
   html += "</head><body>";
   html += "<h1>Counters Data Saved!</h1>";
@@ -2147,7 +2027,7 @@ void handleCountersDataUpdate(AsyncWebServerRequest *request) {
   request->send(200, "text/html", html);
 }
 
-// ========== AUTOMATIC SET POINTS ==========
+// ========== TRIGGERED ACTIONS (AUTOMATIC SET POINTS) ==========
 
 static void appendHtml(char *html, size_t size, const char *format, ...) {
   const size_t used = strlen(html);
@@ -2215,7 +2095,7 @@ static void appendAutoSetpointSection(char *html, size_t size) {
   getAutoSetpointStatus(status);
 
   appendHtml(html, size,
-    "<h2>Automatic set points</h2>"
+    "<h2>Triggered actions</h2>"
     "<p class='hint'>Evaluated only in Fermenting mode. Each rule fires once, when all filled "
     "triggers are met. Manual-only rules run only through Trigger now. Empty fields are ignored.</p>"
     // autocomplete off: a reload must show the stored values, not the typed ones.
@@ -2431,7 +2311,7 @@ static String parseAutoSetpointRules(AsyncWebServerRequest *request, AutoSetpoin
       name.trim();
       setAutoSetpointRuleName(rule, name);
     }
-    const String error = validateAutoSetpointRule(rule);
+    const String error = validateAutoSetpointRule(rule, true);
     if (error.length()) return "Rule " + String(i + 1) + ": " + error;
     rules[i] = rule;
   }
@@ -2454,7 +2334,7 @@ void handleAutoSetpointUpdate(AsyncWebServerRequest *request) {
   }
 
   if (!saveAutoSetpointRules(rules)) {
-    request->send(500, "text/plain", "Automatic set points could not be saved to NVS.");
+    request->send(500, "text/plain", "Triggered actions could not be saved to NVS.");
     return;
   }
   // Save & export posts with noredirect and downloads the XML itself.
@@ -2462,7 +2342,7 @@ void handleAutoSetpointUpdate(AsyncWebServerRequest *request) {
     request->send(200, "text/plain", "saved");
     return;
   }
-  request->redirect("/setpoint");
+  request->redirect("/menu");
 }
 
 static void appendXmlAttribute(String &xml, const char *name, float value, int decimals = -1) {
@@ -2562,7 +2442,7 @@ void handleAutoSetpointTrigger(AsyncWebServerRequest *request) {
 // ========== SETPOINT DATA HANDLERS ==========
 
 void handleSetPointDataPage(AsyncWebServerRequest *request) {
-  const size_t BUFFER_SIZE = 40000; // ~2.3 KB per automatic set point rule
+  const size_t BUFFER_SIZE = 40000; // ~2.3 KB per triggered action rule
   char* html = (char*)malloc(BUFFER_SIZE);
   if (!html) {
     request->send(500, "text/plain", "Out of memory");
@@ -2679,7 +2559,7 @@ void handleSetPointDataPage(AsyncWebServerRequest *request) {
   strncat(html, "</div></div>", remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
     strncat(html, "<button type='submit'>Save</button> "
-                 "<button type='button' class='btn-secondary' onclick='window.location=\"/\"'>Cancel</button>"
+                 "<button type='button' class='btn-secondary' onclick='window.location=\"/menu\"'>Cancel</button>"
                  "</form>", remaining);
   appendAutoSetpointSection(html, BUFFER_SIZE);
   appendHtml(html, BUFFER_SIZE, "</div></body></html>");
@@ -2706,6 +2586,21 @@ void handleSetPointDataUpdate(AsyncWebServerRequest *request) {
       request->send(400, "text/plain", "Slow pressure set point speed must be from 0.1 to 2.0 bar/day.");
       return;
     }
+  }
+
+  // Pressure set points are held to the Maximum pressure setpoint (Settings).
+  const auto pressureTooHigh = [request](const char *name, bool optional) {
+    if (!request->hasParam(name, true)) return false;
+    String v = request->getParam(name, true)->value();
+    v.trim();
+    if (optional && (v.length() == 0 || v.equalsIgnoreCase("N/A"))) return false;
+    const float value = v.toFloat();
+    return !(value >= 0.0f && value <= FMTData.maxSetPointPressure);
+  };
+  if (pressureTooHigh("setPointPressure", false) || pressureTooHigh("setPointSlowPressure", true)) {
+    request->send(400, "text/plain", "Pressure set points must be from 0 to the Maximum pressure setpoint (" +
+                  String(FMTData.maxSetPointPressure, 2) + " bar, Settings page).");
+    return;
   }
 
   if (request->hasParam("mode", true)) {
@@ -2761,7 +2656,7 @@ void handleSetPointDataUpdate(AsyncWebServerRequest *request) {
   
   String html = "<!DOCTYPE html><html><head>";
   html += "<meta charset='UTF-8'>";
-  html += "<meta http-equiv='refresh' content='2;url=/'>";
+  html += "<meta http-equiv='refresh' content='2;url=/menu'>";
   html += "<style>body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }</style>";
   html += "</head><body>";
   html += "<h1>SetPoint Data Saved!</h1>";
@@ -2859,7 +2754,7 @@ void handleControlDataPage(AsyncWebServerRequest *request) {
   
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<button type='submit'>Save</button>"
-               "<button type='button' onclick='window.location=\"/\"'>Back</button>"
+               "<button type='button' onclick='window.location=\"/menu\"'>Back</button>"
                "</form>", remaining);
 
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -2896,7 +2791,7 @@ void handleControlDataUpdate(AsyncWebServerRequest *request) {
   }
   String html = "<!DOCTYPE html><html><head>";
   html += "<meta charset='UTF-8'>";
-  html += "<meta http-equiv='refresh' content='2;url=/'>";
+  html += "<meta http-equiv='refresh' content='2;url=/menu'>";
   html += "<style>body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }</style>";
   html += "</head><body>";
   html += "<h1>Control Data Saved!</h1>";
@@ -2947,7 +2842,7 @@ void handleUserConfigPage(AsyncWebServerRequest *request) {
   html += "</output> / 10</label><input type='range' id='displayBrightness' name='displayBrightness' "
     "min='1' max='10' step='1' oninput=\"document.getElementById('brightnessValue').value=this.value\" value='";
   html += String(UserConfigurationData.displayBrightness);
-  html += "'><button type='submit'>Save</button> <a href='/'>Cancel</a></form></div></body></html>";
+  html += "'><button type='submit'>Save</button> <a href='/menu'>Cancel</a></form></div></body></html>";
   request->send(200, "text/html", html);
 }
 
@@ -2983,5 +2878,5 @@ void handleUserConfigUpdate(AsyncWebServerRequest *request) {
   UserConfigurationData.keypadPin = keypadPin;
   UserConfigurationData.displayBrightness = brightness;
   writeUserConfigurationDataToNIV();
-  request->redirect("/userConfig");
+  request->redirect("/menu");
 }

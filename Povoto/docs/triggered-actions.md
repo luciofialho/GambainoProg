@@ -1,13 +1,21 @@
-# Ações automáticas (automatic set points)
+# Ações disparadas (triggered actions; internamente "automatic set points")
 
-Regras que mudam os setpoints de temperatura e pressão, e/ou mandam um e-mail, quando a fermentação atinge condições definidas (estabilidade, SG, gCO2/L/d). Configuradas na página **Set Points** (`/setpoint`), seção "Automatic set points".
+Regras que mudam os setpoints de temperatura e pressão, e/ou mandam um e-mail, quando a fermentação atinge condições definidas (estabilidade, SG, gCO2/L/d). Configuradas na página **Set Points** (`/setpoint`), seção "Triggered actions".
 
 Princípio de projeto: **não disparar é mais conservador que disparar fora de hora**. Dado inválido, ausente ou ambíguo bloqueia o gatilho.
+
+## Limite de pressão
+
+Todo setpoint de pressão (direto e lento) é limitado pelo **Maximum pressure setpoint** da página
+Settings (`maxSetPress`, padrão 2,0 bar, sempre abaixo da pressão máxima de segurança). A página
+Set Points, a gravação das regras, o import do XML e as edições vindas da nuvem recusam valores
+acima. Uma regra gravada antes de o limite ser reduzido continua guardada; ao disparar, aplica o
+limite no lugar do valor da regra e registra isso (Serial) e no e-mail da regra ("Limited:").
 
 ## Manual only e Trigger now
 
 - Cada regra tem a opção **Manual only**, persistida na NVS e exportada no XML. Com ela marcada, os campos de gatilho de medida ficam desabilitados na página, mas seus valores são preservados para uma eventual volta ao modo automático. Uma regra manual pode não ter gatilhos de medida.
-- Uma regra **Manual only** nunca dispara na avaliação periódica. O botão **Trigger now** também pode disparar uma regra automática manualmente, sem testar seus gatilhos de medida.
+- Uma regra **Manual only** nunca dispara na avaliação periódica. O botão **Trigger now** também pode disparar uma regra manualmente, sem testar seus gatilhos de medida.
 - **Trigger now** ocupa o lugar de **Reset**: aparece somente enquanto a regra não tiver disparado e, se depender da anterior, somente depois que a anterior tiver disparado. Há confirmação antes do envio. O servidor confere novamente essas condições; edições ainda não salvas na página não são aplicadas pelo botão.
 - O disparo manual usa a mesma aplicação de setpoints, persistência de horário, log Serial e e-mail do disparo automático. Exige horário NTP válido, mas não exige o modo Fermenting. Sem NTP ou se a gravação do horário falhar, nenhum setpoint é aplicado.
 - XML v2 continua compatível: `manualOnly="true"` ou `"false"` é um atributo opcional de `<rule>`; a ausência significa `false`.
@@ -93,7 +101,7 @@ Até **8 regras**. Cada uma:
 - Mudanças na lib: `sendSimpleMail()` retorna `bool` (true só com resposta 250 ao DATA); cabeçalhos sempre com `charset=UTF-8`; assunto não ASCII codificado em RFC 2047.
 - No Povoto (`PovotoMail.cpp`), `sendSimpleMail()` roda numa **task FreeRTOS própria** (core 0, prioridade 1, stack 16 KB), criada no primeiro envio. O `loop()` só enfileira (timeout 0; fila de 3; se cheia, descarta e registra no Serial).
 - Até 3 tentativas com 60 s de intervalo; antes de cada uma exige Wi-Fi conectado e ≥ 45 KB de heap contíguo. Resultado no Serial (`[MAIL] …`); falha não desfaz a aplicação.
-- Assunto: `[POVOTO n] Automatic set point rule k triggered: <nome>`.
+- Assunto: `[POVOTO n] Triggered action rule k triggered: <nome>`.
 
 ## 5. Exportar / importar XML
 

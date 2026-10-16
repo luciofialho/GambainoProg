@@ -6,11 +6,11 @@ O método antigo, com tanque de expansão (TE), está na tag `te-final-2026-10-1
 
 ## Arquivos principais
 - `PressureControl.cpp`: leitura de pressão (INA226, shunt 3 Ω, sensor 4–20 mA 0–2 bar YD6080), ciclo do vent (`planVent`, `processReliefCycle`, `processPressure`), verificação do vent e válvula presa aberta, headspace, CO2 dissolvido e SG. Modelo do vent: `include/VentModel.h` (funções puras; espelho `tests/vent_model.py`). Documentação: `docs/vent.md`.
-- Rotinas de calibração (página Calibration, só em OFF): zero do sensor (`SensorZero.cpp`, `docs/pressure-sensor-zero.md`), ensaio de ventilação (`VentingTest.cpp`, `docs/venting-test.md`, histórico de 50 em `/venttests.bin`), volume pelo barril (`KegVolume.cpp`, `docs/keg-volume.md`), ciclo de limpeza da válvula (`ValveCleaning.cpp`, `docs/valve-cleaning.md`). Eventos de calibração: `CalibrationEvents.cpp`.
+- Rotinas de calibração (página Calibration, só em OFF): zero do sensor (`SensorZero.cpp`, `docs/pressure-sensor-zero.md`), ensaio de ventilação (`VentingTest.cpp`, `docs/venting-test.md`, histórico de 50 em `/venttests.bin`), volume do fermentador pelo tanque de expansão (`KegVolume.cpp`, `docs/keg-volume.md`), ciclo de limpeza da válvula (`ValveCleaning.cpp`, `docs/valve-cleaning.md`). Eventos de calibração: `CalibrationEvents.cpp`.
 - Pressão atmosférica (BMP581 → SideKick → altitude): `AtmosphericPressure.cpp`, `docs/atmospheric-pressure.md`. O SideKick (`SideKick/src/Sidekick-ambient.cpp`) envia a pressão (pacote `'A'`) e, com Dallas, a temperatura ambiente (`'V'`).
 - `datalog.cpp`: logs "Cold" (periódico), "Relief" (um por vent; o nome ficou) e "Task".
 - `PovotoTasks.cpp`: janelas de tarefa (Dump, Gas, Liquid, Dry Hopping, Dynamic Hopping).
-- `AutoSetpoints.cpp` (+ `PovotoMail.cpp`): ações automáticas. Documentação: `docs/automatic-actions.md`.
+- `AutoSetpoints.cpp` (+ `PovotoMail.cpp`): ações disparadas (triggered actions; nomes internos, chaves NVS, rotas e XML continuam "AutoSetpoints"). Documentação: `docs/triggered-actions.md`.
 - Persistência: `docs/NVS-storage.md` (as chaves do TE ficam gravadas, sem uso: nunca reaproveitá-las); teste estrutural: `python tests/check_storage_schema.py`.
 - CO2 dissolvido (estados inicial/equilíbrio/half-life/armado): `docs/dissolved-co2.md`; bench: `python tests/dissolved_co2_bench.py`.
 - Termômetros Dallas (fermentador, ambiente, headspace; papéis na página Settings): `docs/thermometers.md`.

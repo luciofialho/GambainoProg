@@ -1,4 +1,4 @@
-// Phase 2: the set points and automatic rules of one Povoto, as its latest
+// Phase 2: the set points and triggered action rules of one Povoto, as its latest
 // snapshots show them, with the forms that send requests to it
 // (Povoto/docs/cloud-log.md). The Povoto validates and applies; the ranges
 // here only catch typing mistakes early.
@@ -210,6 +210,6 @@ ${checks}</form>
   return layout(`${povotoName(povoto)} · Set points`, `<p><a href="dashboard/">&larr; Back</a></p>
 ${brandTitle(`${povotoName(povoto)} · Set points`)}${notes.join('')}
 <h2>Set points</h2><div class="card">${setpointForm}</div>
-<h2>Automatic set points</h2>${rules.size ? ruleCards : '<p class="muted">No copy yet.</p>'}
+<h2>Triggered actions</h2>${rules.size ? ruleCards : '<p class="muted">No copy yet.</p>'}
 <h2>Recent requests</h2><div class="card">${history}</div>`);
 }

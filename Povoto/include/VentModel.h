@@ -317,4 +317,39 @@ inline bool validCurve(const Curve &c) {
   return true;
 }
 
+// Vapor in the vented gas (docs/vent.md): the gas that leaves is saturated with
+// the vapor of the liquid at its temperature, so only the fraction 1 - y of the
+// counted moles is CO2. No parameter; y = (p_water + p_ethanol) / P_abs.
+constexpr double WATER_ACTIVITY = 0.98;            // beer
+constexpr double ETHANOL_ACTIVITY_COEFFICIENT = 5.0; // infinite dilution in water
+
+// Saturation pressure of water, bar (Buck), liquid temperature in C.
+inline double waterSaturationPressure(double tCelsius) {
+  return 0.0061121 * exp((18.678 - tCelsius / 234.5) * (tCelsius / (257.14 + tCelsius)));
+}
+
+// Saturation pressure of ethanol, bar (Antoine, 1-78 C).
+inline double ethanolSaturationPressure(double tCelsius) {
+  return 0.00133322 * pow(10.0, 8.20417 - 1642.89 / (230.300 + tCelsius));
+}
+
+// Mole fraction of ethanol in the liquid from the ABV (% v/v): ethanol 0.789 g/mL
+// (46.07 g/mol) in the rest of the volume taken as water (0.998 g/mL, 18.015 g/mol).
+inline double ethanolMoleFraction(double abvPercent) {
+  const double abv = fmin(fmax(abvPercent, 0.0), 30.0);
+  const double ethanol = 0.789 * abv / 46.07;
+  const double water = 0.998 * (100.0 - abv) / 18.015;
+  return ethanol / (ethanol + water);
+}
+
+// Vapor fraction of the vented gas at the absolute pressure pAbs (bar, the mean
+// pressure of the vent), 0 when the inputs are unusable.
+inline double ventVaporFraction(double liquidCelsius, double abvPercent, double pAbs) {
+  if (!isfinite(liquidCelsius) || liquidCelsius < -5.0 || liquidCelsius > 60.0 || !(pAbs > 0.1)) return 0.0;
+  const double abv = isfinite(abvPercent) ? abvPercent : 0.0;
+  const double vapor = WATER_ACTIVITY * waterSaturationPressure(liquidCelsius) +
+      ethanolMoleFraction(abv) * ETHANOL_ACTIVITY_COEFFICIENT * ethanolSaturationPressure(liquidCelsius);
+  return fmin(fmax(vapor / pAbs, 0.0), 0.5);
+}
+
 } // namespace VentModel

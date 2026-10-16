@@ -46,13 +46,11 @@ struct FMTData_t {
   float FMTAltitude;
   int dataLogIntervalSeconds;
   float FMTEffectiveVentingExponent;
-  float liquidMassInGasVentingPercent;
   // Direct vent (docs/vent.md): drop of the gauge pressure aimed at by each
-  // vent, minimum opening, and the drop that the opening may give at most
-  // with the smallest plausible headspace (the minimum opening wins).
+  // vent. The minimum opening (VENT_MIN_SECONDS) and the safety drop
+  // (VENT_SAFETY_DROP_FACTOR x target) are fixed; the NVS keys ventMinSec,
+  // ventSafeDrop and liquidGasMass of earlier versions stay in NVS, unused.
   float ventTargetDropPercent;
-  float ventMinSeconds;
-  float ventSafetyDropPercent;
   // Level of the flow curve converted to CO2, adjusted between batches by the
   // degassed SG (manual P7).
   float flowLevelFactor;
@@ -63,9 +61,9 @@ struct FMTData_t {
   float pressure0Current;
   float pressure1Bar;
   float pressure1Current;
-  float pressure2Bar;
-  float pressure2Current;
-  float maximumPressure;
+  float maximumPressure;       // security pressure (valve opens above it)
+  float maxSetPointPressure;   // highest pressure set point accepted (NVS maxSetPress)
+  float lastExpTankVolume;     // last expansion tank volume typed on the fermenter volume routine (NVS lastExpTankVol)
   int   nucleationWindow;
   HeaterCycle_t heater;
   CoolingCyclePoint_t coolingCycle[3]; // Fixed rows: 20, 10 and 0 degrees C.
@@ -88,8 +86,12 @@ constexpr uint8_t DALLAS_ROLE_COUNT = 3;
 extern FMTData_t FMTData;
 
 inline bool isValidVentTargetDrop(float percent) { return isfinite(percent) && percent >= 1.0f && percent <= 15.0f; }
-inline bool isValidVentMinSeconds(float seconds) { return isfinite(seconds) && seconds >= 0.2f && seconds <= 10.0f; }
-inline bool isValidVentSafetyDrop(float percent) { return isfinite(percent) && percent >= 2.0f && percent <= 30.0f; }
+// Fixed vent limits: the minimum opening wins over the safety drop (planVent).
+constexpr float VENT_MIN_SECONDS = 1.5f;
+constexpr float VENT_SAFETY_DROP_FACTOR = 2.0f;
+inline bool isValidMaximumPressure(float bar) { return isfinite(bar) && bar > 2.0f && bar < 3.0f; }
+// The highest pressure set point is below the security pressure.
+inline bool isValidMaxSetPointPressure(float bar, float securityBar) { return isfinite(bar) && bar > 0.0f && bar < securityBar; }
 inline bool isValidFlowLevelFactor(float factor) { return isfinite(factor) && factor >= 0.5f && factor <= 1.5f; }
 
 struct UserConfigurationData_t {

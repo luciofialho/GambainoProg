@@ -27,13 +27,13 @@ struct SensorZeroResult {
 constexpr float SENSOR_ZERO_DEFAULT_MINUTES = 5.0f;
 constexpr unsigned long SENSOR_ZERO_WARMUP_MS = 30UL * 60UL * 1000UL;
 
-bool startSensorZero(float minutes, char *reason, size_t reasonSize);
+bool startSensorZero(char *reason, size_t reasonSize);  // always SENSOR_ZERO_DEFAULT_MINUTES
 void abortSensorZero();
 bool sensorZeroActive();
 void processSensorZero();           // main loop, from pressureControl()
 float sensorZeroProgressMinutes();  // elapsed while running
 SensorZeroResult getSensorZeroResult();
-// Shifts the three calibration currents by the measured difference (gain kept).
+// Shifts the two calibration currents by the measured difference (gain kept).
 bool saveSensorZero(char *reason, size_t reasonSize);
 
 #endif

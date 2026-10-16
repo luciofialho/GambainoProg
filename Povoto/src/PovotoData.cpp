@@ -19,19 +19,16 @@ FMTData_t FMTData = {
   .FMTAltitude = 0.0,
   .dataLogIntervalSeconds = DEFAULT_DATA_LOG_INTERVAL_SECONDS,
   .FMTEffectiveVentingExponent = 1.2900f,
-  .liquidMassInGasVentingPercent = 0.6f,
   .ventTargetDropPercent = 6.0f,
-  .ventMinSeconds = 1.5f,
-  .ventSafetyDropPercent = 12.0f,
   .flowLevelFactor = 1.0f,
   .ventCurve = VentModel::defaultCurve(),
   .ventReferenceCurve = {},
   .pressure0Current = 4.5,
   .pressure1Bar = 0.5,
   .pressure1Current = 8.5,
-  .pressure2Bar = 0.0,
-  .pressure2Current = 0.0,
   .maximumPressure = 2.3f,
+  .maxSetPointPressure = 2.0f,
+  .lastExpTankVolume = 2.0f,
   .nucleationWindow = 5,
   .heater = {true, 0.5f, 2.0f},
   .coolingCycle = {{30.0f, 15.0f}, {20.0f, 10.0f}, {5.0f, 8.0f}},
@@ -131,12 +128,15 @@ bool readFMTDataFromEEPROM() {
   if (!isfinite(FMTData.pressure1Bar)) FMTData.pressure1Bar = defaultFMTData.pressure1Bar;
   FMTData.pressure1Current = store.getFloat("p1Current", defaultFMTData.pressure1Current);
   if (!isfinite(FMTData.pressure1Current)) FMTData.pressure1Current = defaultFMTData.pressure1Current;
-  FMTData.pressure2Bar = store.getFloat("p2Bar", defaultFMTData.pressure2Bar);
-  if (!isfinite(FMTData.pressure2Bar)) FMTData.pressure2Bar = defaultFMTData.pressure2Bar;
-  FMTData.pressure2Current = store.getFloat("p2Current", defaultFMTData.pressure2Current);
-  if (!isfinite(FMTData.pressure2Current)) FMTData.pressure2Current = defaultFMTData.pressure2Current;
   FMTData.maximumPressure = store.getFloat("maxPressure", defaultFMTData.maximumPressure);
   if (!isfinite(FMTData.maximumPressure)) FMTData.maximumPressure = defaultFMTData.maximumPressure;
+  FMTData.maxSetPointPressure = store.getFloat("maxSetPress", defaultFMTData.maxSetPointPressure);
+  // A missing key (older firmware) or one at or above the security pressure
+  // falls back to the default, kept below the security pressure.
+  if (!isValidMaxSetPointPressure(FMTData.maxSetPointPressure, FMTData.maximumPressure))
+    FMTData.maxSetPointPressure = min(defaultFMTData.maxSetPointPressure, FMTData.maximumPressure - 0.1f);
+  FMTData.lastExpTankVolume = store.getFloat("lastExpTankVol", defaultFMTData.lastExpTankVolume);
+  if (!isfinite(FMTData.lastExpTankVolume) || FMTData.lastExpTankVolume <= 0.0f) FMTData.lastExpTankVolume = defaultFMTData.lastExpTankVolume;
   FMTData.nucleationWindow = store.getInt("nucleation", defaultFMTData.nucleationWindow);
   FMTData.nvsSchemaVersion = store.getUInt("schemaVersion", 0);
   FMTData.PovotoNum = store.getUChar("number", defaultFMTData.PovotoNum);
@@ -149,15 +149,8 @@ bool readFMTDataFromEEPROM() {
     FMTData.dataLogIntervalSeconds = defaultFMTData.dataLogIntervalSeconds;
   FMTData.FMTEffectiveVentingExponent = store.getFloat("ventExponent", defaultFMTData.FMTEffectiveVentingExponent);
   if (!isfinite(FMTData.FMTEffectiveVentingExponent)) FMTData.FMTEffectiveVentingExponent = defaultFMTData.FMTEffectiveVentingExponent;
-  FMTData.liquidMassInGasVentingPercent = store.getFloat("liquidGasMass", defaultFMTData.liquidMassInGasVentingPercent);
-  if (!(FMTData.liquidMassInGasVentingPercent >= 0.0f && FMTData.liquidMassInGasVentingPercent <= 100.0f))
-    FMTData.liquidMassInGasVentingPercent = defaultFMTData.liquidMassInGasVentingPercent;
   FMTData.ventTargetDropPercent = store.getFloat("ventDrop", defaultFMTData.ventTargetDropPercent);
   if (!isValidVentTargetDrop(FMTData.ventTargetDropPercent)) FMTData.ventTargetDropPercent = defaultFMTData.ventTargetDropPercent;
-  FMTData.ventMinSeconds = store.getFloat("ventMinSec", defaultFMTData.ventMinSeconds);
-  if (!isValidVentMinSeconds(FMTData.ventMinSeconds)) FMTData.ventMinSeconds = defaultFMTData.ventMinSeconds;
-  FMTData.ventSafetyDropPercent = store.getFloat("ventSafeDrop", defaultFMTData.ventSafetyDropPercent);
-  if (!isValidVentSafetyDrop(FMTData.ventSafetyDropPercent)) FMTData.ventSafetyDropPercent = defaultFMTData.ventSafetyDropPercent;
   FMTData.flowLevelFactor = store.getFloat("flowLevel", defaultFMTData.flowLevelFactor);
   if (!isValidFlowLevelFactor(FMTData.flowLevelFactor)) FMTData.flowLevelFactor = defaultFMTData.flowLevelFactor;
   // A blob of another size or an invalid curve keeps the default (18/09) curve
@@ -204,10 +197,7 @@ bool writeFMTDataToNIV() {
     return false;
   }
   bool saved = true;
-  saved = (store.putFloat("liquidGasMass", FMTData.liquidMassInGasVentingPercent) == sizeof(float)) && saved;
   saved = (store.putFloat("ventDrop", FMTData.ventTargetDropPercent) == sizeof(float)) && saved;
-  saved = (store.putFloat("ventMinSec", FMTData.ventMinSeconds) == sizeof(float)) && saved;
-  saved = (store.putFloat("ventSafeDrop", FMTData.ventSafetyDropPercent) == sizeof(float)) && saved;
   saved = (store.putFloat("flowLevel", FMTData.flowLevelFactor) == sizeof(float)) && saved;
   saved = (store.putBytes("ventCurve", &FMTData.ventCurve, sizeof(FMTData.ventCurve)) == sizeof(FMTData.ventCurve)) && saved;
   saved = (store.putBytes("ventRefCurve", &FMTData.ventReferenceCurve, sizeof(FMTData.ventReferenceCurve)) ==
@@ -225,9 +215,9 @@ bool writeFMTDataToNIV() {
   saved = (store.putFloat("p0Current", FMTData.pressure0Current) == sizeof(FMTData.pressure0Current)) && saved;
   saved = (store.putFloat("p1Bar", FMTData.pressure1Bar) == sizeof(FMTData.pressure1Bar)) && saved;
   saved = (store.putFloat("p1Current", FMTData.pressure1Current) == sizeof(FMTData.pressure1Current)) && saved;
-  saved = (store.putFloat("p2Bar", FMTData.pressure2Bar) == sizeof(FMTData.pressure2Bar)) && saved;
-  saved = (store.putFloat("p2Current", FMTData.pressure2Current) == sizeof(FMTData.pressure2Current)) && saved;
   saved = (store.putFloat("maxPressure", FMTData.maximumPressure) == sizeof(FMTData.maximumPressure)) && saved;
+  saved = (store.putFloat("maxSetPress", FMTData.maxSetPointPressure) == sizeof(FMTData.maxSetPointPressure)) && saved;
+  saved = (store.putFloat("lastExpTankVol", FMTData.lastExpTankVolume) == sizeof(FMTData.lastExpTankVolume)) && saved;
   saved = (store.putInt("nucleation", FMTData.nucleationWindow) == sizeof(FMTData.nucleationWindow)) && saved;
   // Write the completion marker only after all settings were saved.
   if (saved)

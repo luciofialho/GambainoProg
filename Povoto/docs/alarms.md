@@ -86,7 +86,7 @@ funcionam (o assunto do e-mail indica "debug mode").
   apaga a tela.
 - LED de venting, neopixel (vermelho) e attention LED piscando a 5 Hz. O neopixel
   deixa de mostrar o Wi-Fi enquanto isso.
-- E-mail (`queuePovotoMail()`, mesmo destinatário das ações automáticas): ao
+- E-mail (`queuePovotoMail()`, mesmo destinatário das triggered actions): ao
   surgir e a cada hora enquanto durar (nenhum ao resolver). Lote e nome da cerveja vão no assunto e no início do corpo (o Povoto não conhece o site da nuvem). Traz o problema, as leituras
   (corrente e faixa válida, ou ID e leitura do termômetro), há quanto tempo está
   ativo, modo e IP.

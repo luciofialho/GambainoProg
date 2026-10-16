@@ -68,7 +68,7 @@ static bool inRangeOrEmpty(float value, float minimum, float maximum) {
   return isnan(value) || (isfinite(value) && value >= minimum && value <= maximum);
 }
 
-String validateAutoSetpointRule(const AutoSetpointRule_t &rule) {
+String validateAutoSetpointRule(const AutoSetpointRule_t &rule, bool enforceSetPointLimit) {
   if (rule.manualOnly > 1)
     return "invalid 'manual only' flag.";
   if (rule.requiresPrevious > 1)
@@ -86,7 +86,11 @@ String validateAutoSetpointRule(const AutoSetpointRule_t &rule) {
     return "gCO2/L/d must be from 0.5 to 20.";
   if (!inRangeOrEmpty(rule.pressure, 0.0f, AUTO_SETPOINT_MAX_PRESSURE) ||
       !inRangeOrEmpty(rule.pressureSlow, 0.0f, AUTO_SETPOINT_MAX_PRESSURE))
-    return "pressure set points must be from 0 to 2 bar.";
+    return "pressure set points must be from 0 to 3 bar.";
+  if (enforceSetPointLimit &&
+      (!inRangeOrEmpty(rule.pressure, 0.0f, FMTData.maxSetPointPressure) ||
+       !inRangeOrEmpty(rule.pressureSlow, 0.0f, FMTData.maxSetPointPressure)))
+    return "pressure set points must not exceed the Maximum pressure setpoint (" + String(FMTData.maxSetPointPressure, 2) + " bar).";
   if (!inRangeOrEmpty(rule.temperature, 0.0f, AUTO_SETPOINT_MAX_TEMPERATURE) ||
       !inRangeOrEmpty(rule.temperatureSlow, 0.0f, AUTO_SETPOINT_MAX_TEMPERATURE))
     return "temperature set points must be from 0 to 42 C.";
@@ -262,8 +266,23 @@ static bool autoSetpointRuleMet(int index, const AutoSetpointRule_t &rule, const
 
 // Same meaning as the set point page: a direct value alone cancels a ramp in
 // progress; a slow value ramps from the (possibly new) direct value.
-static void applyAutoSetpointActions(const AutoSetpointRule_t &rule) {
+// Returns the notes for the log and the e-mail (pressures cut to the Maximum
+// pressure setpoint, which may have been lowered after the rule was saved).
+static String applyAutoSetpointActions(const AutoSetpointRule_t &rule) {
   bool changed = false;
+  String notes;
+  const float limit = FMTData.maxSetPointPressure;
+  float pressure = rule.pressure, pressureSlow = rule.pressureSlow;
+  if (!isnan(pressure) && pressure > limit) {
+    notes += "pressure set point " + String(pressure, 2) + " bar limited to " + String(limit, 2) +
+             " bar (Maximum pressure setpoint)\n";
+    pressure = limit;
+  }
+  if (!isnan(pressureSlow) && pressureSlow > limit) {
+    notes += "pressure slow set point " + String(pressureSlow, 2) + " bar limited to " + String(limit, 2) +
+             " bar (Maximum pressure setpoint)\n";
+    pressureSlow = limit;
+  }
   if (!isnan(rule.temperature) || !isnan(rule.temperatureSlow)) {
     if (!isnan(rule.temperature)) SetPointData.setPointTemp = rule.temperature;
     SetPointData.setPointSlowTemp = isnan(rule.temperatureSlow) ? NOTaTEMP : rule.temperatureSlow;
@@ -271,14 +290,15 @@ static void applyAutoSetpointActions(const AutoSetpointRule_t &rule) {
     markTemperatureSetpointChanged(SetPointData.setPointSlowTemp != NOTaTEMP);
     changed = true;
   }
-  if (!isnan(rule.pressure) || !isnan(rule.pressureSlow)) {
-    if (!isnan(rule.pressure)) SetPointData.setPointPressure = rule.pressure;
-    SetPointData.setPointSlowPressure = isnan(rule.pressureSlow) ? NOTaTEMP : rule.pressureSlow;
+  if (!isnan(pressure) || !isnan(pressureSlow)) {
+    if (!isnan(pressure)) SetPointData.setPointPressure = pressure;
+    SetPointData.setPointSlowPressure = isnan(pressureSlow) ? NOTaTEMP : pressureSlow;
     // Restart stability even when the value is unchanged.
     markPressureSetpointChanged(SetPointData.setPointSlowPressure != NOTaTEMP);
     changed = true;
   }
   if (changed) writeSetPointDataToNIV();
+  return notes;
 }
 
 static void appendValue(String &text, const char *label, float value, int decimals, const char *unit) {
@@ -320,7 +340,7 @@ String describeAutoSetpointFiring(const AutoSetpointFiring_t &firing) {
 
   return "Povoto " + String((int)FMTData.PovotoNum) + ", batch " + String((int)BatchData.batchNumber) +
          " (" + String(BatchData.batchName) + ")\n" +
-         "Automatic set point rule " + String(firing.index + 1) +
+         "Triggered action rule " + String(firing.index + 1) +
          (r.name[0] ? " - " + String(r.name) : String("")) +
          " triggered at " + String(when) + "\n\n" +
          "Criteria:\n" + criteria + "\nActions applied: " + actions + "\n";
@@ -354,15 +374,16 @@ static AutoSetpointManualTriggerResult fireAutoSetpointRule(
     return AutoSetpointManualTriggerResult::StorageError;
   }
 
-  applyAutoSetpointActions(rule);
+  const String limitNotes = applyAutoSetpointActions(rule);
 
   const AutoSetpointFiring_t firing = {index, now, rule, measured, manuallyTriggered};
-  const String report = describeAutoSetpointFiring(firing);
+  String report = describeAutoSetpointFiring(firing);
+  if (limitNotes.length()) report += "\nLimited:\n" + limitNotes;
   Serial.print("[AUTOSP] ");
   Serial.println(report);
 
   char subject[160]; // Fits the longest name (AUTO_SETPOINT_NAME_SIZE).
-  snprintf(subject, sizeof(subject), "[POVOTO %d] Automatic set point rule %d triggered%s%s",
+  snprintf(subject, sizeof(subject), "[POVOTO %d] Triggered action rule %d triggered%s%s",
            (int)FMTData.PovotoNum, index + 1, rule.name[0] ? ": " : "", rule.name);
   queuePovotoMail(subject, report);
   return AutoSetpointManualTriggerResult::Triggered;

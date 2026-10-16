@@ -5,8 +5,9 @@
 
 constexpr int AUTO_SETPOINT_RULE_COUNT = 8;
 constexpr size_t AUTO_SETPOINT_NAME_SIZE = 81; // 80 bytes of UTF-8 plus the terminator
-// Same pressure limit as the touch keyboard for the pressure set point.
-constexpr float AUTO_SETPOINT_MAX_PRESSURE = 2.0f;
+// Absolute pressure limit of a stored rule (the security pressure is below 3 bar). Rules written
+// from the page, an import or the cloud are also held to FMTData.maxSetPointPressure.
+constexpr float AUTO_SETPOINT_MAX_PRESSURE = 3.0f;
 constexpr float AUTO_SETPOINT_MAX_TEMPERATURE = 42.0f;
 
 // Every numeric field is optional: NAN means empty (criterion ignored / no action).
@@ -43,7 +44,9 @@ void setAutoSetpointRuleName(AutoSetpointRule_t &rule, const String &name);
 bool autoSetpointRuleHasTrigger(const AutoSetpointRule_t &rule);
 bool autoSetpointRuleIsEmpty(const AutoSetpointRule_t &rule);
 // Returns an empty string when valid, otherwise a message for the page.
-String validateAutoSetpointRule(const AutoSetpointRule_t &rule);
+// enforceSetPointLimit: also refuse pressures above the Maximum pressure setpoint
+// (writes only: a rule stored before the limit was lowered is kept and clamped when it fires).
+String validateAutoSetpointRule(const AutoSetpointRule_t &rule, bool enforceSetPointLimit = false);
 
 // Rules already triggered keep their stored definition.
 bool saveAutoSetpointRules(const AutoSetpointRule_t *rules);

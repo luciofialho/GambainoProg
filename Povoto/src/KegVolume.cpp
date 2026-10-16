@@ -10,11 +10,14 @@
 #include "VentModel.h"
 #include "CalibrationEvents.h"
 #include "datalog.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/portmacro.h>
 
 unsigned long int NTPEpoch(); // IOTK_NTP (not #included: see AtmosphericPressure.cpp)
 
 // docs/keg-volume.md
-static constexpr uint8_t KEG_MAX_RELIEFS = 8;
+static constexpr uint8_t KEG_MAX_RELIEFS = 12;
+static constexpr float KEG_END_PRESSURE = 0.5f; // the plan goes down to this gauge pressure
 static constexpr float KEG_MIN_START_PRESSURE = 0.3f;
 static constexpr float KEG_STABLE_SLOPE_BAR_PER_MIN = 0.0001f; // 0.1 mbar/min
 static constexpr unsigned long KEG_SLOPE_WINDOW_MS = 120000UL;
@@ -42,6 +45,27 @@ static PressureWait *wait = nullptr;
 static KegRelief reliefs[KEG_MAX_RELIEFS];
 static uint8_t reliefCount = 0, reliefTarget = 0;
 static float kegVolume = 0.0f;
+static uint32_t runEpoch = 0;   // start of the run (CSV name)
+// The page (web task) copies the finished reliefs while the loop works: the
+// count and the start of a run change under this lock. Nothing is written to
+// flash for the copy.
+static portMUX_TYPE reliefLock = portMUX_INITIALIZER_UNLOCKED;
+struct KegSnapshot {
+  KegRelief r[KEG_MAX_RELIEFS];
+  uint8_t count, target;
+  float tank;
+  uint32_t epoch;
+};
+static void takeSnapshot(KegSnapshot &out) {
+  portENTER_CRITICAL(&reliefLock);
+  out.count = reliefCount;
+  out.target = reliefTarget;
+  out.tank = kegVolume;
+  out.epoch = runEpoch;
+  memcpy(out.r, reliefs, sizeof(KegRelief) * reliefCount);
+  portEXIT_CRITICAL(&reliefLock);
+}
+static bool reliefStable(const KegRelief &k) { return k.settled1 && k.settled2 && isfinite(k.volume); }
 static unsigned long stageMillis = 0, ventWaitMs = 0;
 static float simulated = NAN;
 static char statusText[96] = "Not run";
@@ -62,13 +86,13 @@ static void showProgress(bool force) {
   lastShown = now;
   char line1[48], line2[64], line3[64];
   if (stage != KEG_IDLE) {
-    snprintf(line1, sizeof(line1), "Keg volume: relief %u/%u", reliefCount + 1, reliefTarget);
+    snprintf(line1, sizeof(line1), "Fermenter volume: step %u/%u", reliefCount + 1, reliefTarget);
     snprintf(line2, sizeof(line2), "%s %lus",
-             stage == KEG_WAIT_P1 ? "Settling P1" : stage == KEG_OPEN ? "Valve open, equalizing" : "Venting the keg",
+             stage == KEG_WAIT_P1 ? "Settling P1" : stage == KEG_OPEN ? "Valve open, equalizing" : "Venting the tank",
              (now - stageMillis) / 1000UL);
     snprintf(line3, sizeof(line3), "P: %.4f bar", ControlData.pressure);
   } else {
-    snprintf(line1, sizeof(line1), "Keg volume: END");
+    snprintf(line1, sizeof(line1), "Fermenter volume: END");
     snprintf(line2, sizeof(line2), "%s", statusText);
     snprintf(line3, sizeof(line3), "Result on the Calibration page");
   }
@@ -78,9 +102,9 @@ static void showProgress(bool force) {
 String kegVolumeStatusText() {
   if (stage == KEG_IDLE) return String(statusText);
   char text[160];
-  snprintf(text, sizeof(text), "Running: relief %u of %u, %s for %lu s, pressure %.4f bar", reliefCount + 1, reliefTarget,
+  snprintf(text, sizeof(text), "Running: step %u of %u (planned), %s for %lu s, pressure %.4f bar", reliefCount + 1, reliefTarget,
            stage == KEG_WAIT_P1 ? "waiting for a stable P1" : stage == KEG_OPEN ? "valve open, waiting for a stable P2"
-                                                                               : "venting the keg",
+                                                                               : "venting the tank",
            (millis() - stageMillis) / 1000UL, ControlData.pressure);
   return String(text);
 }
@@ -92,13 +116,14 @@ static void finish(const char *outcome) {
   wait = nullptr;
   const KegVolumeResult r = getKegVolumeResult();
   if (r.available) {
-    snprintf(statusText, sizeof(statusText), "%s: %.2f L (sd %.2f L, %u reliefs)", outcome, r.mean, r.sd, r.reliefs);
+    snprintf(statusText, sizeof(statusText), "%s: %.2f L (sd %.2f L, %u of %u reliefs used)", outcome, r.mean, r.sd, r.reliefs,
+             r.total);
     char details[160];
-    snprintf(details, sizeof(details), "keg %.3f L, %u reliefs: %.3f L (sd %.3f; simple formula %.3f)%s", kegVolume,
-             r.reliefs, r.mean, r.sd, r.simpleMean, strcmp(outcome, "Completed") ? " (aborted)" : "");
-    calibrationEventAppend("keg-volume", details);
+    snprintf(details, sizeof(details), "tank %.3f L, %u of %u reliefs used: %.3f L (sd %.3f; simple formula %.3f)%s", kegVolume,
+             r.reliefs, r.total, r.mean, r.sd, r.simpleMean, strcmp(outcome, "Completed") ? " (aborted)" : "");
+    calibrationEventAppend("fermenter-volume", details);
   } else {
-    snprintf(statusText, sizeof(statusText), "%s before the first relief", outcome);
+    snprintf(statusText, sizeof(statusText), "%s without a usable relief", outcome);
   }
   showProgress(true);
 }
@@ -108,14 +133,22 @@ void abortKegVolume() {
   if (stage != KEG_IDLE) abortRequested = true;
 }
 
-bool startKegVolume(float volume, uint8_t count, char *reason, size_t reasonSize) {
+// f = V_F / (V_F + V_E) is the pressure ratio of each relief (the absolute ratio
+// is approximated by the gauge one): n = ceil(ln(0.5 / P) / ln f), from 1 to 12.
+uint8_t kegVolumePlannedReliefs(float startPressure, float tankVolume) {
+  if (!(startPressure > KEG_END_PRESSURE) || !(tankVolume > 0.0f) || !(FMTData.FMTVolume > 0.0f)) return 1;
+  const double f = FMTData.FMTVolume / (FMTData.FMTVolume + (double)tankVolume);
+  const double n = ceil(log(KEG_END_PRESSURE / startPressure) / log(f));
+  return (uint8_t)constrain((int)n, 1, (int)KEG_MAX_RELIEFS);
+}
+
+bool startKegVolume(float volume, char *reason, size_t reasonSize) {
   const char *blocked = nullptr;
   if (SetPointData.mode != MODE_OFF) blocked = "Mode must be OFF";
   else if (taskWindowType != 0 || calibrationRoutineActive() || inTheMiddleOfRelief()) blocked = "Process in progress";
   else if (!isfinite(ControlData.pressure) || ControlData.pressure < KEG_MIN_START_PRESSURE)
     blocked = "Insufficient pressure (min 0.3 bar)";
-  else if (!(volume > 0.5f && volume < 500.0f)) blocked = "Invalid keg volume";
-  else if (count < 1 || count > KEG_MAX_RELIEFS) blocked = "Reliefs must be from 1 to 8";
+  else if (!(volume > 0.5f && volume < 500.0f)) blocked = "Invalid expansion tank volume";
   if (!blocked && !wait) {
     wait = new (std::nothrow) PressureWait;
     if (!wait) blocked = "Out of memory";
@@ -124,9 +157,16 @@ bool startKegVolume(float volume, uint8_t count, char *reason, size_t reasonSize
     snprintf(reason, reasonSize, "%s", blocked);
     return false;
   }
+  portENTER_CRITICAL(&reliefLock);
   kegVolume = volume;
-  reliefTarget = count;
+  reliefTarget = kegVolumePlannedReliefs(ControlData.pressure, volume);
   reliefCount = 0;
+  runEpoch = NTPEpoch();
+  portEXIT_CRITICAL(&reliefLock);
+  if (FMTData.lastExpTankVolume != volume) { // the next run starts with it
+    FMTData.lastExpTankVolume = volume;
+    writeFMTDataToNIV();
+  }
   routineValve(false); // de-energized: the keg vents through R
   simulated = ControlData.pressure;
   wait->reset(millis());
@@ -220,7 +260,9 @@ void processKegVolume() {
     showProgress(true);
   } else if (stage == KEG_VENTING && now - stageMillis >= ventWaitMs) {
     k.ventSeconds = (now - stageMillis) / 1000.0f;
+    portENTER_CRITICAL(&reliefLock);
     ++reliefCount;
+    portEXIT_CRITICAL(&reliefLock);
     if (reliefCount >= reliefTarget || ControlData.pressure < KEG_MIN_START_PRESSURE * 0.5f) {
       finish("Completed");
       return;
@@ -233,40 +275,81 @@ void processKegVolume() {
   if (stage != KEG_IDLE) showProgress(false);
 }
 
-KegVolumeResult getKegVolumeResult() {
+static KegVolumeResult resultFrom(const KegSnapshot &snap) {
   KegVolumeResult r = {};
   double sum = 0.0, squares = 0.0, simple = 0.0;
   uint8_t n = 0;
-  for (uint8_t i = 0; i < reliefCount; ++i) {
-    if (!isfinite(reliefs[i].volume)) continue;
-    sum += reliefs[i].volume;
-    squares += (double)reliefs[i].volume * reliefs[i].volume;
-    simple += reliefs[i].simpleVolume;
+  for (uint8_t i = 0; i < snap.count; ++i) {
+    if (!reliefStable(snap.r[i])) continue; // unstable steps stay out of the mean and the deviation
+    sum += snap.r[i].volume;
+    squares += (double)snap.r[i].volume * snap.r[i].volume;
+    simple += snap.r[i].simpleVolume;
     ++n;
   }
   r.available = n > 0;
-  r.kegVolume = kegVolume;
+  r.tankVolume = snap.tank;
   r.reliefs = n;
+  r.total = snap.count;
+  r.planned = snap.target;
   r.mean = n ? float(sum / n) : NAN;
   r.sd = n > 1 ? float(sqrt(fmax(0.0, (squares - sum * sum / n) / (n - 1)))) : NAN;
   r.simpleMean = n ? float(simple / n) : NAN;
+  r.fmtVolume = FMTData.FMTVolume;
+  r.canSave = stage == KEG_IDLE && n >= 2;
   return r;
 }
 
+KegVolumeResult getKegVolumeResult() {
+  KegSnapshot snap;
+  takeSnapshot(snap);
+  return resultFrom(snap);
+}
+
+bool saveKegVolumeAsFmtVolume(char *reason, size_t reasonSize) {
+  const KegVolumeResult r = getKegVolumeResult();
+  if (stage != KEG_IDLE) {
+    snprintf(reason, reasonSize, "The routine is still running");
+    return false;
+  }
+  if (r.reliefs < 2 || !isfinite(r.mean) || !(r.mean > 1.0f)) {
+    snprintf(reason, reasonSize, "At least 2 stable reliefs are needed");
+    return false;
+  }
+  const float previous = FMTData.FMTVolume;
+  FMTData.FMTVolume = r.mean;
+  if (!writeFMTDataToNIV()) {
+    FMTData.FMTVolume = previous;
+    snprintf(reason, reasonSize, "Could not save to NVS");
+    return false;
+  }
+  char details[160];
+  snprintf(details, sizeof(details), "FMT volume %.2f -> %.2f L (sd %.2f L, %u of %u reliefs used, tank %.3f L)", previous,
+           r.mean, r.sd, r.reliefs, r.total, r.tankVolume);
+  calibrationEventAppend("fmt-volume-saved", details);
+  return true;
+}
+
 String kegVolumeRowsHtml() {
+  KegSnapshot snap;
+  takeSnapshot(snap);
   String rows;
-  for (uint8_t i = 0; i < reliefCount; ++i) {
-    const KegRelief &k = reliefs[i];
+  for (uint8_t i = 0; i < snap.count; ++i) {
+    const KegRelief &k = snap.r[i];
     rows += "<tr><td>" + String(i + 1) + "</td><td>" + String(k.p1, 4) + "</td><td>" + String(k.p2, 4) + "</td><td>" +
       String(k.fermenterK1 - 273.15f, 2) + " / " + String(k.fermenterK2 - 273.15f, 2) + "</td><td>" +
       (isfinite(k.kegK2) ? String(k.kegK2 - 273.15f, 2) : String("n/a")) + "</td><td>" + String(k.volume, 3) + "</td><td>" +
-      String(k.simpleVolume, 3) + "</td><td>" + (k.settled1 && k.settled2 ? "yes" : "<b>no</b>") + "</td></tr>";
+      String(k.simpleVolume, 3) + "</td><td>" + (reliefStable(k) ? "yes" : "<b>no</b> (excluded)") + "</td></tr>";
   }
   return rows;
 }
 
 void handleKegVolumeCSV(AsyncWebServerRequest *request) {
-  String csv = "relief;date_time;keg_L;P1_bar;P2_bar;T_ferm1_C;T_ferm2_C;T_keg1_C;T_keg2_C;patm1_bar;patm2_bar;"
+  // The finished reliefs of a run in progress are exported as they are, from a
+  // copy taken under the lock (no flash writes); every relief, with its stability marks.
+  const bool running = kegVolumeActive();
+  KegSnapshot snap;
+  takeSnapshot(snap);
+  String csv = "relief;date_time;tank_L;P1_bar;P2_bar;T_ferm1_C;T_ferm2_C;T_tank1_C;T_tank2_C;patm1_bar;patm2_bar;"
                "wait_P1_s;wait_P2_s;vent_s;settled_P1;settled_P2;V_fermenter_L;V_simple_L\n";
   auto add = [&csv](float v, int d) {
     if (isfinite(v)) {
@@ -276,12 +359,12 @@ void handleKegVolumeCSV(AsyncWebServerRequest *request) {
     }
     csv += ';';
   };
-  for (uint8_t i = 0; i < reliefCount; ++i) {
-    const KegRelief &k = reliefs[i];
+  for (uint8_t i = 0; i < snap.count; ++i) {
+    const KegRelief &k = snap.r[i];
     char when[20];
     formatLocalEpochISO(k.epoch, when, sizeof(when));
     csv += String(i + 1) + ';' + when + ';';
-    add(kegVolume, 3); add(k.p1, 6); add(k.p2, 6);
+    add(snap.tank, 3); add(k.p1, 6); add(k.p2, 6);
     add(k.fermenterK1 - 273.15f, 2); add(k.fermenterK2 - 273.15f, 2);
     add(k.kegK1 - 273.15f, 2); add(k.kegK2 - 273.15f, 2);
     add(k.patm1, 5); add(k.patm2, 5);
@@ -293,6 +376,7 @@ void handleKegVolumeCSV(AsyncWebServerRequest *request) {
     csv += '\n';
   }
   AsyncWebServerResponse *response = request->beginResponse(200, "text/csv", csv);
-  response->addHeader("Content-Disposition", "attachment; filename=keg_volume.csv");
+  response->addHeader("Content-Disposition",
+                      "attachment; filename=\"" + calibrationFileName("FermenterVolume", snap.epoch, running) + "\"");
   request->send(response);
 }

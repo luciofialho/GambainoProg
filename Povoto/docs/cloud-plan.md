@@ -151,7 +151,7 @@ batches gravados por engano. Desde 05/10/2026 a página não mostra o botão
 (a rota `POST /p/<id>/batches/<n>/delete` continua no Worker). Registros que ainda chegarem daquele batch
 (fila do SideKick, bancada ligada) o recriam: desligar o log antes.
 
-## Fase 2: setpoints e ações automáticas pela nuvem (implementada)
+## Fase 2: setpoints e triggered actions pela nuvem (implementada)
 
 Implementada em 06/10/2026, antes de terminar o teste da Fase 1, por decisão
 do usuário: não é usada em lotes em andamento e cada Povoto tem a chave
@@ -178,7 +178,7 @@ calcule o mesmo valor:
   fica de fora (ele anda a cada passo da rampa); sem rampa, ou depois que ela
   termina, o valor direto entra. O hash muda uma vez no fim da rampa. O
   modo não entra: não é editável pela nuvem e aparece pelo log.
-- `rulesHash`: as 8 regras automáticas e os horários de disparo. Um hash
+- `rulesHash`: as 8 regras das triggered actions e os horários de disparo. Um hash
   só para todas: a edição de uma regra é rejeitada se outra disparou no meio
   (pouco provável e de baixo impacto).
 

@@ -228,7 +228,7 @@ void handleTasksPage(AsyncWebServerRequest *request) {
   html += "<h1>&#9881;&#65039; Tasks</h1>";
   if (!tasksAllowed()) {
     html += "<p style='text-align:center;color:#555;'>Tasks are disabled in Conditioning: the fermenter works as a plain refrigerator.</p>";
-    html += "<div class='back-link'><a href='/'>&#8592; Back to menu</a></div>";
+    html += "<div class='back-link'><a href='/menu'>&#8592; Back to menu</a></div>";
     html += "</div></body></html>";
     request->send(200, "text/html", html);
     return;
@@ -246,7 +246,7 @@ void handleTasksPage(AsyncWebServerRequest *request) {
   html += "<a href='/tasks/start?type=4' class='menu-button'>Dry hopping</a>";
   html += "<a href='/tasks/start?type=5' class='menu-button'>Dynamic hopping</a>";
   html += "</div>";
-  html += "<div class='back-link'><a href='/'>&#8592; Back to menu</a></div>";
+  html += "<div class='back-link'><a href='/menu'>&#8592; Back to menu</a></div>";
   html += "</div></body></html>";
   request->send(200, "text/html", html);
 }
@@ -335,11 +335,11 @@ void handleTaskFinish(AsyncWebServerRequest *request) {
     case 5: endDynamicHoppingTask();break;
     default: closeTaskLog(taskEndOutcome, nullptr); endTask(0); break;
   }
-  request->redirect("/");
+  request->redirect("/menu");
 }
 
 void handleTaskCancel(AsyncWebServerRequest *request) {
   closeTaskLog("cancelled", nullptr);
   endTask(0);
-  request->redirect("/");
+  request->redirect("/menu");
 }

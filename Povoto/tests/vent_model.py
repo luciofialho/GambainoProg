@@ -249,3 +249,35 @@ def fit_venting_test(releases, volume, patm, co2=False, fit_t0=True, default_exp
         s2 = sum(w * r * r for w, r in zip(ws, residuals)) / (len(rows) - n)
         t0_se = math.sqrt(max(0.0, s2 * first[0])) if first else float("nan")
     return {"a": a, "t0": t0, "residuals": residuals, "exponents": exps, "t0_se": t0_se}
+
+
+# Vapor in the vented gas (docs/vent.md): the gas that leaves is saturated with
+# the vapor of the liquid, so 1 - y of the counted moles is CO2.
+WATER_ACTIVITY = 0.98
+ETHANOL_ACTIVITY_COEFFICIENT = 5.0
+
+
+def water_saturation_pressure(t_celsius):
+    """bar (Buck)."""
+    return 0.0061121 * math.exp((18.678 - t_celsius / 234.5) * (t_celsius / (257.14 + t_celsius)))
+
+
+def ethanol_saturation_pressure(t_celsius):
+    """bar (Antoine, 1-78 C)."""
+    return 0.00133322 * 10.0 ** (8.20417 - 1642.89 / (230.300 + t_celsius))
+
+
+def ethanol_mole_fraction(abv_percent):
+    abv = min(max(abv_percent, 0.0), 30.0)
+    ethanol = 0.789 * abv / 46.07
+    water = 0.998 * (100.0 - abv) / 18.015
+    return ethanol / (ethanol + water)
+
+
+def vent_vapor_fraction(liquid_celsius, abv_percent, p_abs):
+    if not math.isfinite(liquid_celsius) or liquid_celsius < -5.0 or liquid_celsius > 60.0 or not p_abs > 0.1:
+        return 0.0
+    abv = abv_percent if math.isfinite(abv_percent) else 0.0
+    vapor = (WATER_ACTIVITY * water_saturation_pressure(liquid_celsius) +
+             ethanol_mole_fraction(abv) * ETHANOL_ACTIVITY_COEFFICIENT * ethanol_saturation_pressure(liquid_celsius))
+    return min(max(vapor / p_abs, 0.0), 0.5)

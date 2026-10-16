@@ -291,7 +291,7 @@
   }
 
   // Top line: on the cloud the link back to the list (status.back), on the
-  // Povoto the menu icon (/config); the statistics icon when there are stats.
+  // Povoto the menu icon (/menu); the statistics icon when there are stats.
   // Cloud only: the data age below the screen.
   function applyPageTexts() {
     const text = status && typeof status.updated === 'string' ? status.updated : '';

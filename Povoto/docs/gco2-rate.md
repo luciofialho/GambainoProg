@@ -12,7 +12,7 @@ gás = totalMolsEjected + headSpaceCO2Mols
 
 | Parcela | Origem |
 |---|---|
-| `CountersData.totalMolsEjected` | CO2 dos vents (modelo de vazão, docs/vent.md), com a correção de massa líquida |
+| `CountersData.totalMolsEjected` | CO2 dos vents (modelo de vazão, docs/vent.md), descontado o vapor do gás ventilado (1 − y, docs/vent.md) |
 | `headSpaceCO2Mols` | P·Vh/(R·T) − P_início·Vh/(R·T_início), com pressão manométrica e o headspace aplicado; mínimo 0 |
 
 O CO2 dissolvido **não** entra na taxa: ele é modelado, não medido, e numa transição de pressão ou temperatura o modelo erra por várias vezes (docs/dissolved-co2.md, seção 2a). O SG continua usando o balanço completo, com o dissolvido (seção 6).
@@ -30,7 +30,7 @@ O CO2 dissolvido **não** entra na taxa: ele é modelado, não medido, e numa tr
 - **Persistência:** o estado fica no NVS (`co2TrStart`, `co2TrDir`, `co2TrHenry`, `co2TrRate`, `co2TrRateAt`, `co2TrRelief`). Os valores por minuto da tendência e a contagem dos 60 min ficam só na RAM: depois de um reboot, a transição dura pelo menos mais 1 h.
 
 Durante a transição:
-- regras "gCO2 < x": avaliam só quando a cerveja está **liberando**. O saldo é então um teto da produção, e "saldo < x" implica "produção < x". Absorvendo, desconhecida ou mista: não avaliam (docs/automatic-actions.md);
+- regras "gCO2 < x": avaliam só quando a cerveja está **liberando**. O saldo é então um teto da produção, e "saldo < x" implica "produção < x". Absorvendo, desconhecida ou mista: não avaliam (docs/triggered-actions.md);
 - Brewfather: sem o campo `bpm` (o saldo liberado desenharia uma falsa desaceleração);
 - log Cold e `/getstatus`: `gCO2Source` = `transition`; o valor no log continua sendo o saldo medido;
 - página inicial: mostra o **último valor estável**, com um ícone ⓘ cujo tooltip diz "Value is last stable reading at hh:mm. Preliminary unstable reading now is x.xx". Sem valor estável (boot, volta do Conditioning), mostra o saldo, e o tooltip diz "Transition: net CO2 release (production − absorption)".
@@ -97,7 +97,7 @@ Sem NTP válido não dá para saber a idade, e o valor retido não é usado. Um 
 |---|---|
 | Página inicial, `/getstatus`, Brewfather (`bpm`, só se > 0) | informado (retido ou calculado), cortado em 0 — `getBeerCO2EvolutionGramsPerLiterPerDay()` |
 | Colunas `gCO2/L/d` dos logs Cold e Relief | informado, com sinal — `getReportedCO2EvolutionGramsPerLiterPerDay()`; origem na coluna Cold `gCO2Source` (`calculated` / `held`) |
-| Gatilho "gCO2/L/d < x" das ações automáticas | **só o calculado**, > 0, com janela ≥ 30 min e fora de transição (`getRuleCO2EvolutionGramsPerLiterPerDay()`), abaixo de x por 20 min seguidos — o valor retido nunca dispara regra (docs/automatic-actions.md) |
+| Gatilho "gCO2/L/d < x" das triggered actions | **só o calculado**, > 0, com janela ≥ 30 min e fora de transição (`getRuleCO2EvolutionGramsPerLiterPerDay()`), abaixo de x por 20 min seguidos — o valor retido nunca dispara regra (docs/triggered-actions.md) |
 
 O `/getstatus` mostra a origem e o número de amostras: `gCO2/L/d: 3.12 (held; 8 samples)`.
 

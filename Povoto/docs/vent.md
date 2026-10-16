@@ -32,15 +32,15 @@ atmosfera: porta P no fermentador, porta A na garrafa testemunha.
 
 ```
 t_estimado = mols(P_on → P_on·(1 − alvo)) / vazão(P̄) + t0     (VentModel::ventSeconds)
-t_12%      = o mesmo para a queda de segurança (12%) com o menor Vh plausível
-t          = máx(mín(t_estimado, t_12%), 1,5 s)
+t_seg      = o mesmo para a queda de segurança (2 × a queda alvo) com o menor Vh plausível
+t          = máx(mín(t_estimado, t_seg), 1,5 s)
 ```
 
 - Vh do tempo: o headspace aplicado (média de 24 h, valor retido ou EMA; antes
   dos 3 primeiros vents, FMTVolume − cerveja informada).
 - Menor Vh plausível: o menor entre o aplicado, a EMA e FMTVolume − cerveja
   informada.
-- **O mínimo de 1,5 s (`ventMinSeconds`) vence a salvaguarda** (decisão de
+- **O mínimo de 1,5 s (`VENT_MIN_SECONDS`, fixo no código) vence a salvaguarda** (decisão de
   11/10/2026). Teto absoluto: 30 s.
 - A queda obtida é aceita, mesmo diferente do alvo.
 - Log Relief: `VentEstimatedSeconds`, `VentSafetySeconds`, `VentPlannedSeconds`,
@@ -79,7 +79,22 @@ mols  = C_ar(P̄)·razão(P̄)/√Z(P̄)·nível · P̄/√T_gás · fator · (t
 - Sem Vh e sem ler o sensor durante o transiente.
 - **T_gás**: o Dallas do headspace se atribuído e válido; senão Tferm
   (`docs/thermometers.md`). Henry e o CO2 dissolvido continuam com a do líquido.
-- Correção de massa líquida (`liquidMassInGasVentingPercent`) aplicada depois.
+- **Vapor no gás ventilado** (sem parâmetro; substitui a antiga "massa líquida"): o gás
+  que sai é saturado de vapor na temperatura do líquido (Tferm). Fração de vapor
+  `y = (p_água + p_etanol) / P_abs`, com P_abs = P̄ do vent + Patm
+  (`VentModel::ventVaporFraction`):
+  - `p_água = a_w · p_sat,água(Tferm)`, Buck, a_w = 0,98 (23,4 mbar a 20 °C; 12,3 a 10 °C);
+  - `p_etanol = x_etanol · γ · p_sat,etanol(Tferm)`, Antoine, γ = 5 (diluição infinita em
+    água), x_etanol pela fração molar a partir do ABV que o firmware já estima
+    (`beerABV`; etanol 0,789 g/mL, resto do volume como água): 4,7 mbar com 5% ABV a
+    20 °C, ~0 no início do lote.
+  - Mols de CO2 = mols contados × (1 − y), tanto na contagem pela vazão quanto na do
+    lado do fermentador (aplicada ao valor escolhido). O Vh aparente e a razão entre
+    as duas contagens continuam com os mols totais (a queda inclui o vapor).
+  - Exemplos: y = 2,0% (20 °C, 0,2 bar, sem ABV), 2,4% (5% ABV), 1,0% (5% ABV, 1,9 bar),
+    0,75% (10 °C, 5% ABV, 1 bar). `python tests/vent_bench.py` confere as pressões de
+    saturação e estes valores.
+  - `/ventstatus` mostra a fração do último vent.
 - Só em Fermenting; nos outros modos o vent controla a pressão sem contar
   (`VentCounted` = `none`).
 - **Duas contagens, sempre**: a do modelo de vazão (`VentFlowMols`) e a do lado
@@ -153,17 +168,18 @@ válvula presa aberta, vents fora da faixa desde o boot) e o estágio do ciclo d
 válvula. Atualiza a cada 10 s. O `/getstatus` fica com uma linha: os dois
 alarmes do vent e a contagem de vents fora da faixa.
 
-## 8. Parâmetros (página Calibration)
+## 8. Parâmetros (páginas Settings e Calibration)
 
 | Parâmetro | Chave NVS | Padrão |
 |---|---|---|
-| Queda alvo (%) | `ventDrop` | 6 |
-| Abertura mínima (s) | `ventMinSec` | 1,5 |
-| Queda de segurança (%) | `ventSafeDrop` | 12 |
-| Fator de nível | `flowLevel` | 1,0 |
+| Queda alvo (%) — página Settings | `ventDrop` | 6 |
+| Fator de nível — Calibration | `flowLevel` | 1,0 |
+| Expoente efetivo de ventilação — Calibration | `ventExponent` | 1,29 |
 | Curva de vazão e t0 (blob) | `ventCurve` | 18/09 |
 | Curva de referência (blob) | `ventRefCurve` | nenhuma |
-| Massa líquida na ventilação (%) | `liquidGasMass` | 0,6 |
+
+A abertura mínima (1,5 s) e a queda de segurança (2 × a alvo) são fixas no código. As chaves antigas
+`ventMinSec`, `ventSafeDrop` e `liquidGasMass` ficam na NVS, sem uso (fallback).
 
 ## 9. Log Relief
 
@@ -172,7 +188,7 @@ O nome da planilha continua **Relief**. Colunas novas: `GasTemperature`,
 `VentPlannedSeconds`, `VentLimit`, `VentHeadspaceForTime`, `VentRealSeconds`,
 `VentT0Seconds`, `VentMeanPressure`, `VentCoolingFactor`, `VentFlowConstant`,
 `FlowLevelFactor`, `VentFlowMols`, `VentFermenterSideMols`, `VentOutOfRange`,
-`VentCounted`, `VentDropPercent`,
+`VentCounted`, `VentDropPercent`, `VentVaporFraction` (no lugar de `LiquidMassInGasVentingPercent`),
 `VentTargetDropPercent`, `HeadSpaceApparent`. Saíram as do TE
 (`TankReferenceTemperature`, `ReliefVolume`, `AdjustedEquilibriumPressure`,
 `TankPressureAtClose`, `GasVentingResidual`, `PreviousTank*`,

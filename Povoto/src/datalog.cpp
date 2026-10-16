@@ -427,7 +427,7 @@ void doReliefDataLog(const ReliefLogData &data) {
     GLogAddData("VentCounted");           // flow, fermenter-side or none
     GLogAddData("VentDropPercent");
     GLogAddData("VentTargetDropPercent");
-    GLogAddData("LiquidMassInGasVentingPercent");
+    GLogAddData("VentVaporFraction");
     GLogAddData("EjectedMolsBeforeLiquidCorrectionAtLog");
     GLogAddData("InstantPressureDropFactor");
     GLogAddData("HeadSpaceVolume");
@@ -494,7 +494,7 @@ void doReliefDataLog(const ReliefLogData &data) {
   GLogAddData(data.ventCounted ? data.ventCounted : "");
   GLogAddData(data.ventDropPercent, 3);
   GLogAddData(data.ventTargetDropPercent, 2);
-  GLogAddData(data.liquidMassInGasVentingPercent, 3);
+  GLogAddData(data.ventVaporFraction, 5);
   GLogAddData(data.ejectedMolsBeforeLiquidCorrection, 6);
   GLogAddData(data.instantaneousPressureDropFactor, 6);
   GLogAddData(data.headSpaceVolume, 3);

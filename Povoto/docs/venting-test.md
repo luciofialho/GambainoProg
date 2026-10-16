@@ -81,6 +81,12 @@ mede o ruído da leitura, não a repetibilidade do t0: ele aparece só no script
   NTP, lote, Patm e fonte, Tamb, Tferm, gás, volume, versão do firmware (data de
   compilação), etiqueta e o ajuste. ~2 KB por ensaio, ~100 KB no total (o plano
   estimava 8 KB com menos liberações). Arquivo novo: a tag `te-final` não o lê.
+- Sempre com ar e o FMT volume configurado (a página não tem opções de gás nem de volume; o histórico
+  continua gravando gás e volume).
+- Nomes dos CSV: `PovotoCalibration-Venting-FMT<n>-yyyymmddhhmm.csv` (hora local de início do ensaio;
+  `nodate` sem NTP), `...-VentingHistory-...` com `?test=all` (hora do download) e prefixo `Incomplete-`
+  durante o ensaio. Durante o ensaio, o link **Current test CSV** (`?test=current`) baixa as liberações
+  concluídas, de uma cópia tirada sob trava (sem escrita na flash).
 - CSV: `/calibration/venting.csv?test=0` (o último), `?test=N` ou `?test=all`
   (todos, do mais antigo ao mais novo); `;` e vírgula decimal.
 - `python tests/venting_fit.py arquivo.csv` refaz o ajuste fora da placa

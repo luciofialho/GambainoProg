@@ -49,7 +49,7 @@ struct ReliefLogData {
   const char *ventCounted;         // "flow", "fermenter-side" or "none"
   float ventDropPercent;           // settled drop / pressure at opening
   float ventTargetDropPercent;
-  float liquidMassInGasVentingPercent;
+  float ventVaporFraction;
   float ejectedMolsBeforeLiquidCorrection;
   float instantaneousPressureDropFactor;
   float headSpaceVolume;

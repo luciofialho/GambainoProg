@@ -200,7 +200,7 @@ void answer(long id, bool ok, const char *message) {
   Serial.printf("[CLOUD] request %ld %s%s%s\n", id, ok ? "applied" : "rejected", message[0] ? ": " : "", message);
 }
 
-// Range of the set point page and of the rules (docs/automatic-actions.md).
+// Range of the set point page and of the rules (docs/triggered-actions.md).
 bool inRange(float value, float low, float high, bool optional) {
   if (isnan(value)) return optional;
   return value >= low && value <= high;
@@ -212,7 +212,8 @@ const char *applySetpoints(const char *data) {
       !jsonNumber(data, "p", p) || !jsonNumber(data, "ps", ps) || !jsonNumber(data, "pv", pv))
     return "invalid set point values";
   if (!inRange(t, 0.0f, 42.0f, true) || !inRange(ts, 0.0f, 42.0f, true)) return "temperature must be 0 to 42";
-  if (!inRange(p, 0.0f, 2.0f, false) || !inRange(ps, 0.0f, 2.0f, true)) return "pressure must be 0 to 2 bar";
+  if (!inRange(p, 0.0f, FMTData.maxSetPointPressure, false) || !inRange(ps, 0.0f, FMTData.maxSetPointPressure, true))
+    return "pressure must be 0 to the Maximum pressure setpoint";
   if (!inRange(tv, 1.0f, 8.0f, true)) return "temperature ramp speed must be 1 to 8 degrees/day";
   if (!inRange(pv, 0.1f, 2.0f, true)) return "pressure ramp speed must be 0.1 to 2 bar/day";
   // As the set point page: each field replaces the stored one; a speed left
@@ -264,7 +265,7 @@ const char *applyRule(const char *data, char *message, size_t messageSize) {
   setAutoSetpointRuleName(rule, String(name));
   rule.requiresPrevious = index > 0 && requiresPrevious ? 1 : 0;
   rule.manualOnly = manualOnly ? 1 : 0;
-  const String error = validateAutoSetpointRule(rule);
+  const String error = validateAutoSetpointRule(rule, true);
   if (error.length()) {
     strlcpy(message, error.c_str(), messageSize);
     return message;

@@ -103,6 +103,32 @@ def run_case(setpoint, headspace, quiet=False, **truth):
     return row
 
 
+def vapor_checks():
+    """Vapor fraction of the vented gas: reference pressures and the CO2 correction."""
+    print("\nVapor in the vented gas (y = (a_w p_water + x gamma p_ethanol) / P_abs):")
+    ok = True
+    for t, want in ((20.0, 23.39), (10.0, 12.28)):  # mbar, saturated water (Buck)
+        got = 1000 * vm.water_saturation_pressure(t)
+        good = abs(got - want) < 0.05
+        ok = ok and good
+        print(f"  p_water {t:4.1f} C {got:6.2f} mbar (reference {want}) {'ok' if good else 'FAIL'}")
+    got = 1000 * vm.ethanol_saturation_pressure(20.0)
+    good = abs(got - 58.7) < 1.0  # literature 58.7 mbar at 20 C
+    ok = ok and good
+    print(f"  p_ethanol 20.0 C {got:6.2f} mbar (literature 58.7) {'ok' if good else 'FAIL'}")
+    x = vm.ethanol_mole_fraction(5.0)
+    print(f"  x_ethanol at 5% ABV {x:.4f}; p_ethanol term {1000 * x * vm.ETHANOL_ACTIVITY_COEFFICIENT * vm.ethanol_saturation_pressure(20.0):.2f} mbar at 20 C")
+    for t, abv, p_gauge in ((20.0, 0.0, 0.2), (20.0, 5.0, 0.2), (20.0, 5.0, 1.9), (10.0, 5.0, 1.0), (10.0, 0.0, 0.2)):
+        y = vm.vent_vapor_fraction(t, abv, p_gauge + PATM)
+        print(f"  {t:4.1f} C, {abv:3.1f}% ABV, {p_gauge:.1f} bar gauge: y {100 * y:5.2f}%  (CO2 moles = counted x {1 - y:.4f})")
+    y0 = vm.vent_vapor_fraction(20.0, 0.0, 1.0 + PATM)
+    y1 = vm.vent_vapor_fraction(20.0, 5.0, 1.0 + PATM)
+    good = 0.0 < y0 < y1 < 0.05 and vm.vent_vapor_fraction(float("nan"), 5.0, 2.0) == 0.0
+    ok = ok and good
+    print(f"  ethanol raises y, bad input gives 0: {'ok' if good else 'FAIL'}")
+    return ok
+
+
 def main():
     global CURVE
     ok = True
@@ -135,6 +161,7 @@ def main():
     for sp in (0.5, 1.9):
         r = run_case(sp, 30, quiet=True, t_gas=T0 + 6, t_firmware=T0)
         print(f"  {sp} bar, gas 6 K warmer, liquid T used   count {r['err_n']:+.3f}%  Vh {r['err_vh']:+.3f}%")
+    ok = vapor_checks() and ok
     print("\nRESULT:", "PASS" if ok else "FAIL")
     return 0 if ok else 1
 
