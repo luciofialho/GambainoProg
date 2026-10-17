@@ -7,10 +7,10 @@
 #include "GambainoBMP581.h"
 #include "Sidekick-ambient.h"
 
-// The I2C pins of the former OLED display; the Dallas bus on a free GPIO.
-#define AMBIENT_I2C_SDA 27
-#define AMBIENT_I2C_SCL 14
-#define AMBIENT_DALLAS_PIN 32
+// BMP581 on I2C (SDA 32, SCL 33); the Dallas bus on a free GPIO.
+#define AMBIENT_I2C_SDA 32
+#define AMBIENT_I2C_SCL 33
+#define AMBIENT_DALLAS_PIN 17
 
 static constexpr unsigned long BAROMETER_SAMPLE_MS = 1000UL;
 static constexpr unsigned long BAROMETER_SEND_MS = 10000UL;   // mean of the samples since the last packet

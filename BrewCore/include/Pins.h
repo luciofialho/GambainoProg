@@ -40,18 +40,50 @@
 
 
 
-// Sensors
-#define PINBKLEVEL              35//35  
-#define PINBKTRANSDUCER         33//33
-#define PINTRANSFERFLOWMETER    14//32 
-#define PINKEGLIQUIDSENSORS     36//36
-#define PINWATERINMETER         26//23
-#define PINMLTTOPLEVEL          34//34  
-#define PINHLTTOMLTMETER        04//4   
-#define PINHLTTRANSDUCER        39//39
-#define PINONEWIRE1             13//13 // HLT/MLT
-#define PINONEWIRE2             16 //17 // BK
-#define PINONEWIRE3             17 //16 // Cold
+// Direct pins
+//SB - BK Sensors
+#define PINONEWIRE2             16 //16  // DS18B20 onewire - wire 1
+#define PINTRANSFERFLOWMETER    14 //14  // PCNT - wire 2
+#define PINBKRESERVEDSENSOR      8 // 8  // Capable of ADC1 / Dallas / PCNT - wire 3
+#define PINBKTRANSDUCER         33 // 4  // INPUT - ADC - wire 4
+#define PINBKLEVEL              35 // 5  // INPUT - ADC - wire 5
+
+//SM - MLT sensors
+#define PINONEWIRE1             13 //13  // DS18B20 onewire - wire 1
+#define PINHLTTOMLTMETER         4 //15  // PCNT - wire 2
+#define PINMLTRESERVEDSENSOR     1 // 1  // Capable of ADC1 / Dallas / PCNT - wire 3
+#define PINHLTTRANSDUCER        39 // 6  // INPUT - ADC - wire 4
+#define PINMLTTOPLEVEL          34 // 7  // INPUT - ADC - wire 5
+
+//SF - FMT sensors
+#define PINONEWIRE3             17 //17  // DS18B20 onewire - wire 1
+#define PINFMTRESERVED1SENSOR   39 //39  // Capable of  PCNT / Dallas - wire 2 and Wire 5
+#define PINFMT1RESERVEDSENSOR   11 //11  // Capable of ADC2 / Dallas / PCNT - wire 3
+#define PINFMT2RESERVEDSENSOR    9 // 9  // Capable of ADC1 / Dallas / PCNT - wire 4
+
+//SK - Keg Cleaner sensors
+#define PINKEG1RESERVEDSENSOR   42 //42  // Capable of Dallas / PCNT (no ADC) - wire 1
+#define PINWATERINMETER         26 //18  // PCNT - wire 2
+#define PINKEG2RESERVEDSENSOR    2 // 2  // Capable of ADC1 / Dallas / PCNT - wire 3
+#define PINKEG3RESERVEDSENSOR   12 //12  // Capable of ADC2 / Dallas / PCNT - wire 4
+#define PINKEGLIQUIDSENSORS     36 //10  // INPUT - ADC - wire 5
+
+#define PINBUZZER               27 //40 // OUTPUT
+#define PINONBOARDLED           48 //48
+
+#define SIDEKICKRESET           41 //41 // OUTPUT
+
+#define PINI2CSDA               21 //21
+#define PINI2CSCL               22 //47
+
+
+// SERIAL2 (GPIO 18/19) 
+#define SERIAL2_RX              18 //38
+#define SERIAL2_TX              19 //43
+#define SERIAL2_SPEED 1000000
+
+// miscellaneous
+#define I2CFrequency            100000
 
 
 // Water Control
@@ -121,17 +153,7 @@
 
 
 
-// miscellaneous
-#define PINBUZZER               27
 
-#define PINI2CSDA               21
-#define PINI2CSCL               22
-#define I2CFrequency            100000
-
-// ================== SERIAL2 (GPIO 18/19) ========
-#define SERIAL2_RX 18
-#define SERIAL2_TX 19
-#define SERIAL2_SPEED 1000000
 
 
 // const DeviceAddress MLTTopThermometer        = {0x28,0x3b,0x4b,0x48,0x05,0x00,0x00,0x5b};

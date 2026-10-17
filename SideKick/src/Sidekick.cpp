@@ -49,7 +49,6 @@ TaskHandle_t logSendTaskHandle = NULL;
 #define PINRF 22
 RCSwitch rf = RCSwitch();
 
-// ================== SERIAL2 (GPIO 4/5) ========
 #define SERIAL2_RX 18
 #define SERIAL2_TX 19
 
