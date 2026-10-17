@@ -1072,6 +1072,11 @@ static String pressureSensorSectionHtml(float pageCurrentReading, bool usingAver
   html += buffer;
 
   const SensorZeroResult r = getSensorZeroResult();
+  // The routines start here: a title, the requirements as a centred subtitle, and a line each side.
+  html += "<hr><h2 style='text-align:center;margin-bottom:6px'>Calibration routines</h2>"
+          "<p style='text-align:center;color:#666;margin-top:0'>Requirements of the routines: mode OFF, no task. "
+          "Do not press Save before analysing the data (docs/manual-calibracao-manutencao.md). "
+          "Vent diagnostics: <a href='/ventstatus'>/ventstatus</a>.</p><hr>";
   html += "<h3>Sensor zero</h3><ul>"
     "<li>Open the fermenter to the atmosphere (ideally one opening at the top and one at the bottom) and wait a few minutes.</li>"
     "<li>The routine takes 5 min and opens no valve.</li>"
@@ -1389,8 +1394,6 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
     ".current-badge { background: #e8f5e9; border: 1px solid #a5d6a7; border-radius: 6px; padding: 8px 14px; font-size: 1.1em; color: #2e7d32; }"
     ".current-row { display: flex; gap: 10px; align-items: center; margin-bottom: 18px; } .current-row .current-badge { flex: 1; }"
     "</style></head><body><div class='container'><h1>Calibration</h1>"
-    "<p>Requirements of the routines: mode OFF, no task. Do not press Save before analysing the data "
-    "(docs/manual-calibracao-manutencao.md). Vent diagnostics: <a href='/ventstatus'>/ventstatus</a>.</p>"
     "<form id='calForm' action='/calibration/update' method='POST'></form>";
   page += pressureSensorSectionHtml(pageCurrentReading, usingAverageCurrent);
   page += fermenterVolumeSectionHtml();

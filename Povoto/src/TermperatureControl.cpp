@@ -555,16 +555,20 @@ void temperatureControl() {
     digitalWrite(PINCHILLER, chillControl);
     digitalWrite(PINHEATER, heatControl);
 
+    // The blink means a cycle waiting for its rest time. In OFF the outputs are
+    // forced off and nothing waits, so the blink is suppressed (the cycle state
+    // is untouched).
+    const bool blinkAllowed = SetPointData.mode != MODE_OFF;
     if (chillControl)
       digitalWrite(PINLEDCHILLER, HIGH);
-    else if (interruptedCooling)
+    else if (interruptedCooling && blinkAllowed)
       digitalWrite(PINLEDCHILLER, (millis() % 500) < 50);
     else
       digitalWrite(PINLEDCHILLER, LOW);
 
     if (heatControl)
       digitalWrite(PINLEDHEATER, HIGH);
-    else if (interruptedHeating)
+    else if (interruptedHeating && blinkAllowed)
       digitalWrite(PINLEDHEATER, (millis() % 500) < 50);
     else
       digitalWrite(PINLEDHEATER, LOW);
