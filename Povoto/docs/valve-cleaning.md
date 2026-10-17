@@ -1,6 +1,6 @@
 # Ciclo de limpeza da válvula
 
-Código: `src/ValveCleaning.cpp`; página Calibration, seção "Valve cleaning".
+Código: `src/ValveCleaning.cpp`; página **Control**, seção "Valve cleaning" (antes ficava na Calibration; as rotas `/calibration/cleaning/*` e os eventos são os mesmos).
 Procedimento: `docs/manual-calibracao-manutencao.md`, P10.
 
 - Só em OFF, sem task nem outra rotina. Enquanto a sessão está aberta (de uma

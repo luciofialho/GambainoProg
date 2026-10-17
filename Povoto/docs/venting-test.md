@@ -8,7 +8,7 @@ Código: `src/VentingTest.cpp`; ajuste em `include/VentModel.h`
 
 - Só em OFF, sem task nem outra rotina, a partir de ≥ 0,8 bar. Para calibrar,
   comece **acima da maior pressão de fermentação + ~3%** (dente de serra):
-  ~2,0–2,05 bar para setpoint de 1,9, depois de ~10 min de espera (o sensor é
+  ~2,05–2,10 bar para setpoint de 1,9, depois de ~15 min de espera (o sensor é
   certificado até 2 bar, mas mede razoavelmente um pouco acima). Escolhas: **etiqueta** (`as-is`,
   `muffler-cleaned`, `valve-cleaned`, `new-valve`, `after-cleaning-cycle`; depois
   de um ciclo de limpeza ela já vem em `after-cleaning-cycle`), gás (ar; CO2

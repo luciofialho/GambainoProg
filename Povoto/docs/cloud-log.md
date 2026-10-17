@@ -140,7 +140,7 @@ pedido da nuvem perde.
   a semântica da página de set points.
 - Resposta `{"v":1,"k":"ack","p","id","ok","m"}` pela fila, repetida uma vez;
   um pedido repetido (mesmo `id`) recebe a mesma resposta, sem reaplicar.
-- **Accept cloud edits**: página Settings, abaixo do Log interval (NVS
+- **Accept new setpoints and triggered actions from cloud** (antes "Accept cloud edits"): página User Configuration, abaixo do Log interval (NVS
   `pvt_cloud`: `edits`, ligada por padrão). Desligada, todo pedido que não
   seja `snap` é recusado.
 

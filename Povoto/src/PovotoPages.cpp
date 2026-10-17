@@ -112,7 +112,7 @@ void handleMainMenu(AsyncWebServerRequest *request) {
   html += "<a href='/control' class='menu-button'><span class='icon'>&#128736;</span>Control</a>";
   html += "<a href='/calibration' class='menu-button'><span class='icon'>&#128200;</span>Calibration</a>";
   html += "<a href='/graphs' class='menu-button'><span class='icon'>&#128202;</span>Graphs</a>";
-  html += "<a href='/fmtdata' class='menu-button'><span class='icon'>&#9881;</span>Settings</a>";
+  html += "<a href='/fmtdata' class='menu-button'><span class='icon'>&#9881;</span>Fermenter Settings</a>";
   html += "<a href='/userConfig' class='menu-button'><span class='icon'>&#127899;&#65039;</span>User Configuration</a>";
   if (debugging) {
     html += "<a href='/debugparams' class='menu-button'><span class='icon'>&#128295;</span>Debug Params</a>";
@@ -637,7 +637,7 @@ static void appendDallasRolesSection(char *html, size_t capacity) {
     return false;
   };
 
-  append("<h2>Thermometers (Dallas)</h2><input type='hidden' name='dallasConfig' value='1'>"
+  append("<hr><h2>Thermometers (Dallas)</h2><input type='hidden' name='dallasConfig' value='1'>"
          "<table style='width:100%'><thead><tr><th>ID</th><th>Reading</th><th>Role</th></tr></thead><tbody>");
   for (uint8_t i = 0; i < count; ++i) {
     const char *role = "-";
@@ -717,7 +717,7 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
   strcpy(html, "<!DOCTYPE html><html><head>"
                 "<meta charset='UTF-8'>"
                 "<meta name='viewport' content='width=device-width, initial-scale=1.0'>"
-                "<title>SettingsConfiguration</title>"
+                "<title>Fermenter settings</title>"
                 "<style>"
                 "body { font-family: Arial, sans-serif; margin: 20px; background-color: #f0f0f0; color: #333; }"
                 "h1 { color: #333; }"
@@ -731,10 +731,11 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
                 ".btn-secondary { background-color: #888; }"
                 ".btn-secondary:hover { background-color: #666; }"
                 ".settings-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:24px; }"
+                "hr { border:0; border-top:2px solid #ddd; margin:26px 0 18px; }"
                 "</style>"
                 "</head><body>"
                 "<div class='container'>"
-                "<h1>Settings</h1>"
+                "<h1>Fermenter settings</h1>"
                 "<form id='settingsForm' action='/fmtdata/update' method='POST'>");
   
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -746,25 +747,6 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "</div>", remaining);
 
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='form-group'><label for='dataLogIntervalSeconds'>Log interval:</label>"
-    "<select id='dataLogIntervalSeconds' name='dataLogIntervalSeconds'>", remaining);
-  const int logIntervals[] = {30, 60, 120, 300, 600};
-  const char *logIntervalLabels[] = {"30 seconds", "1 minute", "2 minutes", "5 minutes", "10 minutes"};
-  for (uint8_t i = 0; i < sizeof(logIntervals) / sizeof(logIntervals[0]); ++i) {
-    snprintf(buffer, sizeof(buffer), "<option value='%d'%s>%s</option>", logIntervals[i],
-      FMTData.dataLogIntervalSeconds == logIntervals[i] ? " selected" : "", logIntervalLabels[i]);
-    strncat(html, buffer, BUFFER_SIZE - strlen(html) - 1);
-  }
-  strncat(html, "</select></div>", BUFFER_SIZE - strlen(html) - 1);
-  // The hidden field tells the update that the checkbox was on the form
-  // (an unchecked checkbox is not posted).
-  snprintf(buffer, sizeof(buffer),
-           "<div class='form-group'><input type='hidden' name='cloudEditsField' value='1'>"
-           "<label><input type='checkbox' name='cloudEdits' value='1'%s> Accept new setpoints and triggered actions from cloud</label>"
-           "<small>Set points and triggered action rules changed on the cloud site are applied by this Povoto.</small></div>",
-           cloudEditsAccepted() ? " checked" : "");
-  strncat(html, buffer, BUFFER_SIZE - strlen(html) - 1);
   
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='form-group'>"
@@ -798,7 +780,7 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
   strncat(html, buffer, BUFFER_SIZE - strlen(html) - 1);
 
   remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<h2>Cooling cycle</h2><table style='width:100%;table-layout:fixed'>"
+  strncat(html, "<hr><h2>Cooling cycle</h2><table style='width:100%;table-layout:fixed'>"
     "<thead><tr><th>Temperature (&deg;C)</th><th>On time (min)</th><th>Rest time (min)</th></tr></thead><tbody>", remaining);
   const char* temperatures[] = {"&gt;20", "10", "&lt;0.5"};
   for (int i = 0; i < 3; ++i) {
@@ -814,7 +796,7 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
     strncat(html, buffer, BUFFER_SIZE - strlen(html) - 1);
   }
   strncat(html, "</tbody></table>", BUFFER_SIZE - strlen(html) - 1);
-  strncat(html, "<h2>Heating</h2><input type='hidden' name='heaterConfig' value='1'>"
+  strncat(html, "<hr><h2>Heating cycle</h2><input type='hidden' name='heaterConfig' value='1'>"
     "<table style='width:100%;table-layout:fixed'><tbody><tr><td style='text-align:center'>"
     "<label><input type='checkbox' name='enableHeater' value='1'",
     BUFFER_SIZE - strlen(html) - 1);
@@ -944,19 +926,6 @@ void handleFMTDataUpdate(AsyncWebServerRequest *request) {
   FMTData.maximumPressure = maximumPressure;
   FMTData.maxSetPointPressure = maxSetPointPressure;
   FMTData.ventTargetDropPercent = ventDrop;
-  if (request->hasParam("dataLogIntervalSeconds", true)) {
-    const int interval = request->getParam("dataLogIntervalSeconds", true)->value().toInt();
-    if (!isValidDataLogIntervalSeconds(interval)) {
-      request->send(400, "text/plain", "Log interval must be 30 seconds, 1, 2, 5, or 10 minutes.");
-      return;
-    }
-    FMTData.dataLogIntervalSeconds = interval;
-  }
-  if (request->hasParam("cloudEditsField", true) &&
-      !setCloudEditsAccepted(request->hasParam("cloudEdits", true))) {
-    request->send(500, "text/plain", "Could not save Accept cloud edits.");
-    return;
-  }
   if (dallasConfig) memcpy(FMTData.dallasAddress, dallasAddress, sizeof(dallasAddress));
   writeFMTDataToNIV();
   updatePatmFromFMTAltitude();
@@ -1103,11 +1072,10 @@ static String pressureSensorSectionHtml(float pageCurrentReading, bool usingAver
   html += buffer;
 
   const SensorZeroResult r = getSensorZeroResult();
-  html += "<h3>Sensor zero</h3>"
-    "<p>Open the fermenter to the atmosphere (ideally one opening at the top and one at the bottom), wait a few minutes "
-    "and confirm. The routine takes 5 min and opens no valve: it averages the filtered sensor current and compares it with the "
-    "stored zero (the pressure shown elsewhere is clipped at zero and hides a zero that is too high). Requirements: mode OFF, "
-    "board on for at least 30 min (now " + String(millis() / 60000UL) + " min).</p>";
+  html += "<h3>Sensor zero</h3><ul>"
+    "<li>Open the fermenter to the atmosphere (ideally one opening at the top and one at the bottom) and wait a few minutes.</li>"
+    "<li>The routine takes 5 min and opens no valve.</li>"
+    "<li>It averages the filtered sensor current and compares it with the stored zero.</li></ul>";
   if (sensorZeroActive()) {
     html += "<p><b>Running:</b> " + String(sensorZeroProgressMinutes(), 1) + " min; current " + num(currentReading, 3) +
       " mA. <form action='/calibration/zero/abort' method='POST'><button>Abort</button></form></p>";
@@ -1141,12 +1109,16 @@ static String pct(float fraction) {
 
 static String ventingTestSectionHtml() {
   auto num = [](float v, int d) { return isfinite(v) ? String(v, d) : String("n/a"); };
-  String html = "<hr><h2>Venting test</h2><p>Empty fermenter with air (the configured FMT volume, " + String(FMTData.FMTVolume, 1) +
-    " L), the valve outlet in its working assembly (witness bottle). Pressurize above the highest fermentation pressure + ~3% "
-    "(2.0-2.05 bar for 1.9) and wait ~10 min. The test alternates openings of 2, 0.5, 8, 1, 4 and 2 s at the start pressure and at "
-    "~1.9, 1.5, 1.1, 0.8, 0.5 and 0.25 bar (a long opening steps down between levels), waits for a stable pressure "
-    "after each one (0.3 mbar in 30 s, 45-180 s) and measures the real opening time. About 55-65 min. Vents outside "
-    "the pressure range of the saved curve are flagged. Do not touch the equipment.</p>";
+  String html = "<hr><h2>Venting test</h2><ul>"
+    "<li>Empty fermenter with air.</li>"
+    "<li>Valve outlet in its working assembly.</li>"
+    "<li>Pressurize above the highest fermentation pressure + ~3% (e.g. 2.05&ndash;2.10 bar for 1.9) and wait ~15 min.</li>"
+    "<li>The test alternates openings of 2, 0.5, 8, 1, 4 and 2 s, waiting for a stable pressure after each one.</li>"
+    "<li>After the start pressure, it repeats at 1.9 (when at least 0.15 bar below the start), 1.5, 1.1, 0.8, 0.5 and "
+    "0.25 bar; a long opening steps down between levels.</li>"
+    "<li>It takes about 55&ndash;65 min.</li>"
+    "<li>Vents outside the pressure range of the saved curve are flagged.</li>"
+    "<li>Result: flow curve and the valve's own delay (t0).</li></ul>";
   if (ventingTestActive()) {
     html += "<p><b>" + ventingTestProgressText() + "</b></p><form action='/calibration/venting/abort' method='POST'>"
       "<button>Abort</button></form><p><a href='/calibration/venting.csv?test=current'>Current test CSV</a> "
@@ -1231,37 +1203,17 @@ static String dissolvedCO2SectionHtml() {
   return html;
 }
 
-// Valve cleaning cycle (docs/valve-cleaning.md).
-static String valveCleaningSectionHtml() {
-  String html = "<hr><h2>Valve cleaning</h2><p>Mode OFF. Detach port <b>P</b> from the fermenter and take it to the drain; "
-    "remove the muffler of port <b>R</b> and take it to the drain. Pressurized liquid (a few tenths of a bar) "
-    "<b>only on port A</b>. Each phase alternates the valve energized (A&rarr;P) and de-energized (A&rarr;R), 2 s + 2 s. "
-    "Phases: neutral detergent, water, 70% alcohol, air (drying); change the liquid on A before each one. No caustic soda "
-    "and no percarbonate (aluminium body); keep the coil dry. The first time, check that the liquid comes out alternately "
-    "through P and R.</p><p><b>" + valveCleaningStatusText() + "</b></p>";
-  if (valveCleaningRunning()) {
-    html += "<form action='/calibration/cleaning/abort' method='POST'><button>Abort</button></form>";
-  } else if (valveCleaningNextPhase() < VALVE_CLEANING_PHASES || !valveCleaningActive()) {
-    const uint8_t phase = valveCleaningActive() ? valveCleaningNextPhase() : 0;
-    html += String("<form action='/calibration/cleaning/start' method='POST'><label><input type='checkbox' name='ready' "
-      "value='1' required> ") + valveCleaningPhaseName(phase) + " is connected to port A</label> <label>Minutes "
-      "<input type='number' name='minutes' value='4' min='0.5' max='15' step='0.5' style='width:70px'></label> "
-      "<button>Valve cleaning: phase " + String(phase + 1) + "</button></form>";
-    if (valveCleaningActive())
-      html += "<form action='/calibration/cleaning/abort' method='POST'><button>Abort the cycle</button></form>";
-  }
-  return html;
-}
-
 // Fermenter volume with an expansion tank (docs/keg-volume.md).
 static String fermenterVolumeSectionHtml() {
   const KegVolumeResult r = getKegVolumeResult();
-  String html = "<hr><h2>Fermenter volume</h2><p>Fermenter volume determination &mdash; measures the fermenter volume (FMT volume) "
-    "with an expansion tank of known volume.<br>Connect the expansion tank to port A.<br>Pressurize the fermenter to ~2.0 bar, "
-    "wait 15 min and press Start.<br>The routine takes about 2&ndash;3 h and repeats by itself down to ~0.5 bar: it waits for a "
-    "stable pressure, opens the valve to the tank, waits again, closes and vents the tank.<br>Result: the fermenter volume "
-    "(mean of the stable steps) and its spread. If accepted, press Save as new FMT volume.</p><p><b>" + kegVolumeStatusText() +
-    "</b></p>";
+  String html = "<hr><h2>Fermenter volume</h2><ul>"
+    "<li>Measures the fermenter volume (FMT volume) with an expansion tank of known volume.</li>"
+    "<li>Connect the expansion tank to port A.</li>"
+    "<li>Pressurize the fermenter to ~2.0 bar, wait at least 15 min and press Start.</li>"
+    "<li>The routine takes about 2&ndash;3 h and repeats by itself down to ~0.5 bar: it waits for a stable pressure, opens the "
+    "valve to the tank, waits again, closes and vents the tank.</li>"
+    "<li>Result: the fermenter volume (mean of the stable steps) and its spread. If accepted, press Save as new FMT volume.</li></ul>"
+    "<p><b>" + kegVolumeStatusText() + "</b></p>";
   if (kegVolumeActive()) {
     html += "<form action='/calibration/keg/abort' method='POST'><button>Abort</button></form>";
   } else {
@@ -1297,8 +1249,9 @@ static String fermenterVolumeSectionHtml() {
   return html;
 }
 
-static void sendCalibrationMessage(AsyncWebServerRequest *request, const char *title, const char *text) {
-  String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta http-equiv='refresh' content='3;url=/calibration'>"
+static void sendCalibrationMessage(AsyncWebServerRequest *request, const char *title, const char *text,
+                                   const char *backTo = "/calibration") {
+  String html = String("<!DOCTYPE html><html><head><meta charset='UTF-8'><meta http-equiv='refresh' content='3;url=") + backTo + "'>"
     "<style>body{font-family:Arial;text-align:center;margin-top:50px;}</style></head><body><h1>";
   html += title;
   html += "</h1><p>";
@@ -1349,21 +1302,21 @@ void handleVentingTestSave(AsyncWebServerRequest *request) {
 
 void handleValveCleaningStart(AsyncWebServerRequest *request) {
   if (!request->hasParam("ready", true)) {
-    sendCalibrationMessage(request, "Phase not started", "Confirm the liquid on port A.");
+    sendCalibrationMessage(request, "Phase not started", "Confirm the liquid on port A.", "/control");
     return;
   }
   const float minutes = request->hasParam("minutes", true) ? request->getParam("minutes", true)->value().toFloat() : 4.0f;
   char reason[100];
   if (!startValveCleaningPhase(minutes, reason, sizeof(reason))) {
-    sendCalibrationMessage(request, "Phase not started", reason);
+    sendCalibrationMessage(request, "Phase not started", reason, "/control");
     return;
   }
-  request->redirect("/calibration");
+  request->redirect("/control");
 }
 
 void handleValveCleaningAbort(AsyncWebServerRequest *request) {
   abortValveCleaning();
-  request->redirect("/calibration");
+  request->redirect("/control");
 }
 
 void handleKegVolumeStart(AsyncWebServerRequest *request) {
@@ -1444,7 +1397,6 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   page += ventingTestSectionHtml();
   page += ventSettingsHtml();
   page += dissolvedCO2SectionHtml();
-  page += valveCleaningSectionHtml();
   page += "<hr><div><button type='submit' form='calForm'>Save</button> "
           "<button type='button' class='btn-secondary' onclick='window.location=\"/menu\"'>Cancel</button></div>";
   const String events = calibrationEventsHtmlRows(10);
@@ -1452,7 +1404,7 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
     page += "<hr><h3>Calibration events</h3><p>Newest first; <a href='/calibration/events.txt'>all</a></p>"
       "<table style='width:100%;font-size:0.9em'><tr><th>Time</th><th>Event</th><th>Details</th></tr>" + events + "</table>";
   page += "</div></body></html>";
-  if (sensorZeroActive() || ventingTestActive() || valveCleaningRunning() || kegVolumeActive())
+  if (sensorZeroActive() || ventingTestActive() || kegVolumeActive())
     page.replace("<head>", "<head><meta http-equiv='refresh' content='10'>");
   request->send(200, "text/html", page);
 }
@@ -2691,6 +2643,31 @@ void handleSetPointDataUpdate(AsyncWebServerRequest *request) {
 
 
 
+// Valve cleaning cycle (docs/valve-cleaning.md), on the Control page.
+static String valveCleaningSectionHtml() {
+  String html = "<hr><h3>Valve cleaning</h3><ul>"
+    "<li>Mode OFF.</li>"
+    "<li>Detach port P from the fermenter and take it to the drain.</li>"
+    "<li>Remove the muffler of port R and take it to the drain.</li>"
+    "<li>Connect a tank with pressurized cleaning solution (a few tenths of a bar) only on port A.</li>"
+    "<li>Each phase alternates the valve energized (A&rarr;P) and de-energized (A&rarr;R), 2 s + 2 s several times during the "
+    "selected time.</li>"
+    "<li>Execute four phases: neutral detergent, water, 70% alcohol, air (drying).</li></ul>"
+    "<p><b>" + valveCleaningStatusText() + "</b></p>";
+  if (valveCleaningRunning()) {
+    html += "<form action='/calibration/cleaning/abort' method='POST'><button>Abort</button></form>";
+  } else if (valveCleaningNextPhase() < VALVE_CLEANING_PHASES || !valveCleaningActive()) {
+    const uint8_t phase = valveCleaningActive() ? valveCleaningNextPhase() : 0;
+    html += String("<form action='/calibration/cleaning/start' method='POST'><label style='width:auto'><input type='checkbox' "
+      "name='ready' value='1' style='width:auto' required> ") + valveCleaningPhaseName(phase) + " is connected to port A</label> "
+      "<label style='width:auto'>Minutes <input type='number' name='minutes' value='4' min='0.5' max='15' step='0.5' "
+      "style='width:70px'></label> <button>Valve cleaning: phase " + String(phase + 1) + "</button></form>";
+    if (valveCleaningActive())
+      html += "<form action='/calibration/cleaning/abort' method='POST'><button>Abort the cycle</button></form>";
+  }
+  return html;
+}
+
 void handleControlDataPage(AsyncWebServerRequest *request) {
   const size_t BUFFER_SIZE = 20000;
   char* html = (char*)malloc(BUFFER_SIZE);
@@ -2788,13 +2765,12 @@ void handleControlDataPage(AsyncWebServerRequest *request) {
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='sub-link'><a href='/counters'>Counters</a></div>", remaining);
 
-  remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "</div>"
-               "<script>u('a','b');u('c','d');u('e','f');u('g','h');</script>"
-               "</body></html>", remaining);
-  
-  request->send(200, "text/html", html);
+  String page(html);
   free(html);
+  page += valveCleaningSectionHtml();
+  page += "</div><script>u('a','b');u('c','d');u('e','f');u('g','h');</script></body></html>";
+  if (valveCleaningRunning()) page.replace("<head>", "<head><meta http-equiv='refresh' content='10'>");
+  request->send(200, "text/html", page);
 }
 
 void handleControlDataUpdate(AsyncWebServerRequest *request) {
@@ -2850,6 +2826,8 @@ void handleUserConfigPage(AsyncWebServerRequest *request) {
     ".container{max-width:600px;margin:auto;background:white;padding:24px;border-radius:15px;}"
     "label{display:block;margin-top:20px;}input{box-sizing:border-box;width:100%;padding:10px;}"
     "button{margin-top:24px;padding:12px 24px;background:#667eea;color:white;border:0;border-radius:8px;}"
+    "select{box-sizing:border-box;width:100%;padding:10px;}input[type='checkbox']{width:auto;margin-right:8px;}"
+    "small{display:block;color:#666;margin-top:4px;}"
     "</style></head><body><div class='container'><h1>User Configuration</h1>"
     "<form action='/userConfig/update' method='POST'>"
     "<label for='screensaverTime'>Screensaver Time (seconds):</label>"
@@ -2863,7 +2841,20 @@ void handleUserConfigPage(AsyncWebServerRequest *request) {
   html += "</output> / 10</label><input type='range' id='displayBrightness' name='displayBrightness' "
     "min='1' max='10' step='1' oninput=\"document.getElementById('brightnessValue').value=this.value\" value='";
   html += String(UserConfigurationData.displayBrightness);
-  html += "'><button type='submit'>Save</button> <a href='/menu'>Cancel</a></form></div></body></html>";
+  html += "'><label for='dataLogIntervalSeconds'>Log interval:</label><select id='dataLogIntervalSeconds' name='dataLogIntervalSeconds'>";
+  const int logIntervals[] = {30, 60, 120, 300, 600};
+  const char *logIntervalLabels[] = {"30 seconds", "1 minute", "2 minutes", "5 minutes", "10 minutes"};
+  for (uint8_t i = 0; i < sizeof(logIntervals) / sizeof(logIntervals[0]); ++i) {
+    html += String("<option value='") + logIntervals[i] + "'" +
+            (FMTData.dataLogIntervalSeconds == logIntervals[i] ? " selected" : "") + ">" + logIntervalLabels[i] + "</option>";
+  }
+  // The hidden field tells the update that the checkbox was on the form
+  // (an unchecked checkbox is not posted).
+  html += String("</select><input type='hidden' name='cloudEditsField' value='1'>"
+                 "<label><input type='checkbox' name='cloudEdits' value='1'") + (cloudEditsAccepted() ? " checked" : "") +
+          "> Accept new setpoints and triggered actions from cloud</label>"
+          "<small>Set points and triggered action rules changed on the cloud site are applied by this Povoto.</small>";
+  html += "<button type='submit'>Save</button> <a href='/menu'>Cancel</a></form></div></body></html>";
   request->send(200, "text/html", html);
 }
 
@@ -2895,9 +2886,26 @@ void handleUserConfigUpdate(AsyncWebServerRequest *request) {
     request->send(400, "text/plain", "Invalid settings: screensaver >= 10 seconds, PIN 0-9999, brightness 1-10.");
     return;
   }
+  int logInterval = FMTData.dataLogIntervalSeconds;
+  if (request->hasParam("dataLogIntervalSeconds", true)) {
+    logInterval = request->getParam("dataLogIntervalSeconds", true)->value().toInt();
+    if (!isValidDataLogIntervalSeconds(logInterval)) {
+      request->send(400, "text/plain", "Log interval must be 30 seconds, 1, 2, 5, or 10 minutes.");
+      return;
+    }
+  }
+  if (request->hasParam("cloudEditsField", true) &&
+      !setCloudEditsAccepted(request->hasParam("cloudEdits", true))) {
+    request->send(500, "text/plain", "Could not save Accept new setpoints and triggered actions from cloud.");
+    return;
+  }
   UserConfigurationData.screensaverTime = screensaverTime;
   UserConfigurationData.keypadPin = keypadPin;
   UserConfigurationData.displayBrightness = brightness;
   writeUserConfigurationDataToNIV();
+  if (logInterval != FMTData.dataLogIntervalSeconds) {
+    FMTData.dataLogIntervalSeconds = logInterval;
+    writeFMTDataToNIV();
+  }
   request->redirect("/menu");
 }

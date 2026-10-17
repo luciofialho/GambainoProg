@@ -155,7 +155,7 @@ batches gravados por engano. Desde 05/10/2026 a página não mostra o botão
 
 Implementada em 06/10/2026, antes de terminar o teste da Fase 1, por decisão
 do usuário: não é usada em lotes em andamento e cada Povoto tem a chave
-"Accept cloud edits" (Settings, ligada por padrão). Protocolo e detalhes em
+"Accept new setpoints and triggered actions from cloud" (User Configuration, ligada por padrão). Protocolo e detalhes em
 `docs/cloud-log.md`. Diferenças do desenho abaixo: os snapshots e as
 respostas vão pela fila do SideKick como linhas comuns (`k` = `sp`, `r`,
 `ack`); a consulta de 60 s é o próprio POST do log (os pedidos vêm na

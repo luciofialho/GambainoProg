@@ -51,7 +51,7 @@ Código: `DallasSensors.cpp`; resolução das temperaturas em
 
 ## Configuração
 
-Página Settings (`/fmtdata`), seção "Thermometers (Dallas)": tabela com os IDs
+Página Fermenter settings (`/fmtdata`), seção "Thermometers (Dallas)": tabela com os IDs
 (ROM, `XX-XX-XX-XX-XX-XX-XX-XX`) encontrados na última varredura, a leitura de cada um e o
 papel atual, e um seletor por papel. Um sensor atribuído que não está no
 barramento aparece como "not found" e continua selecionável, para que salvar a

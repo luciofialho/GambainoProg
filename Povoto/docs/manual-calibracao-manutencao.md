@@ -20,14 +20,15 @@ Regras gerais:
   dashboard e o QR da TFT abrem o menu). Toda página aberta do menu volta para o menu em Save e em Cancel;
   as ações de rotina da Calibration (Start, Abort, Save zero, Save curve and t0, Save as new FMT volume)
   voltam para `/calibration`.
-- Onde ficam os campos: **Settings** — FMT volume, Maximum security pressure (2,0–3,0 bar), Maximum
+- Onde ficam os campos: **Fermenter settings** (botão "Fermenter Settings" do menu) — FMT volume, Maximum security pressure (2,0–3,0 bar), Maximum
   pressure setpoint (abaixo da pressão de segurança; nenhum setpoint de pressão, nem de regra ou da nuvem,
-  passa dele), Target drop of the gauge pressure per vent (1–15%), altitude, termômetros, Backup settings /
-  Restore settings from backups. **Calibration**, em ordem: Pressure sensor (pontos A e B, reta; Sensor
+  passa dele), Target drop of the gauge pressure per vent (1–15%), altitude, Cooling cycle, Heating cycle,
+  Thermometers, Backup settings / Restore settings from backups. **User Configuration** — screensaver,
+  PIN, brilho, Log interval e "Accept new setpoints and triggered actions from cloud". **Calibration**, em ordem: Pressure sensor (pontos A e B, reta; Sensor
   zero), Fermenter volume, Venting test, Vent (Flow level factor e Effective Venting Exponent; a abertura
   mínima de 1,5 s e a queda de segurança de 2× a alvo são fixas), Dissolved CO2 dynamics (Nucleation
-  window), Valve cleaning; um único Save/Cancel no fim grava os campos editáveis, e os eventos de
-  calibração ficam no final da página.
+  window); um único Save/Cancel no fim grava os campos editáveis, e os eventos de
+  calibração ficam no final da página. O **Valve cleaning** fica na página **Control**.
 - Arquivos baixados: `PovotoCalibration-<tipo>-FMT<n>-yyyymmddhhmm.csv` (hora local do início do ensaio;
   `nodate` sem NTP). Tipos: `Venting`, `VentingHistory` (todos, hora do download) e `FermenterVolume`;
   `Incomplete-` na frente se baixado antes do fim; eventos: `PovotoCalibration-Events-FMT<n>-<hora>.txt`.
@@ -110,8 +111,8 @@ rotina usa a corrente bruta do sensor.
    uma abertura em cima e outra embaixo (sem gradiente de pressão). Espere
    alguns minutos.
 3. Calibration → "Sensor zero" e confirme que o fermentador está aberto. A
-   rotina mede a corrente por 5 min (ela não abre válvula nenhuma) e exige a
-   placa ligada há pelo menos 30 min.
+   rotina mede a corrente por 5 min (ela não abre válvula nenhuma, e o tempo não é ajustável) e exige a
+   placa ligada há pelo menos 30 min para poder gravar.
 4. Se aparecer "Unstable reading", a corrente variou demais durante a medição:
    confira as aberturas, se não há gás saindo da cerveja ou do compressor, e
    repita. O botão de gravar não aparece nesse caso.
@@ -165,7 +166,7 @@ Quando: fermentador grande demais para pesar, ou para conferir a pesagem.
 4. Tanque e fermentador à sombra, no mesmo lugar. O tanque se acerta com o ambiente sozinho; o
    fermentador (isolado, pressurizado com ar quente do compressor) fica com temperatura própria:
    o cálculo usa as duas.
-5. Pressurize o fermentador a ~2,0 bar, espere 15 min e aperte Start em Calibration → "Fermenter
+5. Pressurize o fermentador a ~2,0 bar, espere pelo menos 15 min e aperte Start em Calibration → "Fermenter
    volume" (o campo traz o último volume do tanque; o número de reliefs é calculado e mostrado).
    A rotina leva 2–3 h e desce sozinha até ~0,5 bar: espera a pressão estável, abre a válvula
    para o tanque, espera de novo, fecha e ventila o tanque.
@@ -184,8 +185,8 @@ mudança na saída (garrafa, silenciador); qualquer suspeita sobre a válvula.
 1. Fermentador **vazio**, ar, volume correto no Settings, OFF.
 2. Porta A para a atmosfera pela garrafa testemunha (montagem de uso).
 3. Pressurize **acima da maior pressão de fermentação mais a margem do dente de
-   serra** (~3%): para setpoint de 1,9 bar, ~2,0–2,05 bar. O sensor é certificado
-   até 2 bar, mas mede razoavelmente um pouco acima. Espere ~10 min.
+   serra** (~3%): para setpoint de 1,9 bar, ~2,05–2,10 bar. O sensor é certificado
+   até 2 bar, mas mede razoavelmente um pouco acima. Espere ~15 min.
 4. Calibration → "Venting test" (sempre ar e o FMT volume do Settings); escolha a **etiqueta** (`as-is` /
    `muffler-cleaned` / `valve-cleaned` / `new-valve` / `after-cleaning-cycle`).
 5. O ensaio alterna durações (2, 0,5, 8, 1, 4, 2 s) em patamares do topo até
@@ -284,7 +285,7 @@ Siga o segundo fluxograma da seção 1.
 2. Solte a porta **P** do fermentador e leve-a ao dreno. Retire o silenciador da
    porta **R** e leve-a ao dreno.
 3. Ligue o líquido pressurizado (alguns décimos de bar) **só na porta A**.
-4. Calibration → "Valve cleaning". A válvula alterna energizada (A→P)
+4. Control → "Valve cleaning". A válvula alterna energizada (A→P)
    e desenergizada (A→R), 2 s + 2 s, ~4 min por fase; cada fase começa com a
    confirmação do líquido na porta A.
 5. Fases, trocando o líquido em A a cada confirmação:

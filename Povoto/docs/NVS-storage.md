@@ -92,7 +92,7 @@ cleared/rewritten with the others on schema change and factory reset, and is
 not part of `povoto-settings.json` (rules have their own XML export).
 
 The cloud keeps "Accept cloud edits" in `pvt_cloud` (`edits`, default true,
-CloudSync.cpp; Settings page). The cloud log keeps its synthetic-log setting
+CloudSync.cpp; User Configuration page). The cloud log keeps its synthetic-log setting
 in `pvt_cloud` (CloudLog.cpp):
 `synth` (bool) and `synthStart` (local epoch of profile day 0). It is a
 debug-only setting, outside the schema rewrite, factory reset and
