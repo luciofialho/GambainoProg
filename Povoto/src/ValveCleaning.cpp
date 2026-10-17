@@ -30,7 +30,7 @@ static void showProgress(bool force) {
   if (running) {
     snprintf(line1, sizeof(line1), "Valve cleaning: RUN");
     snprintf(line2, sizeof(line2), "%lu/%lu s, %u cycles", (now - runStart) / 1000UL, runMs / 1000UL, cycles);
-    snprintf(line3, sizeof(line3), "Valve %s", energized ? "A->P" : "A->R (LED on)");
+    snprintf(line3, sizeof(line3), "Valve %s", energized ? "A->P" : "A->R");
   } else {
     snprintf(line1, sizeof(line1), "Valve cleaning: END");
     snprintf(line2, sizeof(line2), "%s", lastText);

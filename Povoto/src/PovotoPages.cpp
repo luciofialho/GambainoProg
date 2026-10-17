@@ -2652,8 +2652,7 @@ static String valveCleaningSectionHtml() {
     "<li>Connect a tank with pressurized cleaning solution (a few tenths of a bar) only on port A.</li>"
     "<li>Each phase alternates the valve energized (A&rarr;P) and de-energized (A&rarr;R), 2 s + 2 s several times during the "
     "selected time.</li>"
-    "<li>Execute four phases: neutral detergent, water, 70% alcohol, air (drying); you change the liquid and start each run.</li>"
-    "<li>The venting LED is on while the valve is closed during a run.</li></ul>"
+    "<li>Execute four phases: neutral detergent, water, 70% alcohol, air (drying).</li></ul>"
     "<p><b>" + valveCleaningStatusText() + "</b></p>";
   if (valveCleaningActive()) {
     html += "<form action='/calibration/cleaning/abort' method='POST'><button>Abort</button></form>";
@@ -2689,6 +2688,8 @@ void handleControlDataPage(AsyncWebServerRequest *request) {
                 "input[readonly]{background:#f9f9f9;}"
                 "button{background:#4CAF50;color:white;padding:6px 12px;border:none;margin:5px;}"
                 ".action-btn{display:inline-block;background:#4CAF50;color:white;padding:6px 12px;margin:5px;text-decoration:none;border-radius:2px;}"
+                "button.action-btn{font:inherit;cursor:pointer;border:none;}"
+                "hr{border:0;border-top:2px solid #ddd;margin:18px 0 12px;}"
                 ".sub-link{margin-top:8px;text-align:right;font-size:12px;}"
                 ".sub-link a{color:#666;text-decoration:none;}"
                 ".sub-link a:hover{text-decoration:underline;}"
@@ -2699,7 +2700,7 @@ void handleControlDataPage(AsyncWebServerRequest *request) {
                 "</script>"
                 "</head><body><div class='c'>"
                 "<h3>Control</h3>"
-                "<form method='POST' action='/control/update'>");
+                "<form id='controlForm' method='POST' action='/control/update'>");
 
 
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -2748,12 +2749,11 @@ void handleControlDataPage(AsyncWebServerRequest *request) {
   strncat(html, buffer, remaining);
   
   remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<button type='submit'>Save</button>"
-               "<button type='button' onclick='window.location=\"/menu\"'>Back</button>"
-               "</form>", remaining);
+  strncat(html, "</form>", remaining);
 
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div style='margin-top:10px;'>"
+               "<button type='submit' form='controlForm' class='action-btn'>Apply</button>"
                "<a class='action-btn' href='/control/auto'>All Auto</a>"
                "<a class='action-btn' href='/control/relief'>Relief once</a>"
                "<a class='action-btn' href='/resetdisplay'>Reset display</a>"
@@ -2765,6 +2765,7 @@ void handleControlDataPage(AsyncWebServerRequest *request) {
   String page(html);
   free(html);
   page += valveCleaningSectionHtml();
+  page += "<hr><button type='button' onclick='window.location=\"/menu\"'>Back</button>";
   page += "</div><script>u('a','b');u('c','d');u('e','f');u('g','h');</script></body></html>";
   if (valveCleaningActive()) page.replace("<head>", "<head><meta http-equiv='refresh' content='10'>");
   request->send(200, "text/html", page);
