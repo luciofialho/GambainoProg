@@ -493,7 +493,13 @@ void processVentingTest() {
   }
   if (SetPointData.mode != MODE_OFF || taskWindowType != 0 || !isfinite(ControlData.pressure) ||
       ControlData.pressure > FMTData.maximumPressure) {
-    finishTest("Aborted (mode, task or pressure)");
+    char reason[72];
+    if (SetPointData.mode != MODE_OFF) snprintf(reason, sizeof(reason), "Aborted (mode is not OFF)");
+    else if (taskWindowType != 0) snprintf(reason, sizeof(reason), "Aborted (a task started)");
+    else if (!isfinite(ControlData.pressure)) snprintf(reason, sizeof(reason), "Aborted (invalid pressure)");
+    else snprintf(reason, sizeof(reason), "Aborted (%.2f bar is above the %.2f bar security pressure)",
+                  ControlData.pressure, FMTData.maximumPressure);
+    finishTest(reason);
     return;
   }
   const unsigned long now = millis();
