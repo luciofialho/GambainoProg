@@ -145,7 +145,7 @@ export function setpointPage(input: SetpointPageInput): string {
   if (!sync) {
     notes.push('<div class="note warn">This Povoto has not reported its set points yet: it needs the cloud edits firmware and a batch running.</div>');
   } else {
-    if (sync.edits_accepted === 0) notes.push('<div class="note warn">Cloud edits are off on this Povoto (Settings page on the Povoto).</div>');
+    if (sync.edits_accepted === 0) notes.push('<div class="note warn">Cloud edits are off on this Povoto (User Configuration page on the Povoto: Accept new setpoints and triggered actions from cloud).</div>');
     if (!setpointsInSync || !rulesInSync) notes.push('<div class="note warn">Waiting for the Povoto to send its current copy; editing resumes when it arrives.</div>');
   }
   if (open) notes.push(`<div class="note">Waiting for the Povoto: ${requestText(open, false)}.</div>`);
