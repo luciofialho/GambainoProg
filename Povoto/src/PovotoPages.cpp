@@ -1086,7 +1086,7 @@ static String pressureSensorSectionHtml(float pageCurrentReading, bool usingAver
       " mA. <form action='/calibration/zero/abort' method='POST'><button>Abort</button></form></p>";
   } else {
     html += "<form action='/calibration/zero/start' method='POST'><label><input type='checkbox' name='open' value='1' required> "
-      "The fermenter is open to the atmosphere</label> <button>Run sensor zero test:</button></form>";
+      "The fermenter is open to the atmosphere</label> <button>Run sensor zero test</button></form>";
   }
   if (r.available) {
     html += "<p>Mean current " + num(r.meanCurrent, 4) + " mA over " + num(r.minutes, 1) + " min (" + String(r.samples) +
