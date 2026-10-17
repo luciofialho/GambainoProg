@@ -183,7 +183,7 @@ ${canEdit ? `<button type="submit"${spEditable ? '' : ' disabled'}>Send set poin
     const triggeredAt = typeof rule.at === 'number' && rule.at > 0 ? rule.at : 0;
     const disabled = !rulesEditable || triggeredAt > 0;
     const status = triggeredAt ? `<p class="note ok">Triggered ${escapeHtml(localDateTime(triggeredAt))}</p>` : '';
-    const checks = `${i > 0 ? `<label class="check"><input type="checkbox" name="rq" value="1"${rule.rq ? ' checked' : ''}${disabled ? ' disabled' : ''}>Requires rule ${i}</label> ` : ''}
+    const checks = `${i > 0 ? `<label class="check"><input type="checkbox" name="rq" value="1"${rule.rq ? ' checked' : ''}${disabled ? ' disabled' : ''}>Triggers only if rule ${i} has already triggered</label> ` : ''}
 <label class="check"><input type="checkbox" name="mo" value="1"${rule.mo ? ' checked' : ''}${disabled ? ' disabled' : ''}>Manual only</label>`;
     const base = `<input type="hidden" name="base" value="${escapeHtml(rulesHash)}">`;
     const actions = !canEdit ? '' : triggeredAt
@@ -195,7 +195,7 @@ ${ruleIsEmpty(rule) ? '' : `<form class="inline" method="post" action="setpoint/
     return `<fieldset><legend>Rule ${i + 1}</legend>${status}
 <form id="rule${i}" method="post" action="setpoint/rule/${i}">${base}
 <label class="field wide">Name<input type="text" name="n" maxlength="80" value="${escapeHtml(rule.n ?? '')}"${disabled ? ' disabled' : ''}></label>
-<div class="muted">Triggers (all filled ones)</div>
+<div class="muted">Triggers (all filled ones must be met)</div>
 <div class="grid">${RULE_TRIGGERS.map(f => numberInput(f, rule[f[0]], disabled)).join('')}</div>
 <div class="muted">New set points</div>
 <div class="grid">${RULE_ACTIONS.map(f => numberInput(f, rule[f[0]], disabled)).join('')}</div>

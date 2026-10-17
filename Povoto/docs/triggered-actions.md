@@ -72,13 +72,13 @@ Até **8 regras**. Cada uma:
 | Press. stable for (h) | 1–360 | pressão `STABLE` há mais que isso |
 | SG < x | 0,990–1,200 | 3 casas decimais |
 | gCO2/L/d < x | 0,5–20 | fora de transição de pressão ou temperatura, ou numa transição em que a cerveja libera CO2 (descida de pressão ou aquecimento: o saldo liberado é um teto da produção). Absorvendo, ou com direção desconhecida ou mista, não avalia: o saldo fica abaixo da produção (docs/gco2-rate.md); só o valor calculado, > 0, com janela de pelo menos 30 min (31 amostras; ~32 min após o boot), e abaixo de x **sem interrupção por 20 min** (qualquer avaliação sem valor utilizável ou ≥ x recomeça a contagem). O valor retido de antes de um reboot nunca conta. Janelas curtas cobrem poucos ciclos de relief: no lote 160 (30/09 12:18) a primeira taxa após o boot, 7,19 com 4 min de janela e 8,8 real, disparou uma regra "< 8". Mediana do erro contra 6 h: ~1,2 g/L/d com 15 min, ~0,7 com 30 min |
-| Requires rule N−1 | regras 2 a 8 | condição extra: a regra anterior precisa já ter disparado |
+| "Triggers only if rule N−1 has already triggered" (XML: `requiresPrevious`) | regras 2 a 8 | condição extra: a regra anterior precisa já ter disparado |
 | **Novos setpoints** (opcionais) | | |
 | Temperature / Temperature slow | 0–42 °C | |
 | Pressure / Pressure slow | 0–2 bar | mesmo limite do teclado da tela |
 
 - Campo vazio = critério ignorado / sem ação.
-- Regra automática com qualquer ação exige pelo menos um gatilho de medida (o "requires rule" sozinho não basta). Regra manual pode não ter gatilhos de medida. Regra vazia (ou só com nome) não dispara automaticamente.
+- Regra automática com qualquer ação exige pelo menos um gatilho de medida (o "Triggers only if rule N has already triggered" sozinho não basta). Regra manual pode não ter gatilhos de medida. Regra vazia (ou só com nome) não dispara automaticamente.
 - Regra **sem ações** é válida: dispara, grava o horário e só manda o e-mail.
 - Ações seguem a mesma semântica da página de setpoints: só o direto aplica o valor e cancela a rampa; só o slow faz a rampa a partir do setpoint atual; os dois saltam para o direto e fazem a rampa até o slow. As velocidades das rampas são as da página de setpoints.
 - Uma regra disparada fica somente leitura, com botão **Reset** (zera o horário e libera edição).
@@ -154,7 +154,7 @@ Até **8 regras**. Cada uma:
 5. Regra com ação e sem gatilho: recusada. Valores fora das faixas: erro com o número da regra.
 6. Regra com SG < (SG atual + 0,005) em Fermenting: dispara em até 10 s (`[AUTOSP]`, setpoints alterados, campos travados, e-mail). Em Conditioning: não dispara.
 7. Reboot após o disparo: não dispara de novo; Reset libera.
-8. "Requires rule": a regra 2 espera a 1 disparar.
+8. "Triggers only if rule 1 has already triggered": a regra 2 espera a 1 disparar.
 9. Add to stability time (h) para fazer uma regra de horas disparar.
 10. Save & export XML, alterar regras, Import XML: regras restauradas, horários zerados.
 11. Wi-Fi desligado no disparo: 3 tentativas `[MAIL]` e "giving up", sem afetar o controle.

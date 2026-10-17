@@ -2114,7 +2114,7 @@ static void appendAutoSetpointSection(char *html, size_t size) {
     appendHtml(html, size,
       "<label class='req'><input type='checkbox' id='r%d_manual' name='r%d_manual' value='1'%s%s> Manual only</label>",
       i, i, rule.manualOnly ? " checked" : "", triggered ? " disabled" : "");
-    appendHtml(html, size, "<div class='rule-title'>Triggers</div><div class='rule-grid'>");
+    appendHtml(html, size, "<div class='rule-title'>Triggers (all filled ones must be met)</div><div class='rule-grid'>");
     appendRuleInput(html, size, i, "sh", "Temp. stable for (h):", rule.stableHours, triggered, -1, rule.manualOnly);
     appendRuleInput(html, size, i, "psh", "Press. stable for (h):", rule.pressureStableHours, triggered, -1, rule.manualOnly);
     appendRuleInput(html, size, i, "sg", "SG &lt; x:", rule.sgBelow, triggered, 3, rule.manualOnly);
@@ -2127,7 +2127,7 @@ static void appendAutoSetpointSection(char *html, size_t size) {
     if (i > 0)
       appendHtml(html, size,
         "<label class='req'><input type='checkbox' id='r%d_req' name='r%d_req' value='1'%s%s>"
-        " Requires rule %d</label>",
+        " Triggers only if rule %d has already triggered</label>",
         i, i, rule.requiresPrevious ? " checked" : "", triggered ? " disabled" : "", i);
     appendHtml(html, size, "<div class='rule-title'>New set points</div><div class='rule-grid'>");
     appendRuleInput(html, size, i, "t", "Temperature  (&deg;C):", rule.temperature, triggered);
