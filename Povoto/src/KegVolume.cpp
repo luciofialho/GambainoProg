@@ -227,7 +227,7 @@ void processKegVolume() {
     if (stage == KEG_OPEN) {
       const float equal = (k.p1 + Patm) * FMTData.FMTVolume / (FMTData.FMTVolume + kegVolume) +
                           Patm * kegVolume / (FMTData.FMTVolume + kegVolume) - Patm;
-      simulated = equal + (k.p1 - equal) * expf(-(now - stageMillis) / 3000.0f);
+      simulated = equal + (k.p1 - equal) * expf(-(float)(now - stageMillis) / 3000.0f);
     }
     ControlData.pressure = simulated + random(-2, 3) * 0.00005f;
   }
