@@ -2780,7 +2780,8 @@ static bool valveRoutineActive() {
 int64_t routineValve(bool open) {
   digitalWrite(PINTRANSFERVALVE, open ? HIGH : LOW);
   const int64_t micros = esp_timer_get_time();
-  digitalWrite(PINVENTINGLED, open ? HIGH : LOW);
+  // PINVENTINGLED is not driven here: in a vent it lights only while the vent waits to
+  // open and while it settles after closing, never with the valve open.
   ControlData.transferValve = open;
   markSolenoidToggle();
   if (!open) {
