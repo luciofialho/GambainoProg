@@ -186,6 +186,9 @@ static bool waitDone(bool &settled) {
   if (wait->count == 0 || last < kegWaitMinMs()) return false;
   const float slope = wait->slopePerMinute(KEG_SLOPE_WINDOW_MS);
   settled = isfinite(slope) && fabsf(slope) < KEG_STABLE_SLOPE_BAR_PER_MIN;
+  // Bench boards: the short wait cannot meet the 120-s slope criterion; the simulated
+  // pressure has settled by its end (tau 3 s), so it counts as stable.
+  if (debugging && last >= kegWaitMaxMs()) settled = true;
   return settled || last >= kegWaitMaxMs();
 }
 
@@ -214,11 +217,11 @@ void processKegVolume() {
   }
   const unsigned long now = millis();
   KegRelief &k = reliefs[reliefCount];
-  if (debugging) { // bench boards: equalization with the FMT volume, tau 30 s
+  if (debugging) { // bench boards: equalization with the FMT volume, tau 3 s
     if (stage == KEG_OPEN) {
       const float equal = (k.p1 + Patm) * FMTData.FMTVolume / (FMTData.FMTVolume + kegVolume) +
                           Patm * kegVolume / (FMTData.FMTVolume + kegVolume) - Patm;
-      simulated = equal + (k.p1 - equal) * expf(-(now - stageMillis) / 30000.0f);
+      simulated = equal + (k.p1 - equal) * expf(-(now - stageMillis) / 3000.0f);
     }
     ControlData.pressure = simulated + random(-2, 3) * 0.00005f;
   }

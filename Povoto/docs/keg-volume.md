@@ -60,5 +60,6 @@ Erro por relief (±0,5 mbar), fermentador de 130 L: 2,5% com 2 L, 0,31% com
   Com a rotina em andamento, o CSV é montado de uma cópia dos reliefs concluídos tirada sob
   trava (a página roda na task web, a rotina no loop), sem escrita na flash.
 
-Modo debug: a equalização é simulada com o FMT volume (τ 30 s) e esperas
-curtas.
+Modo debug: a equalização é simulada com o FMT volume (τ 3 s) e esperas
+curtas (10–30 s); ao fim da espera máxima o relief é dado como estável (o critério
+de 120 s não cabe nela), e a média deve devolver o FMT volume configurado.

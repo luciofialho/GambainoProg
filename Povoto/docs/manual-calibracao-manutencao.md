@@ -110,7 +110,7 @@ rotina usa a corrente bruta do sensor.
 2. Abra o fermentador para a atmosfera com bastante circulação: de preferência
    uma abertura em cima e outra embaixo (sem gradiente de pressão). Espere
    alguns minutos.
-3. Calibration → "Sensor zero" e confirme que o fermentador está aberto. A
+3. Calibration → marque que o fermentador está aberto e aperte "Run sensor zero test:". A
    rotina mede a corrente por 5 min (ela não abre válvula nenhuma, e o tempo não é ajustável) e exige a
    placa ligada há pelo menos 30 min para poder gravar.
 4. Se aparecer "Unstable reading", a corrente variou demais durante a medição:

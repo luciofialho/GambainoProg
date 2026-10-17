@@ -45,7 +45,7 @@ static void showProgress(bool force) {
   } else if (sessionOpen) {
     snprintf(line1, sizeof(line1), "Valve cleaning: WAIT");
     snprintf(line2, sizeof(line2), "Next: %s on port A", valveCleaningPhaseName(nextPhase));
-    snprintf(line3, sizeof(line3), "Confirm on the Calibration page");
+    snprintf(line3, sizeof(line3), "Confirm on the Control page");
   } else {
     snprintf(line1, sizeof(line1), "Valve cleaning: END");
     snprintf(line2, sizeof(line2), "%s", lastText);
