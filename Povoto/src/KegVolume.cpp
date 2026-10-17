@@ -287,9 +287,12 @@ void processKegVolume() {
 static KegVolumeResult resultFrom(const KegSnapshot &snap) {
   KegVolumeResult r = {};
   double sum = 0.0, squares = 0.0, simple = 0.0;
+  float low = INFINITY, high = -INFINITY;
   uint8_t n = 0;
   for (uint8_t i = 0; i < snap.count; ++i) {
     if (!reliefStable(snap.r[i])) continue; // unstable steps stay out of the mean and the deviation
+    low = fminf(low, snap.r[i].volume);
+    high = fmaxf(high, snap.r[i].volume);
     sum += snap.r[i].volume;
     squares += (double)snap.r[i].volume * snap.r[i].volume;
     simple += snap.r[i].simpleVolume;
@@ -303,6 +306,8 @@ static KegVolumeResult resultFrom(const KegSnapshot &snap) {
   r.mean = n ? float(sum / n) : NAN;
   r.sd = n > 1 ? float(sqrt(fmax(0.0, (squares - sum * sum / n) / (n - 1)))) : NAN;
   r.simpleMean = n ? float(simple / n) : NAN;
+  r.minVolume = n ? low : NAN;
+  r.maxVolume = n ? high : NAN;
   r.fmtVolume = FMTData.FMTVolume;
   r.canSave = stage == KEG_IDLE && n >= 2;
   return r;

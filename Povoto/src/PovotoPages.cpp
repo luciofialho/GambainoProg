@@ -112,7 +112,7 @@ void handleMainMenu(AsyncWebServerRequest *request) {
   html += "<a href='/control' class='menu-button'><span class='icon'>&#128736;</span>Control</a>";
   html += "<a href='/calibration' class='menu-button'><span class='icon'>&#128200;</span>Calibration</a>";
   html += "<a href='/graphs' class='menu-button'><span class='icon'>&#128202;</span>Graphs</a>";
-  html += "<a href='/fmtdata' class='menu-button'><span class='icon'>&#9881;</span>Fermenter Settings</a>";
+  html += "<a href='/fmtsettings' class='menu-button'><span class='icon'>&#9881;</span>Fermenter Settings</a>";
   html += "<a href='/userConfig' class='menu-button'><span class='icon'>&#127899;&#65039;</span>User Configuration</a>";
   if (debugging) {
     html += "<a href='/debugparams' class='menu-button'><span class='icon'>&#128295;</span>Debug Params</a>";
@@ -691,13 +691,13 @@ static void appendDallasRolesSection(char *html, size_t capacity) {
     append("</div>");
   }
   append("<div style='margin-bottom:28px'><button type='button' class='btn-secondary' "
-         "onclick='window.location=\"/fmtdata/dallasscan\"'>Rescan bus</button></div>");
+         "onclick='window.location=\"/fmtsettings/dallasscan\"'>Rescan bus</button></div>");
 }
 
 void handleDallasScan(AsyncWebServerRequest *request) {
   requestDallasScan();
   request->send(200, "text/html",
-    "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta http-equiv='refresh' content='3;url=/fmtdata'>"
+    "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta http-equiv='refresh' content='3;url=/fmtsettings'>"
     "<style>body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }</style></head>"
     "<body><h1>Scanning the Dallas bus...</h1><p>Back to Settings in 3 seconds.</p></body></html>");
 }
@@ -736,7 +736,7 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
                 "</head><body>"
                 "<div class='container'>"
                 "<h1>Fermenter settings</h1>"
-                "<form id='settingsForm' action='/fmtdata/update' method='POST'>");
+                "<form id='settingsForm' action='/fmtsettings/update' method='POST'>");
   
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='form-group'>"
@@ -818,7 +818,7 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
   strncat(html, "</form>"
                 "<div class='settings-actions'>"
                 "<button type='button' class='btn-secondary' onclick='window.location=\"/wifi/reconfigure\"'>Reconfigure WiFi</button>"
-                "<button type='button' onclick='window.location=\"/fmtdata/save\"'>Backup settings</button>"
+                "<button type='button' onclick='window.location=\"/fmtsettings/save\"'>Backup settings</button>"
                 "<button type='button' class='btn-secondary' onclick='document.getElementById(\"settingsFile\").click()'>Restore settings from backups</button>"
                 "<input id='settingsFile' type='file' accept='application/json,.json' hidden>"
                 "</div>"
@@ -826,7 +826,7 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
                 "<button type='submit' form='settingsForm'>Save</button>"
                 "<button type='button' class='btn-secondary' onclick='window.location=\"/menu\"'>Cancel</button>"
                 "</div>"
-                "<script>document.getElementById('settingsFile').addEventListener('change',async function(){const file=this.files[0];if(!file)return;try{const response=await fetch('/fmtdata/load',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'settings='+encodeURIComponent(await file.text())});const message=await response.text();if(!response.ok){alert(message);return;}alert(message);window.location='/fmtdata';}catch(error){alert('Could not restore the settings file.');}finally{this.value='';}});</script>"
+                "<script>document.getElementById('settingsFile').addEventListener('change',async function(){const file=this.files[0];if(!file)return;try{const response=await fetch('/fmtsettings/load',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'settings='+encodeURIComponent(await file.text())});const message=await response.text();if(!response.ok){alert(message);return;}alert(message);window.location='/fmtsettings';}catch(error){alert('Could not restore the settings file.');}finally{this.value='';}});</script>"
                 "</div>"
                 "</body></html>", remaining);
 
@@ -1233,10 +1233,11 @@ static String fermenterVolumeSectionHtml() {
       "with its stability marks)</p>";
   }
   if (r.available) {
-    html += "<p>Expansion tank " + String(r.tankVolume, 3) + " L: fermenter <b>" + String(r.mean, 2) + " L</b>" +
-      (isfinite(r.sd) ? " (sd " + String(r.sd, 2) + " L = " + String(100.0f * r.sd / r.mean, 2) + "%)" : String("")) +
-      ", " + String(r.reliefs) + " of " + String(r.total) + " reliefs used; simple formula " + String(r.simpleMean, 2) +
-      " L.<br>Configured FMT volume: <b>" + String(r.fmtVolume, 2) + " L</b>.</p>";
+    html += "<ul><li>" + String(r.reliefs) + "/" + String(r.total) + " reliefs used</li>"
+      "<li>calculated: <b>" + String(r.mean, 2) + " L</b> (StdDev " +
+      (isfinite(r.sd) ? String(100.0f * r.sd / r.mean, 2) + "%" : String("n/a")) + " - range " +
+      String(r.minVolume, 2) + " - " + String(r.maxVolume, 2) + ")</li>"
+      "<li>configured FMT volume: " + String(r.fmtVolume, 2) + " L</li></ul>";
     if (r.canSave) {
       html += "<form action='/calibration/keg/save' method='POST' onsubmit=\"return confirm('Save " + String(r.mean, 2) +
         " L as the new FMT volume (now " + String(r.fmtVolume, 2) + " L)?')\"><button>Save as new FMT volume</button></form>";
@@ -1306,14 +1307,10 @@ void handleVentingTestSave(AsyncWebServerRequest *request) {
 }
 
 void handleValveCleaningStart(AsyncWebServerRequest *request) {
-  if (!request->hasParam("ready", true)) {
-    sendCalibrationMessage(request, "Phase not started", "Confirm the liquid on port A.", "/control");
-    return;
-  }
   const float minutes = request->hasParam("minutes", true) ? request->getParam("minutes", true)->value().toFloat() : 4.0f;
   char reason[100];
-  if (!startValveCleaningPhase(minutes, reason, sizeof(reason))) {
-    sendCalibrationMessage(request, "Phase not started", reason, "/control");
+  if (!startValveCleaning(minutes, reason, sizeof(reason))) {
+    sendCalibrationMessage(request, "Valve cleaning not started", reason, "/control");
     return;
   }
   request->redirect("/control");
@@ -2655,18 +2652,15 @@ static String valveCleaningSectionHtml() {
     "<li>Connect a tank with pressurized cleaning solution (a few tenths of a bar) only on port A.</li>"
     "<li>Each phase alternates the valve energized (A&rarr;P) and de-energized (A&rarr;R), 2 s + 2 s several times during the "
     "selected time.</li>"
-    "<li>Execute four phases: neutral detergent, water, 70% alcohol, air (drying).</li></ul>"
+    "<li>Execute four phases: neutral detergent, water, 70% alcohol, air (drying); you change the liquid and start each run.</li>"
+    "<li>The venting LED is on while the valve is closed during a run.</li></ul>"
     "<p><b>" + valveCleaningStatusText() + "</b></p>";
-  if (valveCleaningRunning()) {
+  if (valveCleaningActive()) {
     html += "<form action='/calibration/cleaning/abort' method='POST'><button>Abort</button></form>";
-  } else if (valveCleaningNextPhase() < VALVE_CLEANING_PHASES || !valveCleaningActive()) {
-    const uint8_t phase = valveCleaningActive() ? valveCleaningNextPhase() : 0;
-    html += String("<form action='/calibration/cleaning/start' method='POST'><label style='width:auto'><input type='checkbox' "
-      "name='ready' value='1' style='width:auto' required> ") + valveCleaningPhaseName(phase) + " is connected to port A</label> "
-      "<label style='width:auto'>Minutes <input type='number' name='minutes' value='4' min='0.5' max='15' step='0.5' "
-      "style='width:70px'></label> <button>Valve cleaning: phase " + String(phase + 1) + "</button></form>";
-    if (valveCleaningActive())
-      html += "<form action='/calibration/cleaning/abort' method='POST'><button>Abort the cycle</button></form>";
+  } else {
+    html += "<form action='/calibration/cleaning/start' method='POST'><label style='width:auto'>Minutes "
+      "<input type='number' name='minutes' value='4' min='0.5' max='15' step='0.5' style='width:70px'></label> "
+      "<button>Start valve cleaning</button></form>";
   }
   return html;
 }
@@ -2772,7 +2766,7 @@ void handleControlDataPage(AsyncWebServerRequest *request) {
   free(html);
   page += valveCleaningSectionHtml();
   page += "</div><script>u('a','b');u('c','d');u('e','f');u('g','h');</script></body></html>";
-  if (valveCleaningRunning()) page.replace("<head>", "<head><meta http-equiv='refresh' content='10'>");
+  if (valveCleaningActive()) page.replace("<head>", "<head><meta http-equiv='refresh' content='10'>");
   request->send(200, "text/html", page);
 }
 

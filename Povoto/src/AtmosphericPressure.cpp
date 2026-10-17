@@ -1,7 +1,5 @@
 #include <Arduino.h>
-#include <Wire.h>
 #include <math.h>
-#include "GambainoBMP581.h"
 #include "PovotoData.h"
 #include "AtmosphericPressure.h"
 #include "datalog.h"
@@ -15,10 +13,8 @@ unsigned long int NTPEpoch();
 static constexpr float PATM_MIN_HPA = 700.0f;
 static constexpr float PATM_MAX_HPA = 1100.0f;
 static constexpr unsigned long PATM_AVERAGE_MS = 60000UL;         // moving average
-static constexpr unsigned long PATM_SENSOR_TIMEOUT_MS = 60000UL;  // BMP581 failing
 static constexpr unsigned long PATM_SIDEKICK_TIMEOUT_MS = 10UL * 60000UL; // same as the environment
-static constexpr unsigned long PATM_SENSOR_SAMPLE_MS = 1000UL;
-static constexpr unsigned long PATM_SENSOR_PROBE_MS = 5UL * 60000UL; // absent sensor: probe again
+static constexpr unsigned long PATM_SELECT_MS = 1000UL;  // the source is re-evaluated this often
 
 struct PatmSample {
   unsigned long millisStamp;
@@ -54,9 +50,6 @@ template <uint8_t N> struct PatmSeries {
   }
 };
 
-static GambainoBMP581 barometer(Wire);
-static bool sensorPresent = false;
-static PatmSeries<64> sensorSeries;    // 1 Hz
 static PatmSeries<16> sidekickSeries;  // one packet every 10 s
 static portMUX_TYPE sidekickMux = portMUX_INITIALIZER_UNLOCKED;
 
@@ -84,7 +77,7 @@ static float altitudeHPa() {
 
 const char *atmosphericPressureSourceLabel(uint8_t source) {
   switch (source) {
-    case PATM_SOURCE_SENSOR: return "sensor";
+    case PATM_SOURCE_SENSOR: return "sensor"; // retired: only in old venting-test records
     case PATM_SOURCE_SIDEKICK: return "sidekick";
     default: return "altitude";
   }
@@ -101,13 +94,9 @@ uint8_t atmosphericPressureSource() {
 // Re-evaluates the sources and sets Patm (bar).
 static void selectAtmosphericPressure(unsigned long now) {
   PatmSample newest;
-  PatmSourceState &sensor = sourceState[PATM_SOURCE_SENSOR];
-  sensor = {false, NAN, 0};
-  if (sensorSeries.newest(newest)) {
-    sensor.ageMs = now - newest.millisStamp;
-    sensor.hPa = sensorSeries.average();
-    sensor.valid = sensor.ageMs <= PATM_SENSOR_TIMEOUT_MS && plausible(sensor.hPa);
-  }
+  // No barometer on the Povoto: the pressure always comes from the SideKick. The retired
+  // "sensor" slot stays invalid (its number is kept for the saved venting-test records).
+  sourceState[PATM_SOURCE_SENSOR] = {false, NAN, 0};
   PatmSourceState &sidekick = sourceState[PATM_SOURCE_SIDEKICK];
   sidekick = {false, NAN, 0};
   portENTER_CRITICAL(&sidekickMux);
@@ -146,8 +135,6 @@ void updatePatmFromFMTAltitude() {
 }
 
 void atmosphericPressureBegin() {
-  sensorPresent = barometer.begin();
-  Serial.printf("[PATM] BMP581 %s\n", sensorPresent ? "found" : "not found");
   selectAtmosphericPressure(millis());
 }
 
@@ -161,19 +148,11 @@ void setAtmosphericPressureFromPacket(const char *payload) {
 }
 
 void atmosphericPressureProcess() {
-  static unsigned long lastSample = 0, lastProbe = 0;
+  static unsigned long lastSelect = 0;
   loopRunning = true;
   const unsigned long now = millis();
-  if (now - lastSample < PATM_SENSOR_SAMPLE_MS) return;
-  lastSample = now;
-  if (!sensorPresent && now - lastProbe >= PATM_SENSOR_PROBE_MS) {
-    lastProbe = now;
-    sensorPresent = barometer.begin();
-    if (sensorPresent) Serial.println("[PATM] BMP581 found");
-  }
-  float hPa = NAN, temperature = NAN;
-  if (sensorPresent && barometer.read(hPa, temperature) && plausible(hPa))
-    sensorSeries.add(now, hPa);
+  if (now - lastSelect < PATM_SELECT_MS) return;
+  lastSelect = now;
   selectAtmosphericPressure(now);
 }
 
@@ -189,16 +168,11 @@ void appendAtmosphericPressureStatus(char *st, size_t size) {
            fallback ? atmosphericPressureSourceLabel(fallbackFrom) : "", when);
   strlcat(st, line, size);
   // "1013.25 hPa 4 s" (valid), "INVALID 1013.25 hPa 700 s" or "n/a".
-  char text[2][32];
-  for (uint8_t s = 0; s < PATM_SOURCE_ALTITUDE; ++s) {
-    const PatmSourceState &state = sourceState[s];
-    if (!isfinite(state.hPa)) snprintf(text[s], sizeof(text[s]), "n/a");
-    else snprintf(text[s], sizeof(text[s]), "%s%.2f hPa %lu s", state.valid ? "" : "INVALID ",
-                  state.hPa, state.ageMs / 1000UL);
-  }
-  snprintf(line, sizeof(line),
-           "&nbsp;&nbsp;&nbsp;&nbsp;sensor %s; sidekick %s; altitude %.2f hPa (%.0f m); sensor-sidekick %+.2f hPa<br>",
-           text[PATM_SOURCE_SENSOR], text[PATM_SOURCE_SIDEKICK], sourceState[PATM_SOURCE_ALTITUDE].hPa,
-           FMTData.FMTAltitude, sourceState[PATM_SOURCE_SENSOR].hPa - sourceState[PATM_SOURCE_SIDEKICK].hPa);
+  char text[32];
+  const PatmSourceState &state = sourceState[PATM_SOURCE_SIDEKICK];
+  if (!isfinite(state.hPa)) snprintf(text, sizeof(text), "n/a");
+  else snprintf(text, sizeof(text), "%s%.2f hPa %lu s", state.valid ? "" : "INVALID ", state.hPa, state.ageMs / 1000UL);
+  snprintf(line, sizeof(line), "&nbsp;&nbsp;&nbsp;&nbsp;sidekick %s; altitude %.2f hPa (%.0f m)<br>",
+           text, sourceState[PATM_SOURCE_ALTITUDE].hPa, FMTData.FMTAltitude);
   strlcat(st, line, size);
 }

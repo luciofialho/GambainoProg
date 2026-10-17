@@ -4,19 +4,16 @@
 #include <Arduino.h>
 
 // Valve cleaning cycle (docs/valve-cleaning.md): pressurized liquid on port A
-// only, P and R to the drain. Each phase alternates the valve energized
-// (A->P, counterflow over the seat) and de-energized (A->R, washes the plunger
-// chamber). Phases, each started by the operator after changing the liquid:
-// neutral detergent, water, 70% alcohol, air.
-constexpr uint8_t VALVE_CLEANING_PHASES = 4;
-const char *valveCleaningPhaseName(uint8_t phase);
+// only, P and R to the drain. A run alternates the valve energized (A->P,
+// counterflow over the seat) and de-energized (A->R, washes the plunger
+// chamber) for the time chosen by the operator. Which liquids, in which order
+// and when to change them is the operator's decision: the program controls no
+// phase. The venting LED is on while the valve is closed during a run.
 
-// Starts (or continues) the session with the next phase.
-bool startValveCleaningPhase(float minutes, char *reason, size_t reasonSize);
+// Starts a run of `minutes` (0.5-15).
+bool startValveCleaning(float minutes, char *reason, size_t reasonSize);
 void abortValveCleaning();
-bool valveCleaningActive();      // session open (a phase running or waiting for the next)
-bool valveCleaningRunning();     // a phase running
-uint8_t valveCleaningNextPhase(); // 0..VALVE_CLEANING_PHASES (= all done)
+bool valveCleaningActive();      // a run in progress
 String valveCleaningStatusText();
 void processValveCleaning();     // pressureControl(), main loop
 

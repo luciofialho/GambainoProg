@@ -257,11 +257,13 @@ void setup() {
     sendWebPageFile(request, "/www/assets/brewtal.svg", "image/svg+xml");
   });
   
-  server.on("/fmtdata/save", HTTP_GET, handleFMTDataSave);
-  server.on("/fmtdata/load", HTTP_POST, handleFMTDataLoad);
-  server.on("/fmtdata/update", HTTP_POST, handleFMTDataUpdate);
-  server.on("/fmtdata/dallasscan", HTTP_GET, handleDallasScan);
-  server.on("/fmtdata", HTTP_GET, handleFMTDataPage);
+  server.on("/fmtsettings/save", HTTP_GET, handleFMTDataSave);
+  server.on("/fmtsettings/load", HTTP_POST, handleFMTDataLoad);
+  server.on("/fmtsettings/update", HTTP_POST, handleFMTDataUpdate);
+  server.on("/fmtsettings/dallasscan", HTTP_GET, handleDallasScan);
+  server.on("/fmtsettings", HTTP_GET, handleFMTDataPage);
+  // Old name of the page (bookmarks).
+  server.on("/fmtdata", HTTP_GET, [](AsyncWebServerRequest *request) { request->redirect("/fmtsettings"); });
   server.on("/userConfig", HTTP_GET, handleUserConfigPage);
   server.on("/userConfig/update", HTTP_POST, handleUserConfigUpdate);
   
@@ -387,7 +389,7 @@ void setup() {
   
   
   Wire.begin(PINSDA, PINSCL); 
-  atmosphericPressureBegin(); // BMP581 on this bus, if present (docs/atmospheric-pressure.md)
+  atmosphericPressureBegin(); // the pressure comes from the SideKick (docs/atmospheric-pressure.md)
 
   Wire.beginTransmission(FT_ADDR);
   bool touchPresent = (Wire.endTransmission() == 0);

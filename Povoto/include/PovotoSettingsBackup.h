@@ -3,7 +3,7 @@
 
 #include <Arduino.h>
 
-// JSON document used by the browser download/upload actions on /fmtdata.
+// JSON document used by the browser download/upload actions on /fmtsettings.
 String savePovotoSettingsBackup();
 bool loadPovotoSettingsBackup(const String &settings);
 

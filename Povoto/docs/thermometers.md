@@ -7,7 +7,7 @@ Código: `DallasSensors.cpp`; resolução das temperaturas em
 | Papel | Com sensor atribuído | Sem sensor atribuído |
 |---|---|---|
 | Fermentador (`dallasTemperature`) | o sensor atribuído | sem leitura: controle de temperatura em IDLE |
-| Ambiente (`environmentTemp`) | o sensor atribuído | o valor recebido por ESP-NOW (pacote `'V'`, expira em 10 min): o do SideKick (Dallas próprio, opcional) antes do do BrewCore |
+| Ambiente (`environmentTemp`) | o sensor atribuído | o valor recebido por ESP-NOW (pacote `'V'`, expira em 10 min): o do SideKick (Dallas próprio, opcional, no GPIO 17; é procurado de novo a cada minuto) antes do do BrewCore |
 | Headspace (`gasTemperature()`) | o sensor atribuído, enquanto tiver leitura válida (60 s); depois, o do fermentador | o do fermentador |
 
 - Com sensor atribuído não há fallback: se ele parar de responder, a última
@@ -51,7 +51,7 @@ Código: `DallasSensors.cpp`; resolução das temperaturas em
 
 ## Configuração
 
-Página Fermenter settings (`/fmtdata`), seção "Thermometers (Dallas)": tabela com os IDs
+Página Fermenter settings (`/fmtsettings`; `/fmtdata` redireciona), seção "Thermometers (Dallas)": tabela com os IDs
 (ROM, `XX-XX-XX-XX-XX-XX-XX-XX`) encontrados na última varredura, a leitura de cada um e o
 papel atual, e um seletor por papel. Um sensor atribuído que não está no
 barramento aparece como "not found" e continua selecionável, para que salvar a

@@ -41,7 +41,7 @@ Regras gerais:
 flowchart TD
     A([Instalação nova, placa trocada<br/>ou fermentador novo]) --> B[P1 Zero do sensor de pressão]
     B --> C[P2 Intercalibração dos Dallas<br/>fermentador × ambiente × headspace]
-    C --> D[P3 Fonte da Patm<br/>BMP581 / SideKick / altitude]
+    C --> D[P3 Fonte da Patm<br/>SideKick / altitude]
     D --> E{Volume do fermentador<br/>conhecido?}
     E -- não --> F{Dá para pesar<br/>com água?}
     F -- sim --> G[P4a Pesagem com água]
@@ -139,12 +139,12 @@ Quando: instalação, troca de sensor; depois, uma vez por ano.
 
 ### P3. Fonte da pressão atmosférica
 
-Prioridade: BMP581 no Povoto → SideKick (broadcast `'A'`, um por site; o
-SideKick precisa do BMP581 nos pinos 27/14) → altitude configurada.
+Prioridade: SideKick (broadcast `'A'`, um por site; o SideKick precisa do BMP581, nos
+pinos SDA 32 / SCL 33) → altitude configurada. O Povoto não tem barômetro próprio.
 
 1. Confira no `/getstatus` a fonte em uso e o valor (hPa).
 2. Com duas fontes válidas, a diferença entre elas deve ficar em poucos hPa.
-3. Confira a **altitude** na página Settings mesmo com barômetro (é o fallback).
+3. Confira a **altitude** na página Fermenter settings mesmo com o SideKick (é o fallback).
    Não mude a altitude no meio de um lote.
 
 ### P4a. Volume do fermentador por pesagem
@@ -286,9 +286,10 @@ Siga o segundo fluxograma da seção 1.
    porta **R** e leve-a ao dreno.
 3. Ligue o líquido pressurizado (alguns décimos de bar) **só na porta A**.
 4. Control → "Valve cleaning". A válvula alterna energizada (A→P)
-   e desenergizada (A→R), 2 s + 2 s, ~4 min por fase; cada fase começa com a
-   confirmação do líquido na porta A.
-5. Fases, trocando o líquido em A a cada confirmação:
+   e desenergizada (A→R), 2 s + 2 s, pelo tempo que você escolher (padrão 4 min); o LED de venting
+   fica aceso com a válvula fechada. O programa não controla as fases: você troca o líquido e aperta
+   "Start valve cleaning" a cada rodada.
+5. Rodadas sugeridas, trocando o líquido em A antes de cada uma:
    1. detergente neutro;
    2. água;
    3. álcool 70%;

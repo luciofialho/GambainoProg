@@ -19,6 +19,7 @@ struct KegVolumeResult {
   uint8_t total;      // reliefs done
   uint8_t planned;    // reliefs planned at the start
   float mean, sd;     // L (sd NAN with one relief)
+  float minVolume, maxVolume; // L, of the stable reliefs
   float simpleMean;   // V_E (T_F/T_E) P2 / (P1 - P2), for comparison
   float fmtVolume;    // the configured FMT volume now
   bool canSave;       // finished, at least 2 stable reliefs
