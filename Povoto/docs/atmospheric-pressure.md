@@ -34,9 +34,9 @@ vazão da válvula (∝ pressão absoluta).
 
 Firmware do SideKick, `SideKick/src/Sidekick-ambient.cpp`:
 
-- BMP581 no I²C dos antigos pinos do display (SDA 27, SCL 14), lido a 1 Hz;
+- BMP581 no I²C (SDA 32, SCL 33), lido a 1 Hz;
   a cada 10 s, broadcast `'A'` com a média das leituras válidas desses 10 s.
-- Termômetro Dallas opcional no GPIO 32: se instalado, broadcast `'V'` (a
+- Termômetro Dallas opcional no GPIO 13: se instalado, broadcast `'V'` (a
   temperatura ambiente, mesmo formato do BrewCore) a cada minuto. O Povoto
   prefere o `'V'` do SideKick (reconhecido pelo MAC do peer SideKick) ao do
   BrewCore (docs/thermometers.md).
