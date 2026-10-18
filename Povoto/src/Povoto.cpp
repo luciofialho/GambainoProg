@@ -223,6 +223,7 @@ void setup() {
 
   povotoDataInit();
   debugModeProvider = []() { return FMTData.debugMode; };
+  datalogFolderProvider = []() -> const char * { return debugging ? "GambainoDebug" : FMTData.googleLogFolder; };
   applyDebugMode(FMTData.debugMode);
   cloudLogBegin();
   cloudSyncBegin();

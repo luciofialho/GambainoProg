@@ -479,9 +479,17 @@ static const uint8_t kTagLen = 6;
 
 bool (*debugModeProvider)() = nullptr;
 
+const char *(*datalogFolderProvider)() = nullptr;
+
+void refreshDatalogFolder() {
+  const char *name = datalogFolderProvider ? datalogFolderProvider() : nullptr;
+  if (!name) name = debugging ? "GambainoDebug" : "Beers";
+  strlcpy(datalogFolderNameInUse, name, sizeof(datalogFolderNameInUse));
+}
+
 void applyDebugMode(bool debug) {
   debugging = debug;
-  strcpy(datalogFolderNameInUse, debugging ? "GambainoDebug" : "Beers");
+  refreshDatalogFolder();
 }
 
 void updateDebugModeFromWiFi() {
@@ -492,12 +500,11 @@ void updateDebugModeFromWiFi() {
               WiFi.localIP() != IPAddress(192,168,29,182);
   if (debugging) {
     Serial.println("Entering development mode");
-    strcpy(datalogFolderNameInUse, "GambainoDebug");
   }
   else {
     Serial.println("Entering operational mode");
-    strcpy(datalogFolderNameInUse, "Beers");
   }
+  refreshDatalogFolder();
   peerUpdateOwnAddress();  // update peer slot with real IP now that WiFi is up
 }
 

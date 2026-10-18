@@ -59,6 +59,7 @@ String savePovotoSettingsBackup() {
   json = "{\n  \"format\": \"povoto-settings\",\n  \"version\": 1,\n";
   appendNumber(json, "PovotoNum", FMTData.PovotoNum, 0);
   appendBool(json, "debugMode", FMTData.debugMode);
+  appendBool(json, "googleLogEnabled", FMTData.googleLogEnabled);
   appendNumber(json, "FMTVolume", FMTData.FMTVolume, 6);
   appendNumber(json, "ventTargetDropPercent", FMTData.ventTargetDropPercent, 6);
   appendNumber(json, "flowLevelFactor", FMTData.flowLevelFactor, 6);
@@ -229,6 +230,7 @@ bool loadPovotoSettingsBackup(const String &settings) {
   povotoNumber = loadedFmt.PovotoNum;
   if (hasKey(json, "PovotoNum") && !readInt(json, "PovotoNum", povotoNumber)) return false;
   READ_BACKUP_BOOL("debugMode", loadedFmt.debugMode);
+  READ_BACKUP_BOOL("googleLogEnabled", loadedFmt.googleLogEnabled);
   READ_BACKUP_FLOAT("FMTVolume", loadedFmt.FMTVolume);
   // Expansion-tank fields of older files (te-final tag), and the retired
   // liquidMassInGasVentingPercent, ventMinSeconds, ventSafetyDropPercent and

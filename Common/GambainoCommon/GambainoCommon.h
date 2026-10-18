@@ -107,6 +107,10 @@ void checkDebugMode();
 void updateDebugModeFromWiFi();
 // Optional: when set, debug mode comes from this callback instead of the IP.
 extern bool (*debugModeProvider)();
+// Optional: datalog folder name (nullptr = default for the mode). Call
+// refreshDatalogFolder() after the underlying setting changes.
+extern const char *(*datalogFolderProvider)();
+void refreshDatalogFolder();
 void applyDebugMode(bool debug);  // sets debugging and the datalog folder
 void verifyWiFiConnection();
 

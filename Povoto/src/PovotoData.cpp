@@ -15,6 +15,8 @@
 FMTData_t FMTData = {
   .nvsSchemaVersion = 0, // Missing version must trigger the first rewrite.
   .PovotoNum = 0,
+  .googleLogEnabled = true,
+  .googleLogFolder = {'B', 'e', 'e', 'r', 's'},
   .debugMode = true,
   .FMTVolume = 120.0,
   .FMTAltitude = 0.0,
@@ -141,6 +143,13 @@ bool readFMTDataFromEEPROM() {
   FMTData.nucleationWindow = store.getInt("nucleation", defaultFMTData.nucleationWindow);
   FMTData.nvsSchemaVersion = store.getUInt("schemaVersion", 0);
   FMTData.PovotoNum = store.getUChar("number", defaultFMTData.PovotoNum);
+  FMTData.googleLogEnabled = store.getBool("gLogOn", defaultFMTData.googleLogEnabled);
+  {
+    String folder = store.getString("gLogFolder", defaultFMTData.googleLogFolder);
+    folder.trim();
+    if (folder.isEmpty() || folder.length() >= sizeof(FMTData.googleLogFolder)) folder = defaultFMTData.googleLogFolder;
+    strlcpy(FMTData.googleLogFolder, folder.c_str(), sizeof(FMTData.googleLogFolder));
+  }
   FMTData.debugMode = store.getBool("debugMode", defaultFMTData.debugMode);
   FMTData.FMTVolume = store.getFloat("volume", defaultFMTData.FMTVolume);
   if (!isfinite(FMTData.FMTVolume)) FMTData.FMTVolume = defaultFMTData.FMTVolume;
@@ -205,6 +214,8 @@ bool writeFMTDataToNIV() {
   saved = (store.putBytes("ventRefCurve", &FMTData.ventReferenceCurve, sizeof(FMTData.ventReferenceCurve)) ==
            sizeof(FMTData.ventReferenceCurve)) && saved;
   saved = (store.putUChar("number", FMTData.PovotoNum) == sizeof(FMTData.PovotoNum)) && saved;
+  saved = (store.putBool("gLogOn", FMTData.googleLogEnabled) == sizeof(uint8_t)) && saved;
+  saved = (store.putString("gLogFolder", FMTData.googleLogFolder) == strlen(FMTData.googleLogFolder)) && saved;
   saved = (store.putBool("debugMode", FMTData.debugMode) == sizeof(uint8_t)) && saved;
   saved = (store.putFloat("volume", FMTData.FMTVolume) == sizeof(FMTData.FMTVolume)) && saved;
   saved = (store.putFloat("altitude", FMTData.FMTAltitude) == sizeof(FMTData.FMTAltitude)) && saved;

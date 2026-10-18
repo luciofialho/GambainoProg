@@ -2836,6 +2836,13 @@ void handleUserConfigPage(AsyncWebServerRequest *request) {
     "small{display:block;color:#666;margin-top:4px;}"
     "</style></head><body><div class='container'><h1>User Configuration</h1>"
     "<form action='/userConfig/update' method='POST'>"
+    // The hidden field tells the update that the checkbox was on the form
+    // (an unchecked checkbox is not posted).
+    "<input type='hidden' name='cloudEditsField' value='1'>"
+    "<label><input type='checkbox' name='cloudEdits' value='1'";
+  html += cloudEditsAccepted() ? " checked" : "";
+  html += "> Accept new setpoints and triggered actions from cloud</label>"
+    "<small>Set points and triggered action rules changed on the cloud site are applied by this Povoto.</small>"
     "<label for='screensaverTime'>Screensaver Time (seconds):</label>"
     "<input type='number' id='screensaverTime' name='screensaverTime' min='10' max='2147483647' step='1' required value='";
   html += String(UserConfigurationData.screensaverTime);
@@ -2847,19 +2854,23 @@ void handleUserConfigPage(AsyncWebServerRequest *request) {
   html += "</output> / 10</label><input type='range' id='displayBrightness' name='displayBrightness' "
     "min='1' max='10' step='1' oninput=\"document.getElementById('brightnessValue').value=this.value\" value='";
   html += String(UserConfigurationData.displayBrightness);
-  html += "'><label for='dataLogIntervalSeconds'>Log interval:</label><select id='dataLogIntervalSeconds' name='dataLogIntervalSeconds'>";
+  html += "'><h2>Google Sheets Datalog</h2>"
+    "<input type='hidden' name='googleLogField' value='1'>"
+    "<label><input type='checkbox' name='googleLogEnabled' value='1'";
+  html += FMTData.googleLogEnabled ? " checked" : "";
+  html += "> Enable Google Sheets Datalog</label>"
+    "<label for='googleLogFolder'>Google Datalog Folder Name:</label>"
+    "<input type='text' id='googleLogFolder' name='googleLogFolder' maxlength='19' value='";
+  html += debugging ? String("GambainoDebug") : String(FMTData.googleLogFolder);
+  html += debugging ? "' readonly>" : "'>";
+  html += "<label for='dataLogIntervalSeconds'>Log interval:</label><select id='dataLogIntervalSeconds' name='dataLogIntervalSeconds'>";
   const int logIntervals[] = {30, 60, 120, 300, 600};
   const char *logIntervalLabels[] = {"30 seconds", "1 minute", "2 minutes", "5 minutes", "10 minutes"};
   for (uint8_t i = 0; i < sizeof(logIntervals) / sizeof(logIntervals[0]); ++i) {
     html += String("<option value='") + logIntervals[i] + "'" +
             (FMTData.dataLogIntervalSeconds == logIntervals[i] ? " selected" : "") + ">" + logIntervalLabels[i] + "</option>";
   }
-  // The hidden field tells the update that the checkbox was on the form
-  // (an unchecked checkbox is not posted).
-  html += String("</select><input type='hidden' name='cloudEditsField' value='1'>"
-                 "<label><input type='checkbox' name='cloudEdits' value='1'") + (cloudEditsAccepted() ? " checked" : "") +
-          "> Accept new setpoints and triggered actions from cloud</label>"
-          "<small>Set points and triggered action rules changed on the cloud site are applied by this Povoto.</small>";
+  html += "</select>";
   html += "<button type='submit'>Save</button> <a href='/menu'>Cancel</a></form></div></body></html>";
   request->send(200, "text/html", html);
 }
@@ -2905,13 +2916,32 @@ void handleUserConfigUpdate(AsyncWebServerRequest *request) {
     request->send(500, "text/plain", "Could not save Accept new setpoints and triggered actions from cloud.");
     return;
   }
+  bool googleLogEnabled = FMTData.googleLogEnabled;
+  char googleLogFolder[sizeof(FMTData.googleLogFolder)];
+  strlcpy(googleLogFolder, FMTData.googleLogFolder, sizeof(googleLogFolder));
+  if (request->hasParam("googleLogField", true)) {
+    googleLogEnabled = request->hasParam("googleLogEnabled", true);
+    if (!debugging && request->hasParam("googleLogFolder", true)) {
+      String folder = request->getParam("googleLogFolder", true)->value();
+      folder.trim();
+      if (folder.isEmpty() || folder.length() >= sizeof(googleLogFolder)) {
+        request->send(400, "text/plain", "Google Datalog Folder Name must have 1 to 19 characters.");
+        return;
+      }
+      strlcpy(googleLogFolder, folder.c_str(), sizeof(googleLogFolder));
+    }
+  }
   UserConfigurationData.screensaverTime = screensaverTime;
   UserConfigurationData.keypadPin = keypadPin;
   UserConfigurationData.displayBrightness = brightness;
   writeUserConfigurationDataToNIV();
-  if (logInterval != FMTData.dataLogIntervalSeconds) {
+  if (logInterval != FMTData.dataLogIntervalSeconds || googleLogEnabled != FMTData.googleLogEnabled ||
+      strcmp(googleLogFolder, FMTData.googleLogFolder) != 0) {
     FMTData.dataLogIntervalSeconds = logInterval;
+    FMTData.googleLogEnabled = googleLogEnabled;
+    strlcpy(FMTData.googleLogFolder, googleLogFolder, sizeof(FMTData.googleLogFolder));
     writeFMTDataToNIV();
+    refreshDatalogFolder();
   }
   request->redirect("/menu");
 }

@@ -219,14 +219,25 @@ static bool sendLogHeader(const char *sheet, uint8_t &attempts) {
   return true;
 }
 
+// Google Sheets logging is off, or has no folder yet.
+static bool googleLogActive() { return FMTData.googleLogEnabled && datalogFolderNameInUse[0]; }
+
+// A new folder is a new spreadsheet location: its sheets need their header.
+static bool folderChanged(char (&seen)[20]) {
+  if (!strcmp(seen, datalogFolderNameInUse)) return false;
+  strlcpy(seen, datalogFolderNameInUse, sizeof(seen));
+  return true;
+}
+
 void doDataLog() {
-  if (!datalogFolderNameInUse[0] || !logLinkReady()) {
+  if (!googleLogActive() || !logLinkReady()) {
     return;
   }
 
   static bool headerWritten = false;
   static uint8_t headerAttempts = 0;
   static int lastBatchNum = -1;
+  static char lastFolder[20] = "";
 
   if (BatchData.batchNumber == 0) {
     headerWritten = false;
@@ -246,6 +257,7 @@ void doDataLog() {
     headerWritten = false;
     headerAttempts = 0;
   }
+  if (folderChanged(lastFolder)) { headerWritten = false; headerAttempts = 0; }
   char batchStr[6]; // All uint16_t batch numbers plus the terminator.
   snprintf(batchStr, sizeof(batchStr), "%03d", batchNum);
 
@@ -352,7 +364,7 @@ void doDataLog() {
 }
 
 void doReliefDataLog(const ReliefLogData &data) {
-  if (!datalogFolderNameInUse[0] || BatchData.batchNumber == 0 ||
+  if (!googleLogActive() || BatchData.batchNumber == 0 ||
       SetPointData.mode == MODE_CONDITIONING || !logLinkReady()) {
     return;
   }
@@ -365,6 +377,7 @@ void doReliefDataLog(const ReliefLogData &data) {
   // guard prevents a repeated scheduling event from producing a second row.
   static bool lastReliefLogged = false;
   static int lastReliefBatchNum = -1;
+  static char lastFolder[20] = "";
   static unsigned long lastReliefValveOpenedMillis = 0;
   const int batchNum = (int)BatchData.batchNumber;
 
@@ -383,6 +396,7 @@ void doReliefDataLog(const ReliefLogData &data) {
     headerWritten = false;
     headerAttempts = 0;
   }
+  if (folderChanged(lastFolder)) { headerWritten = false; headerAttempts = 0; }
 
   char batchStr[6]; // All uint16_t batch numbers plus the terminator.
   snprintf(batchStr, sizeof(batchStr), "%03d", batchNum);
@@ -523,13 +537,15 @@ void doReliefDataLog(const ReliefLogData &data) {
 
 
 void doTaskDataLog(const TaskLogData &data) {
-  if (!datalogFolderNameInUse[0] || BatchData.batchNumber == 0 || !logLinkReady()) return;
+  if (!googleLogActive() || BatchData.batchNumber == 0 || !logLinkReady()) return;
 
   static bool headerWritten = false;
   static uint8_t headerAttempts = 0;
   static int lastBatchNum = -1;
   const int batchNum = (int)BatchData.batchNumber;
   if (batchNum != lastBatchNum) { lastBatchNum = batchNum; headerWritten = false; headerAttempts = 0; }
+  static char lastFolder[20] = "";
+  if (folderChanged(lastFolder)) { headerWritten = false; headerAttempts = 0; }
 
   char batchStr[6];
   snprintf(batchStr, sizeof(batchStr), "%03d", batchNum);

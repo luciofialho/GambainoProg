@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pio run)",
+      "Bash(python tests/check_status_sizes.py)",
+      "Bash(python tests/check_log_sizes.py)"
+    ]
+  }
+}
