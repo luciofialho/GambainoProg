@@ -22,7 +22,7 @@ O método antigo, com tanque de expansão (TE), está na tag `te-final-2026-10-1
 ## Regras de trabalho
 - Pode haver fermentação em andamento com o equipamento em produção. Nunca gravar na placa (upload/OTA) sem confirmação explícita.
 - Mudanças de diagnóstico não podem alterar controle, headspace, CO2 nem SG.
-- Preservar o final de linha CRLF dos arquivos (alguns poucos, como `PovotoSettingsBackup.cpp` e `SideKick/src/Sidekick.cpp`, são LF: manter).
+- Final de linha: CRLF, exceto os arquivos de `tests/eol_lf_files.txt` (LF). Editar com Edit (preserva); `sed -i` do Git Bash e o Write deixam LF. Antes de cada commit: `python tests/check_eol.py --fix` (arquivo novo entra como CRLF).
 - Compatibilidade com o fallback: não apagar nem reaproveitar chaves NVS do TE, não mudar partições, mudar o magic de qualquer arquivo da `persist` cujo formato mude.
 - Todo texto de tela, página web, `/getstatus` e alarme em inglês.
 - O usuário confere os números: verificar antes de afirmar. Prefere versões completas (sem etapas intermediárias) e soluções com base física ou em análise de dados.
