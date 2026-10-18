@@ -35,7 +35,7 @@ Manual de operação: `docs/manual-calibracao-manutencao.md`.
 
 - **Todo texto de tela, página web, `/getstatus` e mensagens de alarme em inglês.**
   Rótulos usados neste plano e no manual: "Sensor zero", "Save zero",
-  "Unstable reading", "Venting test", "Valve cleaning", "Keg volume";
+  "Unstable reading", "Venting test", "Valve cleaning", "Expansion tank volume";
   etiquetas do ensaio: `as-is`, `muffler-cleaned`, `valve-cleaned`, `new-valve`,
   `after-cleaning-cycle`; papel de Dallas `Headspace`.
 
@@ -112,21 +112,21 @@ sem vaso antes da válvula.
 
 Fontes, em ordem de prioridade:
 
-1. **BMP581 no Povoto** (I²C, próxima versão da placa).
-2. **SideKick**: pressão no broadcast ESP-NOW junto com a temperatura ambiente
+O Povoto não tem barômetro; quem tem o BMP581 é o SideKick (docs/atmospheric-pressure.md).
+
+1. **SideKick**: pressão no broadcast ESP-NOW junto com a temperatura ambiente
    (um sensor por site). Pacote compatível com SideKicks antigos (sem pressão).
    Mesma validade do ambiente (expira em 10 min).
-3. **Altitude** configurada (comportamento atual).
+2. **Altitude** configurada (comportamento atual).
 
 Regras:
-- Validade: faixa plausível (ex. 700–1100 hPa), leitura recente (BMP581: falha
-  por mais de 60 s → inválido; SideKick: 10 min). Inválida → próxima fonte, sem
-  intervenção.
+- Validade: faixa plausível (ex. 700–1100 hPa), leitura recente (SideKick: 10 min).
+  Inválida → próxima fonte, sem intervenção.
 - Filtro: média móvel de ~1 min.
 - Troca de fonte não mexe em estado acumulado (só afeta as vazões seguintes e o
   Henry).
 - Logs Cold e Relief: `AtmosphericPressure` (já existe) +
-  `AtmosphericPressureSource` (`sensor` / `sidekick` / `altitude`). `/getstatus`:
+  `AtmosphericPressureSource` (`sidekick` / `altitude`). `/getstatus`:
   fonte, valor, idade e, com duas fontes válidas, a diferença entre elas.
 - Na troca automática para uma fonte de prioridade menor: aviso no status (sem
   alarme sonoro).
@@ -158,8 +158,8 @@ Regras:
   24 h (mesmas regras de janela de task de hoje) e a coluna do monitor passivo.
 - **Queda pequena** (manter o `ReliefCheck` `RELIEF_CHECK_NO_EFFECT` que já
   existe, adaptado ao vent: queda obtida muito menor que a esperada pela curva,
-  2 seguidas → alarme, `docs/alarms.md`): válvula não abriu, saída obstruída, TE
-  religado por engano. O vent com queda pequena **não é contado** (o modelo
+  2 seguidas → alarme, `docs/alarms.md`): válvula não abriu, saída obstruída.
+  O vent com queda pequena **não é contado** (o modelo
   contaria mols que não saíram) nem alimenta o Vh.
 - **Retirar o `RELIEF_CHECK_LEAK`** (queda elevada): sem TE não há causa no
   equipamento para ela; tudo relacionado sai.
@@ -247,8 +247,8 @@ escondido. A rotina trabalha com a **corrente bruta**, não com a pressão.
 - Mostra: corrente média, desvio, amplitude e tendência, `pressure0Current` gravado, a diferença em mA
   e em mbar **sem corte** (pela inclinação da calibração perto do zero:
   `pressure1Bar / (pressure1Current − pressure0Current)`).
-- Botão "Save zero": desloca **os três pontos de corrente**
-  (`pressure0Current`, `pressure1Current`, `pressure2Current`) pela mesma
+- Botão "Save zero": desloca **os dois pontos de corrente**
+  (`pressure0Current`, `pressure1Current`) pela mesma
   diferença, preservando o ganho (um desvio de zero no transmissor/shunt é
   aditivo). Nada gravado sem o botão. Registrar data e diferença no histórico de
   ensaios.
@@ -260,12 +260,11 @@ escondido. A rotina trabalha com a **corrente bruta**, não com a pressão.
   cancela no volume pelo barril; deriva de ganho aparece no histórico do ensaio
   de ventilação. Rever a compra (0–250 kPa, ≤ 0,25% FS) só se o histórico
   mostrar mudanças que precisem separar sensor de válvula. Sem gravar
-  (recalibrar o ganho é a calibração de 3 pontos que já existe).
+  (recalibrar o ganho é a calibração dos pontos A e B que já existe).
 - `/getstatus`: corrente bruta e pressão sem corte, além da pressão de controle.
 
 ### 4.7 Hardware
 
-- BMP581 na próxima placa.
 - Porta A para a atmosfera por uma **garrafa PET seca** (gás entra pelo fundo,
   topo bem aberto; silenciador de baixa resistência no topo, se houver):
   testemunha de líquido ejetado. Sem água. Porta R com silenciador ou filtro.

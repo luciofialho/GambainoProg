@@ -2,7 +2,7 @@
 #include <Arduino.h>
 #include <math.h>
 
-// Waits of the calibration routines (venting test, keg volume): one fermenter
+// Waits of the calibration routines (venting test, expansion tank volume): one fermenter
 // pressure per second, only fresh acquisitions, in a ring of the last
 // PRESSURE_WAIT_SAMPLES seconds. The first sample of the wait is kept apart
 // (the pressure right after closing a valve).

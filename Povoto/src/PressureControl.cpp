@@ -19,7 +19,7 @@
 #include "PovotoAlarms.h"
 #include "VentingTest.h"
 #include "ValveCleaning.h"
-#include "KegVolume.h"
+#include "ExpansionTank.h"
 #include <esp_timer.h>
 #include <math.h>
 #include <algorithm>
@@ -36,9 +36,6 @@
 
 #define TRANSFER_CLOSE_PRESSURE_BLOCK_MS (2*CURRENT_MEDIAN_MIN_SAMPLE_MS*PRESSURE_MEDIAN_WINDOW) // gives time to fill and renovate the whole vector, avoiding transient pneumatics effects
 
-#define RELIEFS_WINDOW_SIZE 2
-#define RELIEF_OVERDUE_FACTOR 1.20f
-#define RELIEF_PER_HOUR_MIN_DISPLAY 0.20f
 
 #define CONST_R 0.0831446 // constante dos gases em bar*L/(mol*K) 
 #define CO2MOLAR_MASS 44.01
@@ -82,7 +79,7 @@ static bool co2StateIsHalfLife(CO2DissolvedState s) {
   return s == CO2_STATE_HALF_LIFE || s == CO2_STATE_HALF_LIFE_ARMED;
 }
 // Transitions, calibrated on batches 159 and 160 with the gas-phase CO2 rate
-// (ejected + headspace + expansion tank, independent of the dissolved model).
+// (ejected + headspace, independent of the dissolved model).
 // The armed values have no data yet (no fermentables addition logged).
 static constexpr uint32_t CO2_INITIAL_CONFIRM_RELIEFS = 3;
 static constexpr float CO2_GAS_RATE_EXIT = 0.3f;         // g/L/d: below it, no generation
@@ -116,7 +113,7 @@ static uint32_t co2EvolutionLastReliefCount = 0; // relief count at the last CO2
 struct CO2EvolutionSample {
   unsigned long millisStamp;
   float pressure;
-  double gasMols;       // ejected + headspace + expansion tank
+  double gasMols;       // ejected + headspace
   bool externalStep;    // pressure jump without relief (e.g. gas added): no decision
 };
 static CO2EvolutionSample co2EvolutionHistory[CO2_EVOLUTION_HISTORY_SIZE];
@@ -137,11 +134,15 @@ static uint16_t co2TrendCount = 0;
 static void updateCO2Transition();
 static void resetCO2Transition(bool startAtNextSample);
 
-static unsigned long int timeToStartExpansion     = 0;
-static unsigned long int timeToFinishExpansion    = 0;
+static unsigned long int timeToStartRelief     = 0;
+static unsigned long int timeToFinishRelief    = 0;
 static unsigned long int timeToRegisterPressure = 0; // after a relief event
 static unsigned long int noPressureReadUntil = 0;
 static unsigned long reliefValveOpenedMillis = 0;
+// Valve held open by the Control page override (applyValveOverride()).
+static bool valveOverrideOpen = false;
+static unsigned long valveOverrideOpenSince = 0;
+static constexpr unsigned long VALVE_OVERRIDE_OPEN_MAX_MS = 600000UL; // then back to Auto
 // A relief opened during a task (or its nucleation window) does not measure the
 // headspace: gas and volume are changing by unknown amounts.
 static bool reliefOpenedDuringTask = false;
@@ -254,11 +255,9 @@ static uint8_t currentWindowIndex = 0;
 static unsigned long lastCurrentMedianSampleMillis = 0;
 static bool derivedStateRestorePending = true;
 
-static unsigned long reliefMillisWindow[RELIEFS_WINDOW_SIZE];
-static uint8_t reliefMillisCount = 0;
-static uint8_t reliefMillisIndex = 0;
-static bool reliefsPerHourAvailable = false;
-static float reliefsPerHourValue = 0.0f;
+// Time between the last vents (TBLV): millis() of the last two vents in Fermenting.
+static unsigned long ventMillisLast = 0, ventMillisPrevious = 0;
+static uint8_t ventMillisCount = 0; // 0..2
 
 float kelvin(float x) {
   return x + 273.15f;
@@ -312,7 +311,7 @@ float CO2DissolvedMols(float pressureBar, float sg, float temperatureC, float vo
   return molPerL * volumeL;
 }
 
-static float expansionPressureThreshold() {
+static float reliefPressureThreshold() {
   if (SetPointData.setPointPressure <= 0.0f ||
       !isfinite(pressureDropFactor) || pressureDropFactor <= 0.0f) {
     return ControlData.pressure;
@@ -1213,8 +1212,8 @@ static void recomputeBeerCO2EvolutionFromCurrentState() {
     return;
   }
 
-  // gCO2/L/d is the net CO2 released by the beer: ejected + headspace + expansion
-  // tank (docs/gco2-rate.md). The dissolved CO2 is not in the rate.
+  // gCO2/L/d is the net CO2 released by the beer: ejected + headspace
+  // (docs/gco2-rate.md). The dissolved CO2 is not in the rate.
   const double gasMols = gasPhaseCO2Mols();
   if (!isfinite(beerVolume) || beerVolume <= 0.0f || !isfinite(gasMols)) {
     beerCO2EvolutionGramsPerLiterPerDay = 0.0f;
@@ -1556,83 +1555,18 @@ float getBeerCO2EvolutionGramsPerLiterPerDay() {
   return fmaxf(0.0f, getReportedCO2EvolutionGramsPerLiterPerDay());
 }
 
-static void resetReliefsPerHourState() {
-  reliefMillisCount = 0;
-  reliefMillisIndex = 0;
-  reliefsPerHourAvailable = false;
-  reliefsPerHourValue = 0.0f;
-}
-
-static void updateReliefsPerHour(bool registerReliefEvent) {
+// TBLV: the longer of the interval between the last two vents and the time since
+// the last one (a vent that is late shows it at once). Fermenting only.
+static void updateTimeBetweenVents(bool registerVent) {
   if (SetPointData.mode != MODE_FERMENTING) {
-    resetReliefsPerHourState();
+    ventMillisCount = 0;
     return;
   }
-
-  const unsigned long now = millis();
-  if (registerReliefEvent) {
-    reliefMillisWindow[reliefMillisIndex] = now;
-    reliefMillisIndex = (reliefMillisIndex + 1) % RELIEFS_WINDOW_SIZE;
-    if (reliefMillisCount < RELIEFS_WINDOW_SIZE) {
-      reliefMillisCount++;
-    }
+  if (registerVent) {
+    ventMillisPrevious = ventMillisLast;
+    ventMillisLast = millis();
+    if (ventMillisCount < 2) ++ventMillisCount;
   }
-
-  if (reliefMillisCount < RELIEFS_WINDOW_SIZE) {
-    reliefsPerHourAvailable = false;
-    return;
-  }
-
-  const uint8_t oldestIndex = reliefMillisIndex;
-  const uint8_t newestIndex = (oldestIndex + RELIEFS_WINDOW_SIZE - 1) % RELIEFS_WINDOW_SIZE;
-  const unsigned long firstMillis = reliefMillisWindow[oldestIndex];
-  const unsigned long lastMillis = reliefMillisWindow[newestIndex];
-
-  unsigned long consideredLastMillis = lastMillis;
-  const unsigned long historicalSpan = lastMillis - firstMillis;
-  if (historicalSpan == 0) {
-    reliefsPerHourAvailable = false;
-    return;
-  }
-
-  const float historicalAverage = historicalSpan / float(RELIEFS_WINDOW_SIZE - 1);
-  const unsigned long sinceLastRelief = now - lastMillis;
-  if (sinceLastRelief > (unsigned long)(historicalAverage * RELIEF_OVERDUE_FACTOR)) {
-    consideredLastMillis = now;
-  }
-
-  const unsigned long consideredSpan = consideredLastMillis - firstMillis;
-  if (consideredSpan == 0) {
-    reliefsPerHourAvailable = false;
-    return;
-  }
-
-  const float avgMillisPerRelief = consideredSpan / float(RELIEFS_WINDOW_SIZE - 1);
-  if (avgMillisPerRelief <= 0.0f) {
-    reliefsPerHourAvailable = false;
-    return;
-  }
-
-  reliefsPerHourValue = 3600000.0f / avgMillisPerRelief;
-  reliefsPerHourAvailable = true;
-}
-
-void getReliefsPerHourText(char *out, size_t outSize) {
-  if (!out || outSize == 0) {
-    return;
-  }
-
-  out[0] = '\0';
-  if (SetPointData.mode != MODE_FERMENTING) {
-    return;
-  }
-
-  if (!reliefsPerHourAvailable || reliefsPerHourValue < RELIEF_PER_HOUR_MIN_DISPLAY) {
-    snprintf(out, outSize, " (Reliefs/hour: N/A)");
-    return;
-  }
-
-  snprintf(out, outSize, " (Reliefs/hour: %.1f)", reliefsPerHourValue);
 }
 
 void getCO2RateLabel(char *out, size_t outSize) {
@@ -1653,14 +1587,12 @@ void getCO2RateLabel(char *out, size_t outSize) {
     snprintf(out, outSize, "gCO2 [---]");
 }
 
-float getReliefsPerHourValue() {
-  if (SetPointData.mode != MODE_FERMENTING) {
-    return NAN;
-  }
-  if (!reliefsPerHourAvailable || reliefsPerHourValue < RELIEF_PER_HOUR_MIN_DISPLAY) {
-    return NAN;
-  }
-  return reliefsPerHourValue;
+// Seconds, NAN outside Fermenting or before two vents.
+float getTimeBetweenVentsSeconds() {
+  if (SetPointData.mode != MODE_FERMENTING || ventMillisCount < 2) return NAN;
+  const unsigned long interval = ventMillisLast - ventMillisPrevious;
+  const unsigned long sinceLast = millis() - ventMillisLast;
+  return (interval > sinceLast ? interval : sinceLast) / 1000.0f;
 }
 
 float getTotalCO2Mols() {
@@ -1928,7 +1860,7 @@ float convertCurrentToPressure(float current) {
 }
 
 bool inTheMiddleOfRelief() {
-  return (timeToStartExpansion || timeToFinishExpansion || timeToRegisterPressure);
+  return (timeToStartRelief || timeToFinishRelief || timeToRegisterPressure);
 }
 
 unsigned long pressureAcquisitionMillis() {
@@ -2075,7 +2007,7 @@ String describePressureSensor() {
 // (settled drop of P/Z x applied headspace, the 24-hour average as a frozen
 // reference, / RT). Their ratio is the measured / expected drop. Below 0.8
 // the outlet passed less than the curve says (partly or fully blocked, valve
-// not opening, expansion tank reconnected by mistake): the vent is counted on
+// not opening): the vent is counted on
 // the fermenter side and stays out of the 24-hour average and the EMA. The
 // reference is the 24-hour headspace, which comes from the flow model itself,
 // so the ratio only sees abrupt changes (gradual fouling shows in the rising
@@ -2089,7 +2021,7 @@ static constexpr uint8_t RELIEF_CHECK_CONSECUTIVE = 2;
 static constexpr float RELIEF_CHECK_MIN_PRESSURE = 0.1f; // bar
 static constexpr uint8_t RELIEF_CHECK_SKIPPED = 0;
 static constexpr uint8_t RELIEF_CHECK_OK = 1;
-static constexpr uint8_t RELIEF_CHECK_NO_EFFECT = 3; // value kept from the expansion-tank check
+static constexpr uint8_t RELIEF_CHECK_NO_EFFECT = 3; // ratio below 0.25 (the numbering skips 2)
 static constexpr uint8_t RELIEF_CHECK_PARTIAL = 4;   // ratio 0.25-0.8: counted on the fermenter side
 static uint8_t reliefCheckLast = RELIEF_CHECK_SKIPPED;  // last evaluated vent
 static uint8_t reliefCheckRun = 0;                      // consecutive vents below VENT_FERMENTER_SIDE_RATIO
@@ -2171,8 +2103,10 @@ String describeReliefCheck() {
 // After a fermentation vent the pressure recovers (the gas warms back and the
 // fermentation goes on). If it is still falling STUCK_OPEN_CHECK_MS after the
 // reading right after closing, by more than STUCK_OPEN_FALL_BAR, the valve did
-// not close: alarm at once (the fermenter is losing its pressure). A later
-// vent that recovers normally clears it.
+// not close: alarm at once (the fermenter is losing its pressure). It clears when
+// the pressure rises again (more than STUCK_OPEN_FALL_BAR in STUCK_OPEN_CHECK_MS,
+// rechecked every STUCK_OPEN_CHECK_MS), even before the next vent, or when a
+// later vent recovers normally.
 static constexpr unsigned long STUCK_OPEN_CHECK_MS = 30000UL;
 static constexpr float STUCK_OPEN_FALL_BAR = 0.005f;
 static bool stuckOpenArmed = false;
@@ -2180,6 +2114,9 @@ static float stuckOpenReference = NAN;      // pressure read right after closing
 static unsigned long stuckOpenReferenceMillis = 0;
 static float stuckOpenLastFall = NAN;       // reference - pressure STUCK_OPEN_CHECK_MS later
 static bool stuckOpenAlarm = false;
+static bool stuckOpenRecheckValid = false;  // with the alarm on: the pressure to compare the rise with
+static float stuckOpenRecheckPressure = NAN;
+static unsigned long stuckOpenRecheckMillis = 0;
 
 static void armStuckOpenCheck() {
   stuckOpenArmed = ventCountsCO2() && isfinite(pressureAfterRelief);
@@ -2191,6 +2128,31 @@ static void checkValveStuckOpen() {
   if (!ventCountsCO2()) {
     stuckOpenArmed = false;
     stuckOpenAlarm = false;
+    return;
+  }
+  // The valve is held open by hand (Control page): the pressure falls on purpose.
+  if (valveOverrideOpen) {
+    stuckOpenArmed = false;
+    stuckOpenRecheckValid = false;
+    return;
+  }
+  if (stuckOpenAlarm && !stuckOpenArmed) { // armed: the next vent decides below
+    if (!pressureAcquisitionValid || pressureSensorAlarm || (debugging && debugPressureOverride)) return;
+    if (!stuckOpenRecheckValid) {
+      stuckOpenRecheckValid = true;
+      stuckOpenRecheckPressure = ControlData.pressure;
+      stuckOpenRecheckMillis = pressureAcquiredMillis;
+    } else if ((int32_t)(pressureAcquiredMillis - stuckOpenRecheckMillis) >= (int32_t)STUCK_OPEN_CHECK_MS) {
+      if (ControlData.pressure - stuckOpenRecheckPressure > STUCK_OPEN_FALL_BAR) {
+        stuckOpenAlarm = false;
+        stuckOpenRecheckValid = false;
+        Serial.printf("[VENT] valve stuck open: cleared (pressure rose %.4f bar in %lu s)\n",
+                      ControlData.pressure - stuckOpenRecheckPressure, STUCK_OPEN_CHECK_MS / 1000UL);
+        return;
+      }
+      stuckOpenRecheckPressure = ControlData.pressure;
+      stuckOpenRecheckMillis = pressureAcquiredMillis;
+    }
     return;
   }
   if (!stuckOpenArmed || inTheMiddleOfRelief() || !pressureAcquisitionValid ||
@@ -2205,6 +2167,7 @@ static void checkValveStuckOpen() {
     Serial.printf("[VENT] valve stuck open: %s (pressure fell %.4f bar in %lu s after closing)\n",
                   stuck ? "YES" : "cleared", stuckOpenLastFall, STUCK_OPEN_CHECK_MS / 1000UL);
   stuckOpenAlarm = stuck;
+  stuckOpenRecheckValid = false;
 }
 
 bool valveStuckOpenAlarmActive() {
@@ -2426,7 +2389,7 @@ void processPressure(bool afterRelief) {
   bool collectingInitialHeadspaceSamples = false;
   float ejectedMols = 0.0f;
   uint8_t reliefCheckResult = RELIEF_CHECK_SKIPPED;
-  float ejectedMolsBeforeLiquidCorrection = 0.0f;
+  float ejectedMolsWithVapor = 0.0f;
   double ventGasK = NAN;
 
  // Conditioning: plain refrigerator. The CO2 balance stays as it was at the
@@ -2448,7 +2411,7 @@ void processPressure(bool afterRelief) {
     ControlData.pressure = ControlData.pressure * (1.0f - FMTData.ventTargetDropPercent / 100.0f) +
                            random(-5, 5) * 0.0005;
 
-  updateReliefsPerHour(afterRelief);
+  updateTimeBetweenVents(afterRelief);
 
   if (afterRelief) {
     pressureAfterRelief = ControlData.pressure;
@@ -2514,7 +2477,7 @@ void processPressure(bool afterRelief) {
     // counted moles is CO2, on the flow side and on the fermenter side alike.
     ventResult.vaporFraction = float(VentModel::ventVaporFraction(ControlData.temperature, beerABV,
                                                                   count.pMeanGauge + Patm));
-    ejectedMolsBeforeLiquidCorrection = moles; // total moles, with the vapor
+    ejectedMolsWithVapor = moles; // total moles, with the vapor
     ejectedMols = moles * (1.0f - ventResult.vaporFraction);
     CountersData.totalMolsEjected += ejectedMols;
 
@@ -2627,7 +2590,7 @@ void processPressure(bool afterRelief) {
     reliefLog.ventDropPercent = ventResult.dropPercent;
     reliefLog.ventTargetDropPercent = FMTData.ventTargetDropPercent;
     reliefLog.ventVaporFraction = ventResult.vaporFraction;
-    reliefLog.ejectedMolsBeforeLiquidCorrection = ejectedMolsBeforeLiquidCorrection;
+    reliefLog.ejectedMolsWithVapor = ejectedMolsWithVapor;
     reliefLog.instantaneousPressureDropFactor = instantPressureDropFactor;
     reliefLog.headSpaceVolume = CountersData.headSpaceVolume;
     reliefLog.beerVolume = beerVolume;
@@ -2676,15 +2639,15 @@ void processPressure(bool afterRelief) {
 bool processReliefCycle() {
   if (inTheMiddleOfRelief()) {
     static unsigned long ReliefStartPressureTime = 0;
-    if (timeToStartExpansion) {
-      if (!MILLISDIFF(timeToStartExpansion, 0)) {
+    if (timeToStartRelief) {
+      if (!MILLISDIFF(timeToStartRelief, 0)) {
         digitalWrite(PINVENTINGLED, HIGH); // LED: a vent is waiting to open
       }
       else {
         // Use an acquisition at/after the scheduled opening for the common
         // pre-vent reference used by both correction and diagnostic fit.
         if (!pressureAcquisitionValid || inPressureNoiseWindow() ||
-            (int32_t)(pressureAcquiredMillis - timeToStartExpansion) < 0) return true;
+            (int32_t)(pressureAcquiredMillis - timeToStartRelief) < 0) return true;
         estimatePreviousReliefPolytropicExponent();
         pressureOnReliefMeas = ControlData.pressure;
         pressureOnReliefMeasuredMillis = pressureAcquiredMillis;
@@ -2697,13 +2660,13 @@ bool processReliefCycle() {
         reliefOpenedDuringTask = taskWindowType != 0;
         markSolenoidToggle();
         ControlData.transferValve = true;
-        timeToFinishExpansion = ReliefStartPressureTime + (unsigned long)lroundf(ventPlan.plannedSeconds * 1000.0f);
-        if (!timeToFinishExpansion) timeToFinishExpansion = 1;
-        timeToStartExpansion = 0;
+        timeToFinishRelief = ReliefStartPressureTime + (unsigned long)lroundf(ventPlan.plannedSeconds * 1000.0f);
+        if (!timeToFinishRelief) timeToFinishRelief = 1;
+        timeToStartRelief = 0;
       }
     }
-    else if (timeToFinishExpansion) {
-      if (MILLISDIFF(timeToFinishExpansion, 0)) {
+    else if (timeToFinishRelief) {
+      if (MILLISDIFF(timeToFinishRelief, 0)) {
         // The closing is timed here, in the loop: a late loop only makes the
         // drop larger; the real opening time is what counts.
         digitalWrite(PINTRANSFERVALVE, LOW); const int64_t ventCloseMicros = esp_timer_get_time();
@@ -2732,7 +2695,7 @@ bool processReliefCycle() {
         noPressureReadUntil = millis() + TRANSFER_CLOSE_PRESSURE_BLOCK_MS;
         timeToRegisterPressure = noPressureReadUntil;
         if (!timeToRegisterPressure) timeToRegisterPressure = 1;
-        timeToFinishExpansion = 0;
+        timeToFinishRelief = 0;
       }
     }
 
@@ -2760,21 +2723,21 @@ void pressureRelief() {
     return;
   }
   timeToRegisterPressure = 0; // no state of the previous cycle leaks into the new one
-  timeToFinishExpansion = 0;
+  timeToFinishRelief = 0;
   unsigned long start = millis() + holdPressureDueToTemperatureRelays();
   if (!start) start = 1;
-  timeToStartExpansion = start;
+  timeToStartRelief = start;
   Serial.printf("[PRESSURE] Vent requested: pressure=%.3f bar, opening at %lu\n",
-                ControlData.pressure, timeToStartExpansion);
+                ControlData.pressure, timeToStartRelief);
 }
 
 bool calibrationRoutineActive() {
-  return sensorZeroActive() || ventingTestActive() || valveCleaningActive() || kegVolumeActive();
+  return sensorZeroActive() || ventingTestActive() || valveCleaningActive() || expansionTankActive();
 }
 
 // Routines that drive the valve themselves: no automatic vent meanwhile.
 static bool valveRoutineActive() {
-  return ventingTestActive() || valveCleaningActive() || kegVolumeActive();
+  return ventingTestActive() || valveCleaningActive() || expansionTankActive();
 }
 
 int64_t routineValve(bool open) {
@@ -2791,6 +2754,40 @@ int64_t routineValve(bool open) {
   return micros;
 }
 
+// Why "Relief once" (Control page) cannot run now; nullptr when it can.
+const char *manualReliefBlockedReason() {
+  if (calibrationRoutineActive()) return "A calibration routine is running";
+  if (ControlData.transferOverride != VALVE_OVERRIDE_AUTO) return "Set the Valve to Auto first";
+  if (inTheMiddleOfRelief()) return "A relief is already in progress";
+  return nullptr;
+}
+
+// Valve override of the Control page. Open holds the valve open (the pressure falls,
+// nothing is counted) for at most VALVE_OVERRIDE_OPEN_MAX_MS; a relief in progress
+// finishes first. Closed only suspends the automatic reliefs (pressureControl()): the
+// one above the maximum security pressure still runs. A calibration routine that
+// drives the valve cancels the override.
+static void applyValveOverride() {
+  if (ControlData.transferOverride > VALVE_OVERRIDE_CLOSED) ControlData.transferOverride = VALVE_OVERRIDE_AUTO;
+  if (inTheMiddleOfRelief()) return;
+  if (ControlData.transferOverride == VALVE_OVERRIDE_OPEN) {
+    if (!valveOverrideOpen) {
+      routineValve(true);
+      valveOverrideOpen = true;
+      valveOverrideOpenSince = millis();
+      Serial.println("[VALVE] held open by the Control page");
+    } else if (millis() - valveOverrideOpenSince >= VALVE_OVERRIDE_OPEN_MAX_MS) {
+      ControlData.transferOverride = VALVE_OVERRIDE_AUTO;
+      Serial.println("[VALVE] open override timed out, back to Auto");
+    }
+  }
+  if (valveOverrideOpen && ControlData.transferOverride != VALVE_OVERRIDE_OPEN) {
+    routineValve(false);
+    valveOverrideOpen = false;
+    Serial.println("[VALVE] closed");
+  }
+}
+
 // ===== Pressure stability =====
 // Same cycle as the temperature stability. The final target is the slow
 // target while a ramp is active; ramp steps and ramp completion keep it
@@ -2802,15 +2799,13 @@ int64_t routineValve(bool open) {
 static bool pressureStabilityTargetKnown = false;
 
 struct PressureStabilityBands {
-  bool entryValid; // false without an estimate of the relief cycle (f)
   float entryLow, entryHigh, exitLow, exitHigh;
 };
 
 static PressureStabilityBands pressureStabilityBands(float setPoint) {
   PressureStabilityBands b;
-  // f is the fraction of pressure kept by a relief (0 < f < 1).
-  b.entryValid = isfinite(pressureDropFactor) && pressureDropFactor > 0.0f && pressureDropFactor < 1.0f;
-  const float f = b.entryValid ? pressureDropFactor : 1.0f;
+  // f is the fraction of pressure kept by a relief (0 < f < 1, from the target drop).
+  const float f = pressureDropFactor;
   const float root = sqrtf(f);
   b.entryLow = setPoint * root;
   b.entryHigh = setPoint / root;
@@ -2871,7 +2866,6 @@ static void updatePressureStability() {
     return;
   }
   if (SetPointData.setPointSlowPressure != NOTaTEMP) return; // ramp in progress
-  if (!bands.entryValid) return; // no estimate of the relief cycle yet
   if (pressure < bands.entryLow || pressure > bands.entryHigh) return;
 
   // Stays pending until NTP is valid; the time recorded is when it was stamped.
@@ -2893,11 +2887,15 @@ void pressureControl() {
   if (!(debugging && valveRoutineActive())) readPressure();
   pressureDropFactor = 1.0f - FMTData.ventTargetDropPercent / 100.0f;
   if (valveRoutineActive()) {
+    // The routine drives the valve itself: the Control page override is cancelled.
+    ControlData.transferOverride = VALVE_OVERRIDE_AUTO;
+    valveOverrideOpen = false;
     processVentingTest();
     processValveCleaning();
-    processKegVolume();
+    processExpansionTank();
     return;
   }
+  applyValveOverride();
   processSensorZero();
   processSlowPressureTarget();
   updatePressureStability();
@@ -2926,11 +2924,14 @@ void pressureControl() {
   checkValveStuckOpen();
 
   if (inTheMiddleOfRelief()) return;
+  // Above the maximum security pressure the relief runs whatever the Valve override
+  // says (Closed is ignored; with the valve held open there is nothing to do).
   if (ControlData.pressure > FMTData.maximumPressure) {
     soundAlarm = true;
-    pressureRelief();
+    if (!valveOverrideOpen) pressureRelief();
   } else if (SetPointData.mode != MODE_CONDITIONING && SetPointData.setPointPressure > 0.0f &&
-             ControlData.pressure >= expansionPressureThreshold() &&
+             ControlData.transferOverride == VALVE_OVERRIDE_AUTO &&
+             ControlData.pressure >= reliefPressureThreshold() &&
              (taskWindowType == 0 || MILLISDIFF(taskWindowEndTime, 0))) {
     pressureRelief();
   }
@@ -3002,15 +3003,11 @@ char *getPressureControlStatus(char *st) {
     snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;Relief count: %lu<br>",
              (unsigned long)CountersData.totalReliefCount);
     strnncat(st, tmp, PRESSURE_STATUS_SIZE);
-    if (!reliefsPerHourAvailable || reliefsPerHourValue < RELIEF_PER_HOUR_MIN_DISPLAY) {
-      if (!reliefsPerHourAvailable) {
-        snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;Reliefs/hour: N/A (need %u reliefs, have %u)<br>", (unsigned)RELIEFS_WINDOW_SIZE, reliefMillisCount);
-      } else {
-        snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;Reliefs/hour: N/A (< %.2f/h)<br>", RELIEF_PER_HOUR_MIN_DISPLAY);
-      }
-    } else {
-      snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;Reliefs/hour: %.2f<br>", reliefsPerHourValue);
-    }
+    const float tblv = getTimeBetweenVentsSeconds();
+    if (isfinite(tblv))
+      snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;TBLV (time between last vents): %.0f s<br>", tblv);
+    else
+      snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;TBLV (time between last vents): N/A<br>");
     strnncat(st, tmp, PRESSURE_STATUS_SIZE);
     snprintf(tmp, sizeof(tmp), "&nbsp;&nbsp;&nbsp;&nbsp;gCO2/L/d: %.2f (%s; %u samples)<br>",
              getBeerCO2EvolutionGramsPerLiterPerDay(), getCO2EvolutionSource(),
@@ -3093,7 +3090,7 @@ String getVentStatusHtml() {
           gasTemperatureSource() + ")</p>";
   {
     const VentModel::Curve &curve = FMTData.ventCurve;
-    const float threshold = expansionPressureThreshold();
+    const float threshold = reliefPressureThreshold();
     const double tK = ventGasKelvin();
     const float headspace = ventHeadspaceForTime();
     html += "<h3>Next vent</h3><p>At " + num(threshold, 4) + " bar: " +
@@ -3132,10 +3129,10 @@ String getVentStatusHtml() {
   html += "<h3>Valve cycle</h3><p>";
   if (!inTheMiddleOfRelief()) {
     html += "Idle";
-  } else if (timeToStartExpansion) {
-    html += "Waiting to open the valve (in " + String((long)(timeToStartExpansion - now)) + " ms)";
-  } else if (timeToFinishExpansion) {
-    html += "Valve OPEN, closes in " + String((long)(timeToFinishExpansion - now)) + " ms";
+  } else if (timeToStartRelief) {
+    html += "Waiting to open the valve (in " + String((long)(timeToStartRelief - now)) + " ms)";
+  } else if (timeToFinishRelief) {
+    html += "Valve OPEN, closes in " + String((long)(timeToFinishRelief - now)) + " ms";
   } else {
     html += "Valve closed, reading the pressure in " + String((long)(timeToRegisterPressure - now)) + " ms";
   }

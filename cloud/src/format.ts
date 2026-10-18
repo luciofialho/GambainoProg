@@ -50,7 +50,7 @@ export function dashboardStatus(log: LogRow, batch: BatchRow | null, num: number
     temperature: fixed(log.temp, 1, 'ERR'),
     tempTarget: fixed(log.temp_sp, 1, 'n/a'),
     slowTarget: fixed(log.temp_slow, 1, 'n/a'),
-    pressure: fixed(log.press, 1, 'ERR'),
+    pressure: fixed(log.press, 2, 'ERR'),
     pressureTarget: log.press_sp ? log.press_sp.toFixed(2) : 'n/a',
     co2Label,
     co2Mass: fixed(log.co2_mass, 0, ''),
@@ -87,7 +87,7 @@ function batchStats(batch: BatchRow | null) {
     heatTime: duration(batch.heat_seconds),
     headspaceVolume: fixed(batch.headspace_volume, 2, ''),
     dumpedVolume: fixed(batch.dumped_volume, 2, ''),
-    reliefCount: batch.expansions === null ? '' : String(batch.expansions),
+    reliefCount: batch.reliefs === null ? '' : String(batch.reliefs),
     co2Headspace: co2(batch.mol_headspace),
     co2Solution: co2(batch.mol_dissolved),
     co2Vented: co2(batch.mol_ejected),
@@ -124,7 +124,7 @@ function mol(value: number | null): string {
 export function batchStateText(batch: BatchRow): string {
   if (batch.state_epoch === null) return '';
   return `Chiller ${hoursMinutes(batch.chill_seconds)} · Heater ${hoursMinutes(batch.heat_seconds)}` +
-    ` · Expansions ${batch.expansions ?? '-'} · CO2 mol: headspace ${mol(batch.mol_headspace)},` +
+    ` · Reliefs ${batch.reliefs ?? '-'} · CO2 mol: headspace ${mol(batch.mol_headspace)},` +
     ` dissolved ${mol(batch.mol_dissolved)}, ejected ${mol(batch.mol_ejected)}` +
     ` · Dumped ${batch.dumped_volume === null ? '-' : `${batch.dumped_volume.toFixed(1)} L`}` +
     ` (at ${localDateTime(batch.state_epoch)})`;

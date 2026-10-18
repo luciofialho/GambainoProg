@@ -56,6 +56,8 @@ bool calibrationRoutineActive();
 // Opens or closes the valve for a calibration routine (main loop only);
 // returns esp_timer_get_time() taken right after the digitalWrite.
 int64_t routineValve(bool open);
+// nullptr when "Relief once" (Control page) can run; otherwise the reason it cannot.
+const char *manualReliefBlockedReason();
 bool inTheMiddleOfRelief();
 // Three text lines of the calibration panel on the TFT (and the dashboard).
 void showCalibrationPanel(const char *line1, const char *line2, const char *line3);
@@ -105,10 +107,10 @@ float getReportedCO2EvolutionGramsPerLiterPerDay();
 const char *getCO2EvolutionSource(); // "calculated", "held" or "transition"
 float CO2DissolvedMols(float pressureBar, float sg, float temperatureC, float volumeL);
 boolean inPressureNoiseWindow();
-void getReliefsPerHourText(char *out, size_t outSize);
 // "gCO2 [x.x/(L.d)]" in Fermenting, "g CO2" otherwise (TFT and dashboards).
 void getCO2RateLabel(char *out, size_t outSize);
-float getReliefsPerHourValue();
+// TBLV in seconds: the longer of the last interval between vents and the time since the last one.
+float getTimeBetweenVentsSeconds();
 float SGToApparentPlato(float sg);
 float SGToRealPlato(float sg);
 

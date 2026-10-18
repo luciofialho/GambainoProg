@@ -194,7 +194,7 @@ void screenData() {
 
   char screenSignature[sizeof(lastScreenDataSignature)];
   snprintf(screenSignature, sizeof(screenSignature),
-    "%.1f|%.1f|%.1f|%.1f|%.2f|%s|%.0f|%.0f|%.3f|%.2f",
+    "%.1f|%.1f|%.1f|%.2f|%.2f|%s|%.0f|%.0f|%.3f|%.2f",
     ControlData.temperature, SetPointData.setPointTemp, SetPointData.setPointSlowTemp,
     ControlData.pressure, SetPointData.setPointPressure, co2RateLabel,
     CO2Mass(), beerVolume, beerSG, beerABV);
@@ -277,7 +277,7 @@ void screenData() {
 
   // PRESSURE 
   tft.setTextColor(TFT_WHITE,tft.color565(153,153,255)); 
-  textOut(CENTER,&Swiss_911_Extra_Compressed_Regular18pt7b,170,259, "  %.1f  ",ControlData.pressure);
+  textOut(CENTER,&Swiss_911_Extra_Compressed_Regular18pt7b,170,259, " %.2f ",ControlData.pressure);
   textOut(CENTER,&Swiss_911_Extra_Compressed_Regular12pt7b,170,284, "bar");
 
   // PRESSURE TARGET 

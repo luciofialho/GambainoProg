@@ -6,5 +6,4 @@ ALTER TABLE batches ADD COLUMN heat_seconds INTEGER;
 ALTER TABLE batches ADD COLUMN mol_headspace REAL;    -- CO2 in the headspace
 ALTER TABLE batches ADD COLUMN mol_dissolved REAL;    -- CO2 in solution
 ALTER TABLE batches ADD COLUMN mol_ejected REAL;      -- CO2 vented, cumulative
-ALTER TABLE batches ADD COLUMN expansions INTEGER;    -- expansion-tank reliefs
-ALTER TABLE batches ADD COLUMN dumped_volume REAL;    -- L removed by Dump tasks
+ALTER TABLE batches ADD COLUMN expansions INTEGER;    ALTER TABLE batches ADD COLUMN dumped_volume REAL;    -- L removed by Dump tasks

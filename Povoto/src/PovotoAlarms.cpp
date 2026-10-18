@@ -10,7 +10,13 @@
 #include "PovotoMail.h"
 #include <WiFi.h>
 
-static constexpr unsigned long ALARM_BEEP_INTERVAL_MS = 60000UL;
+// Beeps: every minute for the first 10 minutes of an alarm, then every 15 minutes
+// until the first hour, then every hour. Screen, LEDs and e-mail go on as before.
+static unsigned long alarmBeepInterval(unsigned long activeMs) {
+  if (activeMs < 600000UL) return 60000UL;
+  if (activeMs < 3600000UL) return 900000UL;
+  return 3600000UL;
+}
 static constexpr unsigned long ALARM_MAIL_INTERVAL_MS = 3600000UL;
 static constexpr unsigned long ALARM_BLINK_PERIOD_MS = 200UL; // 5 Hz
 static constexpr unsigned long TASK_BLINK_PERIOD_MS = 1000UL; // 1 Hz
@@ -70,8 +76,8 @@ static void sendAlarmMail(PovotoAlarm alarm, unsigned long activeMs) {
       break;
     case ALARM_RELIEF:
       body += describeReliefCheck();
-      body += "\nThe vents lower the pressure less than expected (two in a row below 80%): check the valve, its outlet and the witness bottle "
-              "(and that the expansion tank was not reconnected). These vents are not counted by the flow model.\n";
+      body += "\nThe vents lower the pressure less than expected (two in a row below 80%): check the valve, its outlet and the witness bottle. "
+              "These vents are not counted by the flow model.\n";
       break;
     case ALARM_VALVE_STUCK_OPEN:
       body += describeValveStuckOpen();
@@ -155,7 +161,7 @@ void processPovotoAlarms() {
   }
 
   // Silent in debug mode (bench boards); screen and LEDs still signal.
-  if (alarm != ALARM_NONE && (lastBeeps == 0 || now - lastBeeps >= ALARM_BEEP_INTERVAL_MS)) {
+  if (alarm != ALARM_NONE && (lastBeeps == 0 || now - lastBeeps >= alarmBeepInterval(now - alarmSince))) {
     lastBeeps = now | 1;
     if (!debugging)
       buzzerBeepRequest = alarm == ALARM_PRESSURE_SENSOR ? 4 : alarm == ALARM_VALVE_STUCK_OPEN ? 6

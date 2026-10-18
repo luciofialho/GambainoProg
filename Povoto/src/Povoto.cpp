@@ -37,7 +37,7 @@
 #include "AtmosphericPressure.h"
 #include "CalibrationEvents.h"
 #include "VentingTest.h"
-#include "KegVolume.h"
+#include "ExpansionTank.h"
 #include <esp_system.h>
 #include <esp_heap_caps.h>
 
@@ -280,10 +280,10 @@ void setup() {
   server.on("/calibration/venting.csv", HTTP_GET, handleVentingTestCSV);
   server.on("/calibration/cleaning/start", HTTP_POST, handleValveCleaningStart);
   server.on("/calibration/cleaning/abort", HTTP_POST, handleValveCleaningAbort);
-  server.on("/calibration/keg/start", HTTP_POST, handleKegVolumeStart);
-  server.on("/calibration/keg/abort", HTTP_POST, handleKegVolumeAbort);
-  server.on("/calibration/keg/save", HTTP_POST, handleKegVolumeSave);
-  server.on("/calibration/keg.csv", HTTP_GET, handleKegVolumeCSV);
+  server.on("/calibration/expansion/start", HTTP_POST, handleExpansionTankStart);
+  server.on("/calibration/expansion/abort", HTTP_POST, handleExpansionTankAbort);
+  server.on("/calibration/expansion/save", HTTP_POST, handleExpansionTankSave);
+  server.on("/calibration/expansion.csv", HTTP_GET, handleExpansionTankCSV);
   server.on("/calibration", HTTP_GET, handleCalibrationDataPage);
   server.on("/calibration/refresh-current", HTTP_GET, handleCalibrationCurrentRefresh);
   server.on("/calibration/update", HTTP_POST, handleCalibrationDataUpdate);
@@ -308,7 +308,6 @@ void setup() {
   // also matches /control/auto, /control/relief, etc.)
   server.on("/control/update", HTTP_POST, handleControlDataUpdate);
   server.on("/control/auto", HTTP_GET, handleControlAuto);
-  server.on("/control/relief", HTTP_GET, handleControlReliefOnce);
   server.on("/control/relief", HTTP_POST, handleControlReliefOnce);
   server.on("/control", HTTP_GET, handleControlDataPage);
 
@@ -571,15 +570,6 @@ o task de dump está jogando o volume lá para cima
 */
 
 /* Pendencias da revisao de logica e memoria (itens ainda nao corrigidos):
- * 2. PressureControl.cpp: o callback de pressure_history.csv pode ler
- *    pressureReliefHistory enquanto o loop libera esse buffer ao sair de OFF.
- *    Garantir a vida util do historico durante toda a exportacao.
- * 3. PressureControl.cpp: downloads interrompidos podem deixar
- *    pressureDumpInProgress/pressureHistoryExportInProgress ativos, bloqueando
- *    novos downloads e, no dump, a coleta. Limpar o estado na desconexao.
- * 4. PressureControl.cpp: concluir pressure_dump.csv apaga pressureSamples
- *    mesmo durante a determinacao de volume, impedindo novas amostras nessa
- *    rodada. Separar a exportacao da liberacao do buffer ainda em uso.
  * 6. SideKick/src/Sidekick-log.cpp: erro HTTP permanente no Brewfather retém
  *    o mesmo payload indefinidamente, bloqueando os seguintes e enchendo a
  *    fila. Distinguir erros permanentes de falhas que justificam nova tentativa.
@@ -590,7 +580,6 @@ o task de dump está jogando o volume lá para cima
  * 
  * a atualizacao dos campos na tela (temperatura, por exemplo), está deixando sujeira quando os caracteres ocupam menos espaço que a atualização anterior.
  * nao calcular as coisas (abv, volume, etc) quando estiver em off
- * padronizar nomes de expansion e venting
  * Futuramente, tratar casos de fermentações muito rapidas
  * 
  */

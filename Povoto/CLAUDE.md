@@ -6,7 +6,7 @@ O método antigo, com tanque de expansão (TE), está na tag `te-final-2026-10-1
 
 ## Arquivos principais
 - `PressureControl.cpp`: leitura de pressão (INA226, shunt 3 Ω, sensor 4–20 mA 0–2 bar YD6080), ciclo do vent (`planVent`, `processReliefCycle`, `processPressure`), verificação do vent e válvula presa aberta, headspace, CO2 dissolvido e SG. Modelo do vent: `include/VentModel.h` (funções puras; espelho `tests/vent_model.py`). Documentação: `docs/vent.md`.
-- Rotinas de calibração (página Calibration, só em OFF): zero do sensor (`SensorZero.cpp`, `docs/pressure-sensor-zero.md`), ensaio de ventilação (`VentingTest.cpp`, `docs/venting-test.md`, histórico de 50 em `/venttests.bin`), volume do fermentador pelo tanque de expansão (`KegVolume.cpp`, `docs/keg-volume.md`), ciclo de limpeza da válvula, na página Control (`ValveCleaning.cpp`, `docs/valve-cleaning.md`). Eventos de calibração: `CalibrationEvents.cpp`.
+- Rotinas de calibração (página Calibration, só em OFF): zero do sensor (`SensorZero.cpp`, `docs/pressure-sensor-zero.md`), ensaio de ventilação (`VentingTest.cpp`, `docs/venting-test.md`, histórico de 50 em `/venttests.bin`), volume do fermentador pelo tanque de expansão (`ExpansionTank.cpp`, `docs/expansion-tank-volume.md`), ciclo de limpeza da válvula, na página Control (`ValveCleaning.cpp`, `docs/valve-cleaning.md`). Eventos de calibração: `CalibrationEvents.cpp`.
 - Pressão atmosférica (SideKick → altitude; o Povoto não tem barômetro próprio): `AtmosphericPressure.cpp`, `docs/atmospheric-pressure.md`. O SideKick (`SideKick/src/Sidekick-ambient.cpp`) envia a pressão (pacote `'A'`) e, com Dallas, a temperatura ambiente (`'V'`).
 - `datalog.cpp`: logs "Cold" (periódico), "Relief" (um por vent; o nome ficou) e "Task".
 - `PovotoTasks.cpp`: janelas de tarefa (Dump, Gas, Liquid, Dry Hopping, Dynamic Hopping).
@@ -32,6 +32,8 @@ O método antigo, com tanque de expansão (TE), está na tag `te-final-2026-10-1
 - Branch `povoto-vent`: firmware só de vent, implementado e não gravado em placa nenhuma. Próximo passo: visita ao local (manual, seção 8), ensaio de ventilação com ar, análise do CSV e gravação da curva e do t0.
 - Curva padrão até o primeiro ensaio: a do ensaio de 18/09 (t0 não medido).
 - O expoente politrópico fixo 1,29 (recuperação medida na média diária, τ ≈ 30 s) continua na contagem (resfriamento) e na pressão assentada. Não mudar.
-- INA226: 3,47 mA / 16,73 mA onde se esperava 4 / 20 mA. Suspeita de shunt efetivo de ~2,49 Ω; é hardware, não o código.
+- Limites: pressão máxima de segurança até 2,3 bar (o sensor, 0–2 bar, lê bem até aí); pressão máxima de setpoint até 2 bar; número do Povoto 0–99 (o cloud usa site × 100 + número).
+- Nomes: o evento de ventilação é "relief" nas telas, páginas e no cloud (`reliefs`, chave `rc`); "vent" nos docs e no código novo. TBLV = tempo entre os últimos vents (o maior entre o último intervalo e o tempo desde o último vent).
+- Página Control: Valve (Auto/Open/Closed) e Relief once (POST); ver `docs/vent.md` seção 10.
 
 Backlog e análise completos: `docs/povoto-backlog.md` e `docs/analise-160-headspace-vs-Tenv.md` (cópias do projeto Povoto no claude.ai).

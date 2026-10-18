@@ -5,8 +5,6 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[1]
 header = (root / "include/PovotoData.h").read_text(encoding="utf-8")
 source = (root / "src/PovotoData.cpp").read_text(encoding="utf-8")
-# Keys read only to migrate an older layout; they are never written back.
-MIGRATION_ONLY_KEYS = {"FMTData": {"ventResidual", "ventResidual18", "ventResidual05"}}
 for group in ["FMTData", "UserConfigurationData", "BatchData",
               "SetPointData", "CountersData"]:
     body = re.search(r"struct " + group + r"_t \{(.*?)\}", header, re.S)[1]
@@ -19,7 +17,6 @@ for group in ["FMTData", "UserConfigurationData", "BatchData",
         assert group + "." + member in write, (group, member, "missing write")
     get_keys = set(re.findall(r'store\.get\w+\("([^"]+)"', read))
     put_keys = re.findall(r'store\.put\w+\("([^"]+)"', write)
-    get_keys -= MIGRATION_ONLY_KEYS.get(group, set())
     assert get_keys == set(put_keys), (group, get_keys, put_keys)
     assert len(put_keys) == len(set(put_keys))
     assert all(len(key) <= 15 for key in put_keys)

@@ -75,7 +75,7 @@ mede o ruído da leitura, não a repetibilidade do t0: ele aparece só no script
 
 ## 3. Histórico e gravação
 
-- `/venttests.bin` na partição `persist` (magic `VTH2`): os últimos **50
+- `/venttests.bin` na partição `persist` (magic `VTH3`): os últimos **50
   ensaios**, cada um com os dados brutos de cada liberação (tempo pedido e real,
   P1, P_close, P2 e o ruído de P1 e P2, Tferm, espera, patamar, tipo), data/hora
   NTP, lote, Patm e fonte, Tamb, Tferm, gás, volume, versão do firmware (data de

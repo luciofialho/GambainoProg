@@ -118,11 +118,11 @@ def report(name, test, fixed_t0):
     fw = [number(meta[k]) for k in ("fit_a0", "fit_a1", "fit_a2", "fit_a3", "fit_t0_s")]
     if all(math.isfinite(x) for x in fw):
         fw_curve = vm.make_curve(fw[:4], fw[4], result["p_min"], result["p_max"])
-        diffs = [100 * (vm.tau_ref(fw_curve, p) / vm.tau_ref(curve, p) - 1) for p in (1.8, 1.2, 0.8)]
+        diffs = [100 * (vm.tau_ref(fw_curve, p, patm) / vm.tau_ref(curve, p, patm) - 1) for p in (1.8, 1.2, 0.8)]
         print("firmware fit: t0 %.1f ms; tau differs %+.4f / %+.4f / %+.4f %% at 1.8 / 1.2 / 0.8 bar"
               % (1000 * fw[4], *diffs))
     for p in (0.5, 1.0, 1.9):
-        print("  %.1f bar: tau %.2f s (100 L air), CO2/air %.4f" % (p, vm.tau_ref(curve, p), vm.co2_air_ratio(p, patm)))
+        print("  %.1f bar: tau %.2f s (100 L air), CO2/air %.4f" % (p, vm.tau_ref(curve, p, patm), vm.co2_air_ratio(p, patm)))
 
 
 def selftest():
@@ -171,7 +171,7 @@ def selftest():
         p, noise = p2, next_noise
     result, valid = fit(releases, volume, patm, False)
     curve = vm.make_curve(result["a"], result["t0"], 0.0, 3.0)
-    errors = [100 * (vm.tau_ref(curve, q) / vm.tau_ref(truth, q) - 1) for q in (1.8, 1.2, 0.8, 0.5, 0.3)]
+    errors = [100 * (vm.tau_ref(curve, q, patm) / vm.tau_ref(truth, q, patm) - 1) for q in (1.8, 1.2, 0.8, 0.5, 0.3)]
     s = summary(result, valid, volume, patm, False)
     print(f"selftest: {len(valid)} releases from 1.9 to {p:.2f} bar; t0 {1000 * result['t0']:.1f} ms (true 25.0); "
           f"tau error at 1.8/1.2/0.8/0.5/0.3 bar: " + " / ".join(f"{e:+.3f}%" for e in errors) +

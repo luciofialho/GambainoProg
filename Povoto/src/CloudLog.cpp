@@ -78,7 +78,7 @@ bool buildRecord(uint32_t epoch, char *out, size_t size) {
   json.integer("f", (long)point.flags);
   json.number("vol", beerVolume, 1);
   json.number("co2", CO2Mass(), 0);
-  json.number("rph", getReliefsPerHourValue(), 1);
+  json.number("tblv", getTimeBetweenVentsSeconds(), 0);
   // Day 0 of the profile, so the cloud check can recompute every value.
   if (synthetic) json.integer("ss", (long)syntheticStart);
   json.raw("}");
@@ -104,7 +104,7 @@ bool buildState(uint32_t epoch, char *out, size_t size) {
   json.number("mh", headSpaceCO2Mols, 3);
   json.number("md", (float)CountersData.CO2InSolution, 3);
   json.number("me", (float)CountersData.totalMolsEjected, 3);
-  json.integer("nx", (long)CountersData.totalReliefCount);
+  json.integer("rc", (long)CountersData.totalReliefCount);
   json.number("dv", CountersData.dumpedVolume, 2);
   // Dashboard statistics: temperature mode and headspace volume (L).
   json.string("tm", ChillHeatMode == FMTCHILL ? "chill" : ChillHeatMode == FMTHEAT ? "heat" : "idle");

@@ -27,7 +27,7 @@
 #include "CalibrationEvents.h"
 #include "VentingTest.h"
 #include "ValveCleaning.h"
-#include "KegVolume.h"
+#include "ExpansionTank.h"
 #include "NucleationRecord.h"
 #include "AtmosphericPressure.h"
 
@@ -360,7 +360,7 @@ void handleDashboardStatus(AsyncWebServerRequest *request) {
   else
     snprintf(text, sizeof(text), "n/a");
   dashboardJsonString(json, "slowTarget", text);
-  snprintf(text, sizeof(text), "%.1f", ControlData.pressure);
+  snprintf(text, sizeof(text), "%.2f", ControlData.pressure);
   dashboardJsonString(json, "pressure", text);
   if (SetPointData.setPointPressure != 0)
     snprintf(text, sizeof(text), "%.2f", SetPointData.setPointPressure);
@@ -742,7 +742,7 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
   strncat(html, "<div class='form-group'>"
                "<label for='PovotoNum'>Povoto Number:</label>", remaining);
   sprintf(buffer, "<div style='display:flex;align-items:center;gap:16px'>"
-                  "<input type='number' id='PovotoNum' name='PovotoNum' value='%d' min='0' max='255'>"
+                  "<input type='number' id='PovotoNum' name='PovotoNum' value='%d' min='0' max='99'>"
                   "<label style='display:flex;align-items:center;gap:4px;margin:0;white-space:nowrap'>"
                   "<input type='checkbox' name='debugMode' value='1'%s>Debug mode</label></div>",
           FMTData.PovotoNum, FMTData.debugMode ? " checked" : "");
@@ -764,13 +764,13 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
   // Pressure limits, the vent drop and the altitude, in this order.
   snprintf(buffer, sizeof(buffer),
            "<div class='form-group'><label for='maximumPressure'>Maximum security pressure (bar):</label>"
-           "<input type='number' id='maximumPressure' name='maximumPressure' value='%.2f' step='0.01' min='2.01' max='2.99'>"
-           "<small>2.0 to 3.0 bar. The valve opens above it.</small></div>", FMTData.maximumPressure);
+           "<input type='number' id='maximumPressure' name='maximumPressure' value='%.2f' step='0.01' min='2.01' max='2.3'>"
+           "<small>Above 2.0 and up to 2.3 bar. The valve opens above it.</small></div>", FMTData.maximumPressure);
   strncat(html, buffer, BUFFER_SIZE - strlen(html) - 1);
   snprintf(buffer, sizeof(buffer),
            "<div class='form-group'><label for='maxSetPointPressure'>Maximum pressure setpoint (bar):</label>"
-           "<input type='number' id='maxSetPointPressure' name='maxSetPointPressure' value='%.2f' step='0.01' min='0.1' max='2.98'>"
-           "<small>Highest pressure set point accepted (page, triggered actions, cloud); below the security pressure.</small></div>",
+           "<input type='number' id='maxSetPointPressure' name='maxSetPointPressure' value='%.2f' step='0.01' min='0.1' max='2'>"
+           "<small>Highest pressure set point accepted (page, triggered actions, cloud); up to 2.0 bar and below the security pressure.</small></div>",
            FMTData.maxSetPointPressure);
   strncat(html, buffer, BUFFER_SIZE - strlen(html) - 1);
   snprintf(buffer, sizeof(buffer),
@@ -876,12 +876,18 @@ void handleFMTDataUpdate(AsyncWebServerRequest *request) {
   const float maximumPressure = postedFloat("maximumPressure", FMTData.maximumPressure);
   const float maxSetPointPressure = postedFloat("maxSetPointPressure", FMTData.maxSetPointPressure);
   const float ventDrop = postedFloat("ventTargetDropPercent", FMTData.ventTargetDropPercent);
+  const int povotoNumber = request->hasParam("PovotoNum", true)
+      ? request->getParam("PovotoNum", true)->value().toInt() : FMTData.PovotoNum;
+  if (!isValidPovotoNumber(povotoNumber)) {
+    request->send(400, "text/plain", "Povoto number must be from 0 to 99.");
+    return;
+  }
   if (!isValidMaximumPressure(maximumPressure) || !(FMTData.pressure1Bar < maximumPressure)) {
-    request->send(400, "text/plain", "Maximum security pressure must be between 2.0 and 3.0 bar and above calibration point B.");
+    request->send(400, "text/plain", "Maximum security pressure must be above 2.0 and up to 2.3 bar, and above calibration point B.");
     return;
   }
   if (!isValidMaxSetPointPressure(maxSetPointPressure, maximumPressure)) {
-    request->send(400, "text/plain", "Maximum pressure setpoint must be above 0 and below the maximum security pressure.");
+    request->send(400, "text/plain", "Maximum pressure setpoint must be above 0, up to 2.0 bar and below the maximum security pressure.");
     return;
   }
   if (!isValidVentTargetDrop(ventDrop)) {
@@ -919,7 +925,7 @@ void handleFMTDataUpdate(AsyncWebServerRequest *request) {
   FMTData.heater.offMinutes = heaterOff;
   memcpy(FMTData.coolingCycle, cooling, sizeof(cooling));
   if (request->hasParam("PovotoNum", true)) {
-    FMTData.PovotoNum = request->getParam("PovotoNum", true)->value().toInt();
+    FMTData.PovotoNum = povotoNumber;
   }
   if (request->hasParam("PovotoNum", true)) {
     FMTData.debugMode = request->hasParam("debugMode", true);
@@ -1216,9 +1222,9 @@ static String dissolvedCO2SectionHtml() {
   return html;
 }
 
-// Fermenter volume with an expansion tank (docs/keg-volume.md).
+// Fermenter volume with an expansion tank (docs/expansion-tank-volume.md).
 static String fermenterVolumeSectionHtml() {
-  const KegVolumeResult r = getKegVolumeResult();
+  const ExpansionTankResult r = getExpansionTankResult();
   String html = "<hr><h2>Fermenter volume</h2><ul>"
     "<li>Measures the fermenter volume (FMT volume) with an expansion tank of known volume.</li>"
     "<li>Connect the expansion tank to port A.</li>"
@@ -1226,18 +1232,18 @@ static String fermenterVolumeSectionHtml() {
     "<li>The routine takes about 2&ndash;3 h and repeats by itself down to ~0.5 bar: it waits for a stable pressure, opens the "
     "valve to the tank, waits again, closes and vents the tank.</li>"
     "<li>Result: the fermenter volume (mean of the stable steps) and its spread. If accepted, press Save as new FMT volume.</li></ul>"
-    "<p><b>" + kegVolumeStatusText() + "</b></p>";
-  if (kegVolumeActive()) {
-    html += "<form action='/calibration/keg/abort' method='POST'><button>Abort</button></form>";
+    "<p><b>" + expansionTankStatusText() + "</b></p>";
+  if (expansionTankActive()) {
+    html += "<form action='/calibration/expansion/abort' method='POST'><button>Abort</button></form>";
   } else {
-    html += "<form action='/calibration/keg/start' method='POST'><label>Expansion tank volume (L) <input type='number' name='keg' "
+    html += "<form action='/calibration/expansion/start' method='POST'><label>Expansion tank volume (L) <input type='number' name='tank' "
       "id='tankVolume' step='0.001' min='0.5' style='width:90px' required value='" + String(FMTData.lastExpTankVolume, 3) +
       "'></label> <button>Start</button></form><p>Planned at the current pressure (" + String(ControlData.pressure, 2) +
-      " bar) with this tank: <b>" + String(kegVolumePlannedReliefs(ControlData.pressure, FMTData.lastExpTankVolume)) +
+      " bar) with this tank: <b>" + String(expansionTankPlannedReliefs(ControlData.pressure, FMTData.lastExpTankVolume)) +
       "</b> reliefs (computed again at the start).</p>";
   }
   if (r.total > 0) {
-    html += "<p><a href='/calibration/keg.csv'>" + String(kegVolumeActive() ? "Current run CSV" : "CSV") + "</a> (every relief, "
+    html += "<p><a href='/calibration/expansion.csv'>" + String(expansionTankActive() ? "Current run CSV" : "CSV") + "</a> (every relief, "
       "with its stability marks)</p>";
   }
   if (r.available) {
@@ -1247,9 +1253,9 @@ static String fermenterVolumeSectionHtml() {
       String(r.minVolume, 2) + " - " + String(r.maxVolume, 2) + ")</li>"
       "<li>configured FMT volume: " + String(r.fmtVolume, 2) + " L</li></ul>";
     if (r.canSave) {
-      html += "<form action='/calibration/keg/save' method='POST' onsubmit=\"return confirm('Save " + String(r.mean, 2) +
+      html += "<form action='/calibration/expansion/save' method='POST' onsubmit=\"return confirm('Save " + String(r.mean, 2) +
         " L as the new FMT volume (now " + String(r.fmtVolume, 2) + " L)?')\"><button>Save as new FMT volume</button></form>";
-    } else if (!kegVolumeActive()) {
+    } else if (!expansionTankActive()) {
       html += "<p>At least 2 stable reliefs are needed to save the volume.</p>";
     }
   } else if (r.total > 0) {
@@ -1258,7 +1264,7 @@ static String fermenterVolumeSectionHtml() {
   }
   if (r.total > 0) {
     html += "<table style='width:100%;font-size:0.85em'><tr><th>#</th><th>P1 bar</th><th>P2 bar</th><th>T ferm &deg;C</th>"
-      "<th>T tank &deg;C</th><th>V L</th><th>simple L</th><th>stable</th></tr>" + kegVolumeRowsHtml() + "</table>";
+      "<th>T tank &deg;C</th><th>V L</th><th>simple L</th><th>stable</th></tr>" + expansionTankRowsHtml() + "</table>";
   }
   return html;
 }
@@ -1329,24 +1335,24 @@ void handleValveCleaningAbort(AsyncWebServerRequest *request) {
   request->redirect("/control");
 }
 
-void handleKegVolumeStart(AsyncWebServerRequest *request) {
-  const float tank = request->hasParam("keg", true) ? request->getParam("keg", true)->value().toFloat() : NAN;
+void handleExpansionTankStart(AsyncWebServerRequest *request) {
+  const float tank = request->hasParam("tank", true) ? request->getParam("tank", true)->value().toFloat() : NAN;
   char reason[100];
-  if (!startKegVolume(tank, reason, sizeof(reason))) {
+  if (!startExpansionTank(tank, reason, sizeof(reason))) {
     sendCalibrationMessage(request, "Fermenter volume not started", reason);
     return;
   }
   request->redirect("/calibration");
 }
 
-void handleKegVolumeAbort(AsyncWebServerRequest *request) {
-  abortKegVolume();
+void handleExpansionTankAbort(AsyncWebServerRequest *request) {
+  abortExpansionTank();
   request->redirect("/calibration");
 }
 
-void handleKegVolumeSave(AsyncWebServerRequest *request) {
+void handleExpansionTankSave(AsyncWebServerRequest *request) {
   char reason[100];
-  if (!saveKegVolumeAsFmtVolume(reason, sizeof(reason))) {
+  if (!saveExpansionTankAsFmtVolume(reason, sizeof(reason))) {
     sendCalibrationMessage(request, "FMT volume not saved", reason);
     return;
   }
@@ -1412,7 +1418,7 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
     page += "<hr><h3>Calibration events</h3><p>Newest first; <a href='/calibration/events.txt'>all</a></p>"
       "<table style='width:100%;font-size:0.9em'><tr><th>Time</th><th>Event</th><th>Details</th></tr>" + events + "</table>";
   page += "</div></body></html>";
-  if (sensorZeroActive() || ventingTestActive() || kegVolumeActive())
+  if (sensorZeroActive() || ventingTestActive() || expansionTankActive())
     page.replace("<head>", "<head><meta http-equiv='refresh' content='10'>");
   request->send(200, "text/html", page);
 }
@@ -2745,11 +2751,11 @@ void handleControlDataPage(AsyncWebServerRequest *request) {
   strncat(html, buffer, remaining);
   
   remaining = BUFFER_SIZE - strlen(html) - 1;
-  strncat(html, "<div class='r'><label>Trans:</label><select id='e' name='transferOverride' onchange='u(\"e\",\"f\")'>", remaining);
-  sprintf(buffer, "<option value='0'%s>Auto</option><option value='1'%s>ON</option><option value='2'%s>OFF</option></select>",
-          ControlData.transferOverride == 0 ? " selected" : "",
-          ControlData.transferOverride == 1 ? " selected" : "",
-          ControlData.transferOverride == 2 ? " selected" : "");
+  strncat(html, "<div class='r'><label>Valve:</label><select id='e' name='transferOverride'>", remaining);
+  sprintf(buffer, "<option value='0'%s>Auto</option><option value='1'%s>Open</option><option value='2'%s>Closed</option></select>",
+          ControlData.transferOverride == VALVE_OVERRIDE_AUTO ? " selected" : "",
+          ControlData.transferOverride == VALVE_OVERRIDE_OPEN ? " selected" : "",
+          ControlData.transferOverride == VALVE_OVERRIDE_CLOSED ? " selected" : "");
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   sprintf(buffer, "<input type='checkbox' id='f'%s readonly onclick='return false'></div>", ControlData.transferValve ? " checked" : "");
@@ -2763,7 +2769,8 @@ void handleControlDataPage(AsyncWebServerRequest *request) {
   strncat(html, "<div style='margin-top:10px;'>"
                "<button type='submit' form='controlForm' class='action-btn'>Apply</button>"
                "<a class='action-btn' href='/control/auto'>All Auto</a>"
-               "<a class='action-btn' href='/control/relief'>Relief once</a>"
+               "<form method='POST' action='/control/relief' style='display:inline'>"
+               "<button type='submit' class='action-btn'>Relief once</button></form>"
                "<a class='action-btn' href='/resetdisplay'>Reset display</a>"
                "</div>", remaining);
 
@@ -2774,7 +2781,7 @@ void handleControlDataPage(AsyncWebServerRequest *request) {
   free(html);
   page += valveCleaningSectionHtml();
   page += "<hr><button type='button' onclick='window.location=\"/menu\"'>Back</button>";
-  page += "</div><script>u('a','b');u('c','d');u('e','f');u('g','h');</script></body></html>";
+  page += "</div><script>u('a','b');u('c','d');</script></body></html>";
   if (valveCleaningActive()) page.replace("<head>", "<head><meta http-equiv='refresh' content='10'>");
   request->send(200, "text/html", page);
 }
@@ -2787,10 +2794,16 @@ void handleControlDataUpdate(AsyncWebServerRequest *request) {
     ControlData.heaterOverride = request->getParam("heaterOverride", true)->value().toInt();
   }
   if (request->hasParam("transferOverride", true)) {
-    ControlData.transferOverride = request->getParam("transferOverride", true)->value().toInt();
-  }
-  if (request->hasParam("reliefOverride", true)) {
-    ControlData.reliefOverride = request->getParam("reliefOverride", true)->value().toInt();
+    const int valve = request->getParam("transferOverride", true)->value().toInt();
+    if (valve < VALVE_OVERRIDE_AUTO || valve > VALVE_OVERRIDE_CLOSED) {
+      request->send(400, "text/plain", "Invalid Valve option.");
+      return;
+    }
+    if (valve != VALVE_OVERRIDE_AUTO && calibrationRoutineActive()) {
+      request->send(409, "text/plain", "A calibration routine is running: the Valve stays in Auto.");
+      return;
+    }
+    ControlData.transferOverride = valve;
   }
   String html = "<!DOCTYPE html><html><head>";
   html += "<meta charset='UTF-8'>";
@@ -2807,12 +2820,17 @@ void handleControlDataUpdate(AsyncWebServerRequest *request) {
 void handleControlAuto(AsyncWebServerRequest *request) {
   ControlData.chillerOverride = 0;
   ControlData.heaterOverride = 0;
-  ControlData.transferOverride = 0;
-  ControlData.reliefOverride = 0;
+  ControlData.transferOverride = VALVE_OVERRIDE_AUTO;
   request->redirect("/control");
 }
 
+// POST only (a link or a prefetch must not open the valve).
 void handleControlReliefOnce(AsyncWebServerRequest *request) {
+  const char *blocked = manualReliefBlockedReason();
+  if (blocked) {
+    request->send(409, "text/plain", String("Relief once not done: ") + blocked + ".");
+    return;
+  }
   Serial.println("Relief once requested");
   pressureRelief();
   request->redirect("/control");

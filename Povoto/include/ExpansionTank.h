@@ -1,18 +1,18 @@
-#ifndef KEG_VOLUME_H
-#define KEG_VOLUME_H
+#ifndef EXPANSION_TANK_H
+#define EXPANSION_TANK_H
 
 #include <Arduino.h>
 #include <ESPAsyncWebServer.h>
 
 // Fermenter volume with an expansion tank of known volume on port A
-// (docs/keg-volume.md): the slow volume routine of the expansion tank era, with
+// (docs/expansion-tank-volume.md): the slow volume routine of the expansion tank era, with
 // a plain tank. Each relief equalizes the pressurized fermenter with the vented
 // tank; waits end when the pressure is stable; the volume comes from the full
 // mole balance with the fermenter (Dallas) and tank (environment) temperatures
 // and Patm. The number of reliefs is planned from the ratio of the volumes.
 // Reliefs that did not settle are listed but left out of the mean.
 
-struct KegVolumeResult {
+struct ExpansionTankResult {
   bool available;     // at least one usable (finite, stable) relief
   float tankVolume;   // L, the expansion tank
   uint8_t reliefs;    // reliefs used (stable)
@@ -25,17 +25,17 @@ struct KegVolumeResult {
   bool canSave;       // finished, at least 2 stable reliefs
 };
 
-bool startKegVolume(float tankVolume, char *reason, size_t reasonSize);
+bool startExpansionTank(float tankVolume, char *reason, size_t reasonSize);
 // Planned number of reliefs to go from startPressure (gauge) to ~0.5 bar.
-uint8_t kegVolumePlannedReliefs(float startPressure, float tankVolume);
-void abortKegVolume();
-bool kegVolumeActive();
-void processKegVolume(); // pressureControl(), main loop
-String kegVolumeStatusText();
-KegVolumeResult getKegVolumeResult();
+uint8_t expansionTankPlannedReliefs(float startPressure, float tankVolume);
+void abortExpansionTank();
+bool expansionTankActive();
+void processExpansionTank(); // pressureControl(), main loop
+String expansionTankStatusText();
+ExpansionTankResult getExpansionTankResult();
 // Saves the mean as the FMT volume and appends a calibration event.
-bool saveKegVolumeAsFmtVolume(char *reason, size_t reasonSize);
-String kegVolumeRowsHtml(); // one table row per relief of the last run
-void handleKegVolumeCSV(AsyncWebServerRequest *request); // /calibration/keg.csv
+bool saveExpansionTankAsFmtVolume(char *reason, size_t reasonSize);
+String expansionTankRowsHtml(); // one table row per relief of the last run
+void handleExpansionTankCSV(AsyncWebServerRequest *request); // /calibration/expansion.csv
 
 #endif

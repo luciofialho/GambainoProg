@@ -5,9 +5,9 @@
 
 constexpr int AUTO_SETPOINT_RULE_COUNT = 8;
 constexpr size_t AUTO_SETPOINT_NAME_SIZE = 81; // 80 bytes of UTF-8 plus the terminator
-// Absolute pressure limit of a stored rule (the security pressure is below 3 bar). Rules written
+// Absolute pressure limit of a stored rule (the highest set point is 2 bar). Rules written
 // from the page, an import or the cloud are also held to FMTData.maxSetPointPressure.
-constexpr float AUTO_SETPOINT_MAX_PRESSURE = 3.0f;
+constexpr float AUTO_SETPOINT_MAX_PRESSURE = 2.0f;
 constexpr float AUTO_SETPOINT_MAX_TEMPERATURE = 42.0f;
 
 // Every numeric field is optional: NAN means empty (criterion ignored / no action).

@@ -1,6 +1,6 @@
-"""Sensitivity of the fermenter volume by the expansion tank (docs/keg-volume.md).
+"""Sensitivity of the fermenter volume by the expansion tank (docs/expansion-tank-volume.md).
 
-Same balance as KegVolume.cpp (computeRelief): the fermenter loses what the tank
+Same balance as ExpansionTank.cpp (computeRelief): the fermenter loses what the tank
 gains,
 
   V_F = V_E * [(P2+Patm2)/T_E2 - Patm1/T_E1] / [(P1+Patm1)/T_F1 - (P2+Patm2)/T_F2]
@@ -11,7 +11,7 @@ one quantity at a time and the change of V_F is printed per relief, in %. A
 random error (different in each relief) shrinks with sqrt(n) in the mean of n
 reliefs; a systematic one (the same in all) does not.
 
-Run: python tests/keg_volume_sensitivity.py
+Run: python tests/expansion_tank_sensitivity.py
 """
 import math
 

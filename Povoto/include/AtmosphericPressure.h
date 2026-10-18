@@ -10,11 +10,9 @@
 //   2. the configured altitude ("altitude").
 // The Povoto has no barometer of its own. The measured source is a moving average of the
 // last minute and must be in 700-1100 hPa. A change of source only affects later
-// calculations. PATM_SOURCE_SENSOR (0) is retired but keeps its number: the saved
-// venting-test records and CSV carry the source as 0 / 1 / 2.
-constexpr uint8_t PATM_SOURCE_SENSOR = 0;
-constexpr uint8_t PATM_SOURCE_SIDEKICK = 1;
-constexpr uint8_t PATM_SOURCE_ALTITUDE = 2;
+// calculations. The venting-test records and CSV carry the source as 0 / 1.
+constexpr uint8_t PATM_SOURCE_SIDEKICK = 0;
+constexpr uint8_t PATM_SOURCE_ALTITUDE = 1;
 
 void atmosphericPressureBegin();   // setup()
 void atmosphericPressureProcess(); // main loop

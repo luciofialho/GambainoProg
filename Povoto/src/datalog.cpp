@@ -294,7 +294,7 @@ void doDataLog() {
     GLogAddData("DissolvedCO2CriteriaState");
     GLogAddData("OperatingMode");
     GLogAddData("AtmosphericPressure");
-    GLogAddData("AtmosphericPressureSource"); // sensor, sidekick or altitude
+    GLogAddData("AtmosphericPressureSource"); // sidekick or altitude
     GLogAddData("EnvironmentTemperature");
     // [DAILY-HS] 24-hour headspace average. The tasks (dump included) have
     // their own log, Task.
@@ -442,7 +442,7 @@ void doReliefDataLog(const ReliefLogData &data) {
     GLogAddData("VentDropPercent");
     GLogAddData("VentTargetDropPercent");
     GLogAddData("VentVaporFraction");
-    GLogAddData("EjectedMolsBeforeLiquidCorrectionAtLog");
+    GLogAddData("EjectedMolsWithVaporAtLog");
     GLogAddData("InstantPressureDropFactor");
     GLogAddData("HeadSpaceVolume");
     GLogAddData("BeerVolume");
@@ -509,7 +509,7 @@ void doReliefDataLog(const ReliefLogData &data) {
   GLogAddData(data.ventDropPercent, 3);
   GLogAddData(data.ventTargetDropPercent, 2);
   GLogAddData(data.ventVaporFraction, 5);
-  GLogAddData(data.ejectedMolsBeforeLiquidCorrection, 6);
+  GLogAddData(data.ejectedMolsWithVapor, 6);
   GLogAddData(data.instantaneousPressureDropFactor, 6);
   GLogAddData(data.headSpaceVolume, 3);
   GLogAddData(data.beerVolume, 3);

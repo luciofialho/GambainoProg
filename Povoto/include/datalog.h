@@ -43,14 +43,14 @@ struct ReliefLogData {
   float ventCoolingFactor;
   float ventFlowConstant;          // CO2 (ratio, Z and level included)
   float flowLevelFactor;
-  float ventFlowMoles;             // flow model, before the liquid-mass correction
+  float ventFlowMoles;             // flow model, total moles (CO2 + vapor)
   float ventFermenterSideMoles;    // settled drop x reference headspace / RT
   const char *ventOutOfRange;      // "above" / "below" the range of the flow curve, or ""
   const char *ventCounted;         // "flow", "fermenter-side" or "none"
   float ventDropPercent;           // settled drop / pressure at opening
   float ventTargetDropPercent;
   float ventVaporFraction;
-  float ejectedMolsBeforeLiquidCorrection;
+  float ejectedMolsWithVapor;  // counted moles of the vent, vapor included (ejectedMols is the CO2 only)
   float instantaneousPressureDropFactor;
   float headSpaceVolume;
   float beerVolume;

@@ -78,8 +78,7 @@ ControlData_t ControlData = {
   .transferValve = false,
   .chillerOverride = 0,
   .heaterOverride = 0,
-  .transferOverride = 0,
-  .reliefOverride = 0
+  .transferOverride = VALVE_OVERRIDE_AUTO
 };
 
 // counters data
@@ -132,7 +131,7 @@ bool readFMTDataFromEEPROM() {
   FMTData.pressure1Current = store.getFloat("p1Current", defaultFMTData.pressure1Current);
   if (!isfinite(FMTData.pressure1Current)) FMTData.pressure1Current = defaultFMTData.pressure1Current;
   FMTData.maximumPressure = store.getFloat("maxPressure", defaultFMTData.maximumPressure);
-  if (!isfinite(FMTData.maximumPressure)) FMTData.maximumPressure = defaultFMTData.maximumPressure;
+  if (!isValidMaximumPressure(FMTData.maximumPressure)) FMTData.maximumPressure = defaultFMTData.maximumPressure;
   FMTData.maxSetPointPressure = store.getFloat("maxSetPress", defaultFMTData.maxSetPointPressure);
   // A missing key (older firmware) or one at or above the security pressure
   // falls back to the default, kept below the security pressure.
@@ -143,6 +142,7 @@ bool readFMTDataFromEEPROM() {
   FMTData.nucleationWindow = store.getInt("nucleation", defaultFMTData.nucleationWindow);
   FMTData.nvsSchemaVersion = store.getUInt("schemaVersion", 0);
   FMTData.PovotoNum = store.getUChar("number", defaultFMTData.PovotoNum);
+  if (!isValidPovotoNumber(FMTData.PovotoNum)) FMTData.PovotoNum = defaultFMTData.PovotoNum;
   FMTData.googleLogEnabled = store.getBool("gLogOn", defaultFMTData.googleLogEnabled);
   {
     String folder = store.getString("gLogFolder", defaultFMTData.googleLogFolder);

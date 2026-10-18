@@ -63,7 +63,7 @@ def true_vent(headspace, p_on_gauge, open_seconds, t0=CURVE["t0"], level=1.0, re
 
     def rate(n):
         p, t_k = state(n)
-        return (vm.flow_constant_air(CURVE, p - PATM) * vm.co2_air_ratio(p - PATM, PATM)
+        return (vm.flow_constant_air(CURVE, p - PATM, PATM) * vm.co2_air_ratio(p - PATM, PATM)
                 / math.sqrt(vm.co2_z(p, t_k)) * level * p / math.sqrt(t_k))
 
     n_on = p_on * headspace / (vm.co2_z(p_on, t_gas) * vm.R * t_gas)
@@ -129,6 +129,37 @@ def vapor_checks():
     return ok
 
 
+def extrapolation_checks():
+    """tau outside the range of the test: the end value above p_max (choked flow), the
+    ideal nozzle scaling below p_min, and the count of a vent below the range."""
+    print("\nCurve outside the range of the test (p_min %.2f, p_max %.2f bar):" % (CURVE["p_min"], CURVE["p_max"]))
+    ok = True
+    end_low = vm.tau_ref(CURVE, CURVE["p_min"], PATM)
+    good = abs(vm.tau_ref(CURVE, CURVE["p_min"] - 1e-9, PATM) / end_low - 1) < 1e-6
+    ok = ok and good
+    print(f"  continuous at p_min: {'ok' if good else 'FAIL'}")
+    end_high = vm.tau_ref(CURVE, CURVE["p_max"], PATM)
+    good = vm.tau_ref(CURVE, CURVE["p_max"] + 0.4, PATM) == end_high
+    ok = ok and good
+    print(f"  above p_max the end value ({end_high:.1f} s): {'ok' if good else 'FAIL'}")
+    previous = end_low
+    for p in (0.30, 0.25, 0.15, 0.05):
+        tau = vm.tau_ref(CURVE, p, PATM)
+        psi_ratio = (vm.nozzle_psi(vm.GAMMA_AIR, PATM / (CURVE["p_min"] + PATM))
+                     / vm.nozzle_psi(vm.GAMMA_AIR, PATM / (p + PATM)))
+        good = tau > previous and abs(tau / end_low - psi_ratio) < 1e-9
+        ok = ok and good
+        print(f"  {p:.2f} bar: tau {tau:7.1f} s = end value x {tau / end_low:.4f} (flow of the end value "
+              f"{100 * (tau / end_low - 1):+.1f}% too high) {'ok' if good else 'FAIL'}")
+        previous = tau
+    row = run_case(0.25, 30, quiet=True)
+    good = abs(row["err_n"]) <= 0.5 and abs(row["err_vh"]) <= 0.5
+    ok = ok and good
+    print(f"  vent at 0.25 bar, 30 L (below p_min): t {row['t']:.2f} s, count {row['err_n']:+.3f}%, "
+          f"Vh {row['err_vh']:+.3f}% (limit 0.5%) {'ok' if good else 'FAIL'}")
+    return ok
+
+
 def main():
     global CURVE
     ok = True
@@ -161,6 +192,7 @@ def main():
     for sp in (0.5, 1.9):
         r = run_case(sp, 30, quiet=True, t_gas=T0 + 6, t_firmware=T0)
         print(f"  {sp} bar, gas 6 K warmer, liquid T used   count {r['err_n']:+.3f}%  Vh {r['err_vh']:+.3f}%")
+    ok = extrapolation_checks() and ok
     ok = vapor_checks() and ok
     print("\nRESULT:", "PASS" if ok else "FAIL")
     return 0 if ok else 1

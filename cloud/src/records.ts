@@ -23,7 +23,7 @@ export interface LogRecord {
   flags: number;
   volume: number | null;
   co2Mass: number | null;
-  reliefsPerHour: number | null;
+  tblvSeconds: number | null;  // time between the last vents (s)
   syntheticStart: number | null;
 }
 
@@ -40,7 +40,7 @@ export interface StateRecord {
   molHeadspace: number | null;
   molDissolved: number | null;
   molEjected: number | null;
-  expansions: number | null;
+  reliefs: number | null;
   dumpedVolume: number | null;
   // Dashboard statistics; null: older firmware.
   tempMode: 'chill' | 'heat' | 'idle' | null;
@@ -131,7 +131,7 @@ function recordFrom(raw: Record<string, unknown>, nowUtc: number): LogRecord | n
     flags: int(raw.f ?? 0, 0, 0xffffffff),
     volume: num(raw.vol),
     co2Mass: num(raw.co2),
-    reliefsPerHour: num(raw.rph),
+    tblvSeconds: num(raw.tblv),
     syntheticStart: raw.ss === undefined ? null : int(raw.ss, MIN_EPOCH, nowUtc + 86400),
   };
   return Object.values(record).some(value => value === undefined) ? null : record as LogRecord;
@@ -151,7 +151,8 @@ function stateFrom(raw: Record<string, unknown>, nowUtc: number): StateRecord | 
     molHeadspace: num(raw.mh),
     molDissolved: num(raw.md),
     molEjected: num(raw.me),
-    expansions: optionalInt(raw.nx, 0, 0xffffffff),
+    // "nx" is the key of firmware before the rename (expansions).
+    reliefs: optionalInt(raw.rc ?? raw.nx, 0, 0xffffffff),
     dumpedVolume: num(raw.dv),
     // An unknown mode (newer firmware) is not an error: it is just not shown.
     tempMode: raw.tm === 'chill' || raw.tm === 'heat' || raw.tm === 'idle' ? raw.tm : null,

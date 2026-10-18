@@ -233,8 +233,8 @@ bool loadPovotoSettingsBackup(const String &settings) {
   READ_BACKUP_BOOL("googleLogEnabled", loadedFmt.googleLogEnabled);
   READ_BACKUP_FLOAT("FMTVolume", loadedFmt.FMTVolume);
   // Expansion-tank fields of older files (te-final tag), and the retired
-  // liquidMassInGasVentingPercent, ventMinSeconds, ventSafetyDropPercent and
-  // pressure2* fields, are ignored.
+  // liquidMassInGasVentingPercent, ventMinSeconds and ventSafetyDropPercent
+  // fields, are ignored.
   READ_BACKUP_FLOAT("ventTargetDropPercent", loadedFmt.ventTargetDropPercent);
   READ_BACKUP_FLOAT("flowLevelFactor", loadedFmt.flowLevelFactor);
   if (!isValidVentTargetDrop(loadedFmt.ventTargetDropPercent) || !isValidFlowLevelFactor(loadedFmt.flowLevelFactor))
@@ -251,8 +251,8 @@ bool loadPovotoSettingsBackup(const String &settings) {
   READ_BACKUP_FLOAT("maximumPressure", loadedFmt.maximumPressure);
   READ_BACKUP_FLOAT("maxSetPointPressure", loadedFmt.maxSetPointPressure);
   READ_BACKUP_FLOAT("lastExpTankVolume", loadedFmt.lastExpTankVolume);
-  // The security pressure is 2.0-3.0 bar and the highest set point is below it.
-  if (!isValidMaximumPressure(loadedFmt.maximumPressure) ||
+  // The security pressure is above 2.0 and up to 2.3 bar, the highest set point is up to 2.0 bar and below it.
+  if (!isValidPovotoNumber(povotoNumber) || !isValidMaximumPressure(loadedFmt.maximumPressure) ||
       !isValidMaxSetPointPressure(loadedFmt.maxSetPointPressure, loadedFmt.maximumPressure) ||
       !(loadedFmt.lastExpTankVolume > 0.0f)) return false;
   READ_BACKUP_INT("nucleationWindow", loadedFmt.nucleationWindow);

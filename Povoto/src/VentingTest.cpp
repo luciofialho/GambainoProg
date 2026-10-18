@@ -82,7 +82,7 @@ struct VentHistoryHeader {
 } __attribute__((packed));
 
 static constexpr const char *VT_FILE = "/venttests.bin";
-static constexpr uint32_t VT_MAGIC = 0x32485456UL; // "VTH2" (48 releases, noise, chi-square)
+static constexpr uint32_t VT_MAGIC = 0x33485456UL; // "VTH3" (48 releases, noise, chi-square; Patm source 0 SideKick / 1 altitude)
 static constexpr uint8_t VT_HISTORY = 50;
 
 static bool readHeader(File &f, VentHistoryHeader &h) {
@@ -136,7 +136,7 @@ static bool appendRecord(const VentTestRecord &r) {
 // ----- Fit -----
 static float tauRatioMinusOne(const VentModel::Curve &other, const VentModel::Curve &test, float p) {
   if (!VentModel::validCurve(other)) return NAN;
-  return float(VentModel::tauRef(other, p) / VentModel::tauRef(test, p) - 1.0); // test flow / other flow - 1
+  return float(VentModel::tauRef(other, p, Patm) / VentModel::tauRef(test, p, Patm) - 1.0); // test flow / other flow - 1
 }
 
 static void fitRecord(VentTestRecord &r) {
@@ -342,7 +342,7 @@ static float stepSeconds(float p1, float target) {
   const double tK = 273.15 + (isfinite(ControlData.temperature) ? ControlData.temperature : 20.0f);
   const double pOn = p1 + Patm, pT = target + Patm;
   const double pMean = VentModel::logMean(pOn, pT);
-  double c = VentModel::flowConstantAir(FMTData.ventCurve, pMean - Patm);
+  double c = VentModel::flowConstantAir(FMTData.ventCurve, pMean - Patm, Patm);
   if (test->co2) c = VentModel::co2FlowConstant(FMTData.ventCurve, 1.0, pMean - Patm, Patm, tK);
   const double moles = test->volume / (VentModel::R * tK) * (pOn - pT);
   const double seconds = moles / (c * pMean / sqrt(tK)) + FMTData.ventCurve.t0;
@@ -506,7 +506,7 @@ void processVentingTest() {
   VentReleaseRaw &x = test->rel[test->count];
   if (debugging) { // bench boards: exponential release with the current curve
     if (stage == VT_OPEN) {
-      const double tau = VentModel::tauRef(FMTData.ventCurve, x.p1) * test->volume / VentModel::V_REF;
+      const double tau = VentModel::tauRef(FMTData.ventCurve, x.p1, Patm) * test->volume / VentModel::V_REF;
       const double t = fmax(0.0, (now - stageMillis) / 1000.0 - FMTData.ventCurve.t0);
       simulatedPressure = float((x.p1 + Patm) * exp(-t / tau) - Patm);
     }

@@ -1,6 +1,6 @@
 # Volume do fermentador pelo tanque de expansão
 
-Código: `src/KegVolume.cpp`; página Calibration, seção "Fermenter volume" (antiga "Keg volume").
+Código: `src/ExpansionTank.cpp`; página Calibration, seção "Fermenter volume".
 Procedimento: `docs/manual-calibracao-manutencao.md`, P4b. É a rotina lenta de
 volume da época do TE com um tanque simples (sem pesagem), sem os tempos fixos
 (3 min aberta, 4 min de espera) nem o ajuste de 35 ciclos.
@@ -55,7 +55,7 @@ Erro por relief (±0,5 mbar), fermentador de 130 L: 2,5% com 2 L, 0,31% com
   `fmt-volume-saved` (volume anterior e novo, desvio, reliefs usados, tanque). Antes, o
   resultado só vai para a RAM (até o próximo uso ou um reboot). Evento ao fim da rotina:
   `fermenter-volume`.
-- CSV `/calibration/keg.csv`: `PovotoCalibration-FermenterVolume-FMT<n>-yyyymmddhhmm.csv`
+- CSV `/calibration/expansion.csv`: `PovotoCalibration-FermenterVolume-FMT<n>-yyyymmddhhmm.csv`
   (hora local de início; `nodate` sem NTP; prefixo `Incomplete-` se baixado durante a rotina).
   Com a rotina em andamento, o CSV é montado de uma cópia dos reliefs concluídos tirada sob
   trava (a página roda na task web, a rotina no loop), sem escrita na flash.

@@ -44,7 +44,7 @@ Histórico (uma linha JSON, até ~400 bytes):
 | `t`, `ts`, `tsl` | temperatura, setpoint, slow target |
 | `pr`, `ps`, `psl` | pressão, setpoint, slow target |
 | `sg`, `abv`, `r`, `f` | SG, ABV, gCO2/L/d e flags dos gráficos (1 retido, 2 transição, 4 sintético) |
-| `vol`, `co2`, `rph` | volume (L), g de CO2, reliefs por hora |
+| `vol`, `co2`, `tblv` | volume (L), g de CO2, TBLV em s (o maior entre o intervalo dos dois últimos vents e o tempo desde o último; vazio antes de dois vents). Firmware antigo mandava `rph` (reliefs por hora), que a nuvem ignora |
 | `ss` | só no log sintético: dia 0 do perfil (epoch local) |
 
 Estado do batch (uma linha JSON, até ~330 bytes; o SideKick aceita até 400):
@@ -56,7 +56,7 @@ Estado do batch (uma linha JSON, até ~330 bytes; o SideKick aceita até 400):
 | `bn`, `bd`, `og` | nome, data e OG do batch |
 | `ct`, `ht` | tempo de chiller e de heater ligados (s, acumulado) |
 | `mh`, `md`, `me` | mol de CO2 no headspace, dissolvido e expelido (acumulado) |
-| `nx` | expansões (`totalReliefCount`) |
+| `rc` | reliefs (`totalReliefCount`); firmware before the rename sent `nx`, which the cloud still accepts |
 | `dv` | volume descartado por tarefas Dump (L) |
 | `tm`, `hv` | modo de temperatura (`"chill"`, `"heat"`, `"idle"`; `ChillHeatMode`) e volume do headspace (L), para as estatísticas do dashboard (desde 10/2026; ausentes = firmware anterior) |
 | `hs`, `hr`, `ae` | fase 2: versões dos snapshots de set points e regras, edições aceitas |

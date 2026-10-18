@@ -3,7 +3,7 @@
 Versão 1 (11/10/2026), método de **ventilação direta** (o vent não usa tanque de expansão; um tanque
 simples de volume conhecido só serve para medir o volume do fermentador, P4b).
 Firmware: branch `povoto-vent` (`docs/sem-te-plano.md`; detalhes em
-`docs/vent.md`, `docs/venting-test.md`, `docs/keg-volume.md`,
+`docs/vent.md`, `docs/venting-test.md`, `docs/expansion-tank-volume.md`,
 `docs/valve-cleaning.md`, `docs/pressure-sensor-zero.md`,
 `docs/atmospheric-pressure.md`). O método antigo com TE está na tag
 `te-final-2026-10-11` (binários em `A:\Nuvem\Povoto\Firmware\te-final-2026-10-11`).
@@ -20,15 +20,18 @@ Regras gerais:
   dashboard e o QR da TFT abrem o menu). Toda página aberta do menu volta para o menu em Save e em Cancel;
   as ações de rotina da Calibration (Start, Abort, Save zero, Save curve and t0, Save as new FMT volume)
   voltam para `/calibration`.
-- Onde ficam os campos: **Fermenter settings** (botão "Fermenter Settings" do menu) — FMT volume, Maximum security pressure (2,0–3,0 bar), Maximum
-  pressure setpoint (abaixo da pressão de segurança; nenhum setpoint de pressão, nem de regra ou da nuvem,
-  passa dele), Target drop of the gauge pressure per vent (1–15%), altitude, Cooling cycle, Heating cycle,
+- Onde ficam os campos: **Fermenter settings** (botão "Fermenter Settings" do menu) — FMT volume, Povoto Number (0–99), Maximum security pressure (acima de 2,0 e até 2,3 bar; o sensor lê bem até esse
+  limite), Maximum pressure setpoint (até 2,0 bar e abaixo da pressão de segurança; nenhum setpoint de
+  pressão, nem de regra ou da nuvem, passa dele), Target drop of the gauge pressure per vent (1–15%), altitude, Cooling cycle, Heating cycle,
   Thermometers, Backup settings / Restore settings from backups. **User Configuration** — screensaver,
   PIN, brilho, Log interval e "Accept new setpoints and triggered actions from cloud". **Calibration**, em ordem: Pressure sensor (pontos A e B, reta; Sensor
   zero), Fermenter volume, Venting test, Vent (Flow level factor e Effective Venting Exponent; a abertura
   mínima de 1,5 s e a queda de segurança de 2× a alvo são fixas), Dissolved CO2 dynamics (Nucleation
   window); um único Save/Cancel no fim grava os campos editáveis, e os eventos de
-  calibração ficam no final da página. O **Valve cleaning** fica na página **Control**.
+  calibração ficam no final da página. O **Valve cleaning** fica na página **Control**, junto com o **Valve** (Auto / Open / Closed:
+  Open segura a válvula aberta por até 10 min, Closed suspende os reliefs automáticos, mas nunca o de
+  segurança) e o **Relief once** (recusado durante rotinas de calibração, com o Valve fora de Auto ou com
+  um relief em andamento).
 - Arquivos baixados: `PovotoCalibration-<tipo>-FMT<n>-yyyymmddhhmm.csv` (hora local do início do ensaio;
   `nodate` sem NTP). Tipos: `Venting`, `VentingHistory` (todos, hora do download) e `FermenterVolume`;
   `Incomplete-` na frente se baixado antes do fim; eventos: `PovotoCalibration-Events-FMT<n>-<hora>.txt`.
@@ -325,9 +328,9 @@ Não use soda nem Vanish em pó (corpo de alumínio). Não molhe a bobina.
 | P5: perda < 3% mas volta só com a limpeza | sujeira por lote | manter P10 em todo fim de lote |
 | Líquido na garrafa testemunha | krausen chegando à válvula | registrar; avaliar separador antes da válvula; P10 |
 | P7: correção > 5% num lote | leitura de SG ou condição atípica | não aplicar; medir de novo no próximo lote |
-| Alarme de vent abaixo do esperado (2 vents seguidos com a queda < 80% da esperada) | válvula não abriu, saída obstruída, TE religado por engano, mudança brusca de volume (líquido adicionado fora de uma task) | verificar a montagem com o equipamento em OFF; esses vents foram contados pelo lado do fermentador e ficaram fora da média de 24 h e da EMA. Um vent isolado abaixo de 80% só fica marcado no log (`ReliefCheck` = partial / no-effect) |
+| Alarme de vent abaixo do esperado (2 vents seguidos com a queda < 80% da esperada) | válvula não abriu, saída obstruída, mudança brusca de volume (líquido adicionado fora de uma task) | verificar a montagem com o equipamento em OFF; esses vents foram contados pelo lado do fermentador e ficaram fora da média de 24 h e da EMA. Um vent isolado abaixo de 80% só fica marcado no log (`ReliefCheck` = partial / no-effect) |
 | `HeadSpaceDaily` subindo devagar, sem alarme | sujeira gradual na válvula ou no silenciador (a razão do vent só enxerga mudanças bruscas, pois a referência vem do próprio modelo de vazão) | P8: ensaio de ventilação de fim de lote e comparação com a curva de referência |
-| Alarme de válvula presa aberta | êmbolo preso, sujeira no assento, falha no acionamento | fechar a linha manualmente; P10 ou trocar a válvula |
+| Alarme de válvula presa aberta | êmbolo preso, sujeira no assento, falha no acionamento | fechar a linha manualmente; P10 ou trocar a válvula. O alarme apaga sozinho quando a pressão volta a subir; o bipe espaça (1 por minuto nos primeiros 10 min, depois a cada 15 min e a cada hora) |
 
 ## 6. Folha de registro
 

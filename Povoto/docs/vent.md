@@ -4,8 +4,7 @@ Plano: `docs/sem-te-plano.md`; operação e calibração:
 `docs/manual-calibracao-manutencao.md`. Código: `src/PressureControl.cpp`
 (`planVent()`, `processReliefCycle()`, `processPressure()`), modelo em
 `include/VentModel.h` (funções puras; espelho em Python, `tests/vent_model.py`).
-O método antigo, com tanque de expansão (TE), está na tag `te-final-2026-10-11`
-(`docs/historico-te/`).
+Fallback e histórico (tag do método antigo, colunas que saíram): última seção.
 
 ## 1. Ciclo
 
@@ -51,8 +50,17 @@ t          = máx(mín(t_estimado, t_seg), 1,5 s)
 - **Curva**: τ(P) = a0 + a1·P + a2·P² + a3·P³ (s, P manométrica), a constante de
   tempo da pressão absoluta de **100 L de ar a 20 °C**, medida pelo ensaio de
   ventilação (fermentador vazio, ar). Fora da faixa de pressão do ensaio
-  (`pMin`–`pMax`) vale o valor da ponta: a cúbica não é extrapolada (a de 18/09
-  cai de 161 s a 1,9 bar para 113 s a 2,3 bar).
+  (`pMin`–`pMax`) a cúbica não é extrapolada (a de 18/09 cai de 161 s a 1,9 bar para
+  113 s a 2,3 bar):
+  - **acima de `pMax`** vale o valor da ponta: o escoamento é sônico (≥ ~0,85 bar) e o τ quase
+    não muda;
+  - **abaixo de `pMin`** (subsônico) o valor da ponta é escalado pelo bocal ideal,
+    τ(P) = τ(pMin)·ψ(r(pMin))/ψ(r(P)), com r = Patm/(P + Patm) e ψ a função de vazão do bocal
+    para o ar (`VentModel::nozzlePsi`, γ 1,40). A vazão do bocal cai ao se afastar do regime
+    sônico, então o valor da ponta superestimaria a vazão (cerca de +9% a 0,25 bar com
+    `pMin` 0,36 bar). A escala vale até 5 mbar manométricos (`TAU_MIN_GAUGE`).
+    Continua marcado como fora da faixa (abaixo); o ensaio cobrindo a faixa segue sendo o
+    caminho melhor.
 - Vazão molar do ar: `C_ar(P)·P_abs/√T`, `C_ar = 100 / (R·√293,15·τ(P))`.
 - **Ar → CO2**: razão do bocal ideal em função da pressão (γ 1,40 / 1,29, massa
   molar): 0,788 no regime sônico (≥ ~0,85 bar), 0,790 a 0,8 bar, 0,796 a 0,5 bar.
@@ -103,7 +111,7 @@ mols  = C_ar(P̄)·razão(P̄)/√Z(P̄)·nível · P̄/√T_gás · fator · (t
   vazão (`ReliefDropRatio`, = queda medida / esperada) vai para o log Relief em
   todo vent. **Razão < 0,8**
   (`VENT_FERMENTER_SIDE_RATIO`): a saída passou menos que a curva diz (válvula
-  que não abriu, saída parcial ou totalmente obstruída, TE religado por engano):
+  que não abriu, saída parcial ou totalmente obstruída):
   o vent é contado pelo lado do fermentador (`VentCounted` = `fermenter-side`) e
   fica fora da média de 24 h e da EMA. Contado pela vazão, uma queda de 60% da
   esperada seria contada 67% a mais. A troca só vale onde a verificação vale
@@ -116,10 +124,11 @@ mols  = C_ar(P̄)·razão(P̄)/√Z(P̄)·nível · P̄/√T_gás · fator · (t
   por até 24 h.
 - **Fora da faixa calibrada**: se `P_on` passa da pressão máxima do ensaio
   (`pMax` da curva) ou a leitura de fechamento fica abaixo da mínima (`pMin`),
-  com 5 mbar de tolerância, a curva usou o valor da ponta: coluna
-  `VentOutOfRange` (`above` / `below`) e contagem em `/ventstatus`. Na ponta
-  alta o erro é pequeno (sônico); na baixa (subsônico, < ~0,4 bar) o valor da
-  ponta superestima a vazão: refazer o ensaio cobrindo a faixa (manual, P5).
+  com 5 mbar de tolerância, a curva usou o valor da ponta (acima) ou a
+  extrapolação pelo bocal (abaixo; seção 3): coluna `VentOutOfRange`
+  (`above` / `below`) e contagem em `/ventstatus`. Na ponta alta o erro é pequeno
+  (sônico); na baixa o erro cresce com a distância de `pMin` (a escala não inclui
+  a variação do coeficiente de descarga): refazer o ensaio cobrindo a faixa (manual, P5).
 - **Bench** (`python tests/vent_bench.py`): contra uma simulação com o gás real
   expandindo pelo politrópico que define o 1,29, a vazão instantânea e o t0, a
   contagem erra ≤ 0,11% a 0,5 / 1,0 / 1,9 bar com Vh de 20 / 30 / 50 L. Com uma
@@ -127,7 +136,9 @@ mols  = C_ar(P̄)·razão(P̄)/√Z(P̄)·nível · P̄/√T_gás · fator · (t
   de 18/09 muda ~8% dentro de um vent perto de 1,9 bar. Sensibilidades (1,9 bar,
   30 L): t0 10 ms errado +0,28%; válvula 3% mais lenta +3,0%; gás 2 K mais quente
   +0,25%; gás 6 K mais quente com a T do líquido +1,0%; expoente real 1,20 ou
-  1,40: < 0,25% na contagem (mas ±7% no Vh aparente).
+  1,40: < 0,25% na contagem (mas ±7% no Vh aparente). Abaixo de `pMin` o bench confere a
+  continuidade em `pMin`, o τ de ponta acima de `pMax`, a escala do bocal e a contagem de um
+  vent a 0,25 bar (≤ 0,5%).
 
 ## 5. Vh aparente e headspace
 
@@ -158,7 +169,6 @@ subida pela fermentação durante a abertura, como antes) e a pressão assentada
 - **Válvula presa aberta**: 30 s depois da leitura de fechamento, a pressão caiu
   mais de 5 mbar (a recuperação térmica e a fermentação só sobem a pressão):
   alarme na hora.
-- A antiga verificação de queda grande (vazamento entre válvula e TE) saiu.
 
 ## 7. Diagnóstico: `/ventstatus`
 
@@ -198,9 +208,32 @@ O nome da planilha continua **Relief**. Colunas novas: `GasTemperature`,
 `VentT0Seconds`, `VentMeanPressure`, `VentCoolingFactor`, `VentFlowConstant`,
 `FlowLevelFactor`, `VentFlowMols`, `VentFermenterSideMols`, `VentOutOfRange`,
 `VentCounted`, `VentDropPercent`, `VentVaporFraction` (no lugar de `LiquidMassInGasVentingPercent`),
-`VentTargetDropPercent`, `HeadSpaceApparent`. Saíram as do TE
-(`TankReferenceTemperature`, `ReliefVolume`, `AdjustedEquilibriumPressure`,
-`TankPressureAtClose`, `GasVentingResidual`, `PreviousTank*`,
-`ExpansionTankResidualMoles`, `PressureDropFactor`, `Gas*` do ciclo do tanque,
-`VentingElapsedAtLogSeconds`, `KCO2FromBeerVolume`,
-`ExpansionTankTemperature`).
+`VentTargetDropPercent`, `HeadSpaceApparent`. `EjectedMolsWithVaporAtLog` são os mols contados
+do vent com o vapor (`EjectedMolsAtLog` é só o CO2).
+
+## 10. Válvula: Valve da página Control e Relief once
+
+- **Valve** (Auto / Open / Closed; não é gravado, um boot volta para Auto):
+  - *Open* mantém a válvula aberta por no máximo 10 min e volta para Auto. A pressão cai e nada
+    é contado nem entra no CO2; a verificação de válvula presa aberta fica desligada
+    enquanto durar. Um relief em andamento termina antes.
+  - *Closed* suspende os reliefs automáticos. O relief acima da pressão máxima de segurança
+    **continua**, qualquer que seja a opção.
+  - Uma rotina de calibração que comanda a válvula (ensaio de ventilação, limpeza, volume pelo
+    tanque de expansão) cancela a opção (volta para Auto), e a página recusa Open/Closed
+    enquanto ela roda.
+- **Relief once** (POST): recusado durante uma rotina de calibração, com o Valve fora de Auto
+  ou com um relief em andamento. Em OFF funciona.
+
+## 11. Fallback e histórico
+
+O método antigo, com tanque de expansão (TE), está na tag `te-final-2026-10-11`
+(`docs/historico-te/`; fallback só entre lotes). Para a volta ser limpa, este firmware não
+reaproveita as chaves de NVS do TE (`docs/NVS-storage.md`).
+
+- A verificação de queda grande do TE (vazamento entre a válvula e o tanque) saiu.
+- Colunas do log Relief que saíram: `TankReferenceTemperature`, `ReliefVolume`,
+  `AdjustedEquilibriumPressure`, `TankPressureAtClose`, `GasVentingResidual`, `PreviousTank*`,
+  `ExpansionTankResidualMoles`, `PressureDropFactor`, `Gas*` do ciclo do tanque,
+  `VentingElapsedAtLogSeconds`, `KCO2FromBeerVolume`, `ExpansionTankTemperature` e
+  `LiquidMassInGasVentingPercent` (agora `VentVaporFraction`).

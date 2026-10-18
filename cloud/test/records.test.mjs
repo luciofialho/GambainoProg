@@ -69,3 +69,12 @@ test('a newer firmware: unknown fields are ignored, unknown kinds rejected alone
   assert.equal(parsed.states.length, 1);
   assert.equal(parsed.rejected, 1);
 });
+
+test('time between the last vents ("tblv") and the relief count ("rc"; "nx" of older firmware)', () => {
+  const now = parseBody(fixture('2026-10-tblv-reliefs.ndjson'), NOW);
+  assert.equal(now.records[0].tblvSeconds, 540);
+  assert.equal(now.states[0].reliefs, 57);
+  const old = parseBody(fixture('2026-10-phase2.ndjson'), NOW);
+  assert.equal(old.records[0].tblvSeconds, null);  // it sent reliefs per hour ("rph"), ignored
+  assert.equal(old.states[0].reliefs, 57);
+});

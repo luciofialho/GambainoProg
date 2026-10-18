@@ -58,7 +58,7 @@ struct PatmSourceState {
   float hPa;           // moving average
   unsigned long ageMs; // of the newest sample
 };
-static PatmSourceState sourceState[3];
+static PatmSourceState sourceState[2];
 static uint8_t selectedSource = PATM_SOURCE_ALTITUDE;
 // Highest-priority source seen valid since the boot; using a lower one is a
 // fallback, shown in the status until the better source returns.
@@ -77,7 +77,6 @@ static float altitudeHPa() {
 
 const char *atmosphericPressureSourceLabel(uint8_t source) {
   switch (source) {
-    case PATM_SOURCE_SENSOR: return "sensor"; // retired: only in old venting-test records
     case PATM_SOURCE_SIDEKICK: return "sidekick";
     default: return "altitude";
   }
@@ -94,9 +93,7 @@ uint8_t atmosphericPressureSource() {
 // Re-evaluates the sources and sets Patm (bar).
 static void selectAtmosphericPressure(unsigned long now) {
   PatmSample newest;
-  // No barometer on the Povoto: the pressure always comes from the SideKick. The retired
-  // "sensor" slot stays invalid (its number is kept for the saved venting-test records).
-  sourceState[PATM_SOURCE_SENSOR] = {false, NAN, 0};
+  // No barometer on the Povoto: the pressure comes from the SideKick.
   PatmSourceState &sidekick = sourceState[PATM_SOURCE_SIDEKICK];
   sidekick = {false, NAN, 0};
   portENTER_CRITICAL(&sidekickMux);

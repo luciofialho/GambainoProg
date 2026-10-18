@@ -22,24 +22,13 @@ constexpr int SIMPSON_INTERVALS = 16; // even
 // venting test: tau(P) = a0 + a1 P + a2 P^2 + a3 P^3 (s) is the time constant
 // of the absolute pressure of V_REF litres of air at T_REF, P in gauge bar;
 // t0 is the mechanical delay of the valve. The cubic is used only inside the
-// pressure range of the test (pMin..pMax): outside it, the end value.
+// pressure range of the test (pMin..pMax); outside it see tauRef().
 struct Curve {
   float a[4];
   float t0;
   float pMin, pMax;
   uint32_t epoch; // local NTP time of the test it came from (0 = default curve)
 } __attribute__((packed));
-
-inline double tauRef(const Curve &c, double pGauge) {
-  const double p = fmin(fmax(pGauge, (double)c.pMin), (double)c.pMax);
-  return ((c.a[3] * p + c.a[2]) * p + c.a[1]) * p + c.a[0];
-}
-
-// C_air(P), mol*K^0.5/(s*bar): molar air flow = C_air * P_abs / sqrt(T).
-inline double flowConstantAir(const Curve &c, double pGauge) {
-  const double tau = tauRef(c, pGauge);
-  return tau > 0.0 ? V_REF / (R * sqrt(T_REF) * tau) : NAN;
-}
 
 // Ideal-nozzle flow function for the downstream/upstream pressure ratio r.
 inline double nozzlePsi(double gamma, double r) {
@@ -48,6 +37,27 @@ inline double nozzlePsi(double gamma, double r) {
     return sqrt(gamma) * pow(2.0 / (gamma + 1.0), (gamma + 1.0) / (2.0 * (gamma - 1.0)));
   r = fmin(r, 1.0);
   return sqrt(fmax(0.0, 2.0 * gamma / (gamma - 1.0) * (pow(r, 2.0 / gamma) - pow(r, (gamma + 1.0) / gamma))));
+}
+
+constexpr double TAU_MIN_GAUGE = 0.005; // bar: lowest gauge pressure the extrapolation below pMin is taken to
+
+// tau at a gauge pressure. Inside the range of the test: the cubic. Above pMax: the
+// end value (the flow is choked there, tau nearly constant; the cubic is not extrapolated).
+// Below pMin (subsonic): the end value scaled by the ideal nozzle,
+// tau(P) = tau(pMin) * psi(r(pMin)) / psi(r(P)), r = patm / (P + patm).
+inline double tauRef(const Curve &c, double pGauge, double patm) {
+  const double inRange = fmin(fmax(pGauge, (double)c.pMin), (double)c.pMax);
+  const double tau = ((c.a[3] * inRange + c.a[2]) * inRange + c.a[1]) * inRange + c.a[0];
+  if (pGauge >= c.pMin) return tau;
+  const double psiEnd = nozzlePsi(GAMMA_AIR, patm / ((double)c.pMin + patm));
+  const double psi = nozzlePsi(GAMMA_AIR, patm / (fmax(pGauge, TAU_MIN_GAUGE) + patm));
+  return psi > 0.0 && psiEnd > 0.0 ? tau * psiEnd / psi : NAN;
+}
+
+// C_air(P), mol*K^0.5/(s*bar): molar air flow = C_air * P_abs / sqrt(T).
+inline double flowConstantAir(const Curve &c, double pGauge, double patm) {
+  const double tau = tauRef(c, pGauge, patm);
+  return tau > 0.0 ? V_REF / (R * sqrt(T_REF) * tau) : NAN;
 }
 
 // CO2/air molar flow of an ideal nozzle at the same pressures and temperature:
@@ -88,11 +98,11 @@ inline double coolingFactor(double pOnAbs, double pMeanAbs, double exponent) {
 
 // Effective CO2 flow constant: C_air * ratio / sqrt(Z) * level.
 inline double co2FlowConstant(const Curve &c, double level, double pGauge, double patm, double tKelvin) {
-  return flowConstantAir(c, pGauge) * co2AirRatio(pGauge, patm) / sqrt(co2Z(pGauge + patm, tKelvin)) * level;
+  return flowConstantAir(c, pGauge, patm) * co2AirRatio(pGauge, patm) / sqrt(co2Z(pGauge + patm, tKelvin)) * level;
 }
 
 struct VentCount {
-  double moles;      // CO2 out of the fermenter (before the liquid-mass correction)
+  double moles;      // total moles out of the fermenter (CO2 + vapor)
   double pMeanGauge; // log mean of the absolute pressures at opening and closing
   double cooling;    // sqrt(T0 / T) at the mean pressure
   double flowConstant;
@@ -201,8 +211,8 @@ inline void releaseSensitivities(const Curve &c, double volume, double t0Kelvin,
     g2 /= sqrt(co2Z(p2, t0Kelvin)) * co2AirRatio(pAbs2 - patm, patm);
     g1 /= sqrt(co2Z(p1, t0Kelvin)) * co2AirRatio(p1Gauge, patm);
   }
-  s1 = scale * g1 * tauRef(c, p1Gauge);
-  s2 = scale * g2 * tauRef(c, pAbs2 - patm);
+  s1 = scale * g1 * tauRef(c, p1Gauge, patm);
+  s2 = scale * g2 * tauRef(c, pAbs2 - patm, patm);
 }
 
 // Reduced chi-square of a fit: sum r_i^2 / (s1^2 n1^2 + s2^2 n2^2 + st^2) / (n - 5),
@@ -311,7 +321,7 @@ inline bool validCurve(const Curve &c) {
   if (!(c.pMax > c.pMin) || !(c.pMin >= 0.0f) || !(c.pMax <= 4.0f) || !isfinite(c.t0) || fabs(c.t0) > 1.0f)
     return false;
   for (int i = 0; i <= 10; ++i) {
-    const double tau = tauRef(c, c.pMin + (c.pMax - c.pMin) * i / 10.0);
+    const double tau = tauRef(c, c.pMin + (c.pMax - c.pMin) * i / 10.0, 1.0); // inside the range: patm unused
     if (!(tau > 1.0 && tau < 100000.0)) return false;
   }
   return true;

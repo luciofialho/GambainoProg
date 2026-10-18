@@ -6,9 +6,8 @@ vazão da válvula (∝ pressão absoluta).
 
 ## Fontes, em ordem de prioridade
 
-O Povoto **não tem barômetro próprio**: a pressão atmosférica vem sempre do SideKick (o BMP581 fica no
-SideKick). O antigo rótulo `sensor` (BMP581 no I²C do Povoto) foi retirado; o número 0 dele continua
-reservado, porque os registros de ensaio de ventilação já gravados guardam a fonte como 0, 1 ou 2.
+O Povoto **não tem barômetro próprio**: a pressão atmosférica vem do SideKick (o BMP581 fica no
+SideKick). Os registros de ensaio de ventilação guardam a fonte como 0 (`sidekick`) ou 1 (`altitude`).
 
 | Fonte | Rótulo | Validade |
 |---|---|---|
@@ -28,7 +27,7 @@ reservado, porque os registros de ensaio de ventilação já gravados guardam a 
 ## Logs e status
 
 - Cold e Relief: `AtmosphericPressure` (bar) e `AtmosphericPressureSource`
-  (`sidekick` / `altitude`; `sensor` só em registros antigos).
+  (`sidekick` / `altitude`).
 - `/getstatus` (seção de pressão): o valor em uso e a fonte; cada fonte com valor,
   idade e validade (a do SideKick e a altitude).
 

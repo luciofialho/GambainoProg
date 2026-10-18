@@ -24,21 +24,6 @@ def make_curve(a, t0=0.0, p_min=0.0, p_max=3.0):
     return {"a": list(a), "t0": t0, "p_min": p_min, "p_max": p_max}
 
 
-def tau_ref(curve, p_gauge):
-    """tau(P) = a0 + a1 P + a2 P^2 + a3 P^3 (s): air, V_REF, T_REF.
-
-    P is limited to the range of the test: the cubic is not extrapolated."""
-    a = curve["a"]
-    p = min(max(p_gauge, curve["p_min"]), curve["p_max"])
-    return ((a[3] * p + a[2]) * p + a[1]) * p + a[0]
-
-
-def flow_constant_air(curve, p_gauge):
-    """C_air(P), mol*K^0.5/(s*bar): air molar flow = C_air * P_abs / sqrt(T)."""
-    tau = tau_ref(curve, p_gauge)
-    return V_REF / (R * math.sqrt(T_REF) * tau) if tau > 0 else float("nan")
-
-
 def nozzle_psi(gamma, r):
     """Ideal-nozzle flow function for downstream/upstream pressure ratio r."""
     critical = (2.0 / (gamma + 1.0)) ** (gamma / (gamma - 1.0))
@@ -46,6 +31,32 @@ def nozzle_psi(gamma, r):
         return math.sqrt(gamma) * (2.0 / (gamma + 1.0)) ** ((gamma + 1.0) / (2.0 * (gamma - 1.0)))
     r = min(r, 1.0)
     return math.sqrt(max(0.0, 2.0 * gamma / (gamma - 1.0) * (r ** (2.0 / gamma) - r ** ((gamma + 1.0) / gamma))))
+
+
+TAU_MIN_GAUGE = 0.005  # bar: lowest gauge pressure the extrapolation below p_min is taken to
+
+
+def tau_ref(curve, p_gauge, patm):
+    """tau(P) = a0 + a1 P + a2 P^2 + a3 P^3 (s): air, V_REF, T_REF.
+
+    Inside the range of the test: the cubic. Above p_max: the end value (choked flow,
+    tau nearly constant; the cubic is not extrapolated). Below p_min (subsonic): the end
+    value scaled by the ideal nozzle, tau(P) = tau(p_min) psi(r(p_min)) / psi(r(P)),
+    r = patm / (P + patm)."""
+    a = curve["a"]
+    p = min(max(p_gauge, curve["p_min"]), curve["p_max"])
+    tau = ((a[3] * p + a[2]) * p + a[1]) * p + a[0]
+    if p_gauge >= curve["p_min"]:
+        return tau
+    psi_end = nozzle_psi(GAMMA_AIR, patm / (curve["p_min"] + patm))
+    psi = nozzle_psi(GAMMA_AIR, patm / (max(p_gauge, TAU_MIN_GAUGE) + patm))
+    return tau * psi_end / psi if psi > 0 and psi_end > 0 else float("nan")
+
+
+def flow_constant_air(curve, p_gauge, patm):
+    """C_air(P), mol*K^0.5/(s*bar): air molar flow = C_air * P_abs / sqrt(T)."""
+    tau = tau_ref(curve, p_gauge, patm)
+    return V_REF / (R * math.sqrt(T_REF) * tau) if tau > 0 else float("nan")
 
 
 def co2_air_ratio(p_gauge, patm):
@@ -89,7 +100,7 @@ def cooling_factor(p_on_abs, p_mean_abs, exponent):
 def co2_flow_constant(curve, level, p_gauge, patm, t_kelvin):
     """Effective CO2 flow constant: C_air * ratio / sqrt(Z) * level."""
     p_abs = p_gauge + patm
-    return (flow_constant_air(curve, p_gauge) * co2_air_ratio(p_gauge, patm)
+    return (flow_constant_air(curve, p_gauge, patm) * co2_air_ratio(p_gauge, patm)
             / math.sqrt(co2_z(p_abs, t_kelvin)) * level)
 
 
@@ -153,7 +164,7 @@ def release_sensitivities(curve, volume, t0_kelvin, p1_gauge, p2_gauge, patm, ex
     if co2:
         g2 /= math.sqrt(co2_z(p2, t0_kelvin)) * co2_air_ratio(p_abs2 - patm, patm)
         g1 /= math.sqrt(co2_z(p1, t0_kelvin)) * co2_air_ratio(p1_gauge, patm)
-    return scale * g1 * tau_ref(curve, p1_gauge), scale * g2 * tau_ref(curve, p_abs2 - patm)
+    return scale * g1 * tau_ref(curve, p1_gauge, patm), scale * g2 * tau_ref(curve, p_abs2 - patm, patm)
 
 
 def reduced_chi_square(curve, releases, residuals, exponents, volume, patm, co2,

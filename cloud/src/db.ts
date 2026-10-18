@@ -29,7 +29,7 @@ export interface BatchRow {
   mol_headspace: number | null;
   mol_dissolved: number | null;
   mol_ejected: number | null;
-  expansions: number | null;
+  reliefs: number | null;
   dumped_volume: number | null;
   // Migration 0005; null until a state line of firmware that sends them.
   temp_mode: string | null;
@@ -53,7 +53,7 @@ export interface LogRow {
   flags: number;
   volume: number | null;
   co2_mass: number | null;
-  reliefs_per_hour: number | null;
+  tblv_seconds: number | null;
 }
 
 export interface ShareRow {
@@ -90,14 +90,14 @@ export async function storeRecords(db: D1Database, site: number, records: LogRec
   const insertLog = db.prepare(
     `INSERT OR IGNORE INTO logs (povoto_id, epoch, batch, mode, temp, temp_sp, temp_slow,
        press, press_sp, press_slow, sg, abv, rate, flags, volume, co2_mass,
-       reliefs_per_hour, synthetic_start, received_at)
+       tblv_seconds, synthetic_start, received_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   for (const r of records) {
     const id = site * 100 + r.num;
     povotos.add(r.num);
     statements.push(insertLog.bind(id, r.epoch, r.batch, r.mode, r.temp, r.tempSp, r.tempSlow,
       r.press, r.pressSp, r.pressSlow, r.sg, r.abv, r.rate, r.flags, r.volume, r.co2Mass,
-      r.reliefsPerHour, r.syntheticStart, receivedAt));
+      r.tblvSeconds, r.syntheticStart, receivedAt));
     const key = `${id}:${r.batch}`;
     const batch = batches.get(key);
     if (!batch) batches.set(key, { id, first: r.epoch, last: r });
@@ -127,7 +127,7 @@ export async function storeRecords(db: D1Database, site: number, records: LogRec
   // Batch state: one row per batch, overwritten only by a newer version.
   const upsertState = db.prepare(
     `INSERT INTO batches (povoto_id, batch, name, date, og, first_epoch, last_epoch, state_epoch,
-       chill_seconds, heat_seconds, mol_headspace, mol_dissolved, mol_ejected, expansions,
+       chill_seconds, heat_seconds, mol_headspace, mol_dissolved, mol_ejected, reliefs,
        dumped_volume, temp_mode, headspace_volume)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
      ON CONFLICT (povoto_id, batch) DO UPDATE SET
@@ -135,14 +135,14 @@ export async function storeRecords(db: D1Database, site: number, records: LogRec
        state_epoch = excluded.state_epoch,
        chill_seconds = excluded.chill_seconds, heat_seconds = excluded.heat_seconds,
        mol_headspace = excluded.mol_headspace, mol_dissolved = excluded.mol_dissolved,
-       mol_ejected = excluded.mol_ejected, expansions = excluded.expansions,
+       mol_ejected = excluded.mol_ejected, reliefs = excluded.reliefs,
        dumped_volume = excluded.dumped_volume,
        temp_mode = excluded.temp_mode, headspace_volume = excluded.headspace_volume
      WHERE excluded.state_epoch >= COALESCE(batches.state_epoch, 0)`);
   for (const s of states) {
     statements.push(upsertState.bind(site * 100 + s.num, s.batch, s.batchName, s.batchDate, s.og,
       s.epoch, s.chillSeconds, s.heatSeconds, s.molHeadspace, s.molDissolved, s.molEjected,
-      s.expansions, s.dumpedVolume, s.tempMode, s.headspaceVolume));
+      s.reliefs, s.dumpedVolume, s.tempMode, s.headspaceVolume));
   }
   const results = await db.batch(statements);
   return results.slice(0, records.length).reduce((sum, result) => sum + (result.meta.changes ?? 0), 0);

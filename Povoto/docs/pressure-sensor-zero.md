@@ -38,9 +38,8 @@ mesma curva de calibração sem o corte.
 
 ## Ganho
 
-A conversão é uma reta pelos pontos A (0 bar) e B (página Calibration). O antigo ponto C (curva
-quadrática) e a conferência de ganho da seção foram retirados; a corrente filtrada e a pressão sem
-corte continuam no `/getstatus` para comparar com o manômetro analógico. A duração da rotina é fixa
+A conversão é uma reta pelos pontos A (0 bar) e B (página Calibration). A corrente filtrada e a
+pressão sem corte ficam no `/getstatus` para comparar com o manômetro analógico. A duração da rotina é fixa
 em 5 min (os critérios de estabilidade foram pensados para ela).
 
 ## Eventos de calibração

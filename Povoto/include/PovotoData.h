@@ -92,9 +92,16 @@ inline bool isValidVentTargetDrop(float percent) { return isfinite(percent) && p
 // Fixed vent limits: the minimum opening wins over the safety drop (planVent).
 constexpr float VENT_MIN_SECONDS = 1.5f;
 constexpr float VENT_SAFETY_DROP_FACTOR = 2.0f;
-inline bool isValidMaximumPressure(float bar) { return isfinite(bar) && bar > 2.0f && bar < 3.0f; }
-// The highest pressure set point is below the security pressure.
-inline bool isValidMaxSetPointPressure(float bar, float securityBar) { return isfinite(bar) && bar > 0.0f && bar < securityBar; }
+// The pressure sensor (0 to 2 bar) reads reasonably well up to 2.3 bar.
+constexpr float MAX_SECURITY_PRESSURE_LIMIT = 2.3f;
+constexpr float MAX_SETPOINT_PRESSURE_LIMIT = 2.0f;
+inline bool isValidMaximumPressure(float bar) { return isfinite(bar) && bar > 2.0f && bar <= MAX_SECURITY_PRESSURE_LIMIT; }
+// The highest pressure set point is below the security pressure and up to 2 bar.
+inline bool isValidMaxSetPointPressure(float bar, float securityBar) {
+  return isfinite(bar) && bar > 0.0f && bar <= MAX_SETPOINT_PRESSURE_LIMIT && bar < securityBar;
+}
+// Povoto numbers are 0 (not set yet) to 99 (the cloud ids are site * 100 + number).
+inline bool isValidPovotoNumber(int number) { return number >= 0 && number <= 99; }
 inline bool isValidFlowLevelFactor(float factor) { return isfinite(factor) && factor >= 0.5f && factor <= 1.5f; }
 
 struct UserConfigurationData_t {
@@ -135,7 +142,14 @@ struct SetPointData_t {
 
 extern SetPointData_t SetPointData;
 
-// control 
+// Override of the vent valve (Control page, "Valve"); not saved, a boot returns to Auto.
+// Open holds the valve open (at most 10 min); Closed suspends the automatic reliefs, but
+// never the one above the maximum security pressure (docs/vent.md).
+constexpr byte VALVE_OVERRIDE_AUTO = 0;
+constexpr byte VALVE_OVERRIDE_OPEN = 1;
+constexpr byte VALVE_OVERRIDE_CLOSED = 2;
+
+// control
 struct ControlData_t {
   float temperature;
   float pressure;
@@ -144,8 +158,7 @@ struct ControlData_t {
   bool transferValve;
   byte chillerOverride;
   byte heaterOverride;
-  byte transferOverride;
-  byte reliefOverride;
+  byte transferOverride; // VALVE_OVERRIDE_*
 } __attribute__((packed));
 
 extern ControlData_t ControlData;

@@ -26,9 +26,10 @@ change: their keys (`expTimeA`, `expTimeB`, `targetResidual`, `kCO2`, `kAir`,
 pvt_settings, unused, for a fallback to the tag (docs/sem-te-plano.md, section 1).
 A schema rewrite copies them back after clearing the namespace. Never reuse
 these keys with another meaning.
-Pressure limits (Settings page): `maxPressure` (security pressure, 2-3 bar) and `maxSetPress`
-(highest pressure set point, default 2.0, always below `maxPressure`; a missing or invalid value falls back to
-the default kept below `maxPressure`). `lastExpTankVol` is the last expansion tank volume typed on the
+Pressure limits (Settings page): `maxPressure` (security pressure, above 2.0 and up to 2.3 bar; an invalid value
+falls back to 2.3) and `maxSetPress` (highest pressure set point, default and limit 2.0, always below
+`maxPressure`; a missing or invalid value falls back to the default kept below `maxPressure`). `number`
+(Povoto number) is 0 to 99; an invalid value falls back to 0. `lastExpTankVol` is the last expansion tank volume typed on the
 fermenter volume routine (initial value of its field).
 Direct vent (docs/vent.md): `ventDrop`, `flowLevel` (floats; `ventMinSec`, `ventSafeDrop` and
 `liquidGasMass` are no longer read or written and stay in NVS, unused) and the blobs `ventCurve` / `ventRefCurve`

@@ -86,7 +86,7 @@ String validateAutoSetpointRule(const AutoSetpointRule_t &rule, bool enforceSetP
     return "gCO2/L/d must be from 0.5 to 20.";
   if (!inRangeOrEmpty(rule.pressure, 0.0f, AUTO_SETPOINT_MAX_PRESSURE) ||
       !inRangeOrEmpty(rule.pressureSlow, 0.0f, AUTO_SETPOINT_MAX_PRESSURE))
-    return "pressure set points must be from 0 to 3 bar.";
+    return "pressure set points must be from 0 to 2 bar.";
   if (enforceSetPointLimit &&
       (!inRangeOrEmpty(rule.pressure, 0.0f, FMTData.maxSetPointPressure) ||
        !inRangeOrEmpty(rule.pressureSlow, 0.0f, FMTData.maxSetPointPressure)))
