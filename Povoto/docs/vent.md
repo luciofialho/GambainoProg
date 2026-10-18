@@ -194,7 +194,7 @@ alarmes do vent e a contagem de vents fora da faixa.
 | Queda alvo (%) — página Settings | `ventDrop` | 6 |
 | Fator de nível — Calibration | `flowLevel` | 1,0 |
 | Expoente efetivo de ventilação — Calibration | `ventExponent` | 1,29 |
-| Curva de vazão e t0 (blob) | `ventCurve` | 18/09 |
+| Curva de vazão e t0 (blob; editável na página Calibration, entre lotes, ou pelo "Save curve and t0" do ensaio) | `ventCurve` | 18/09 |
 | Curva de referência (blob) | `ventRefCurve` | nenhuma |
 
 A abertura mínima (1,5 s) e a queda de segurança (2 × a alvo) são fixas no código. As chaves antigas

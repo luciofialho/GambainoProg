@@ -1025,6 +1025,57 @@ static String calibrationField(const char *name, const char *label, float value,
     name + "' name='" + name + "' form='calForm' step='any' " + range + " required value='" + String(value, decimals) + "'></div>";
 }
 
+// Number field of the flow curve, inline (the form is 'calForm').
+static String curveInput(const char *name, float value, int decimals, int widthPx) {
+  return String("<input type='number' id='") + name + "' name='" + name + "' form='calForm' step='any' required value='" +
+    String(value, decimals) + "' style='width:" + widthPx + "px;padding:6px'>";
+}
+
+// The flow curve and t0 of the page: editable fields, and the last venting test with
+// a button to take its values (the button only fills the fields; Save stores them).
+static String flowCurveFieldsHtml() {
+  const VentModel::Curve &c = FMTData.ventCurve;
+  const String row = "display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px";
+  auto num = [](float v, int d) { return isfinite(v) ? String(v, d) : String("n/a"); };
+  VentingTestSummary s;
+  const bool last = ventingTestHistoryCount() > 0 && getVentingTestSummary(0, s) && s.fitted && VentModel::validCurve(s.curve);
+  char when[20] = "";
+  if (last) formatLocalEpochISO(s.epoch, when, sizeof(when));
+  char source[20];
+  formatLocalEpochISO(c.epoch, source, sizeof(source));
+
+  String html = "<div class='form-group'><label>Flow curve</label><div style='" + row + "'>tau(P) = " +
+    curveInput("ventA0", c.a[0], 4, 100) + " + " + curveInput("ventA1", c.a[1], 4, 100) + " P + " +
+    curveInput("ventA2", c.a[2], 4, 100) + " P&sup2; + " + curveInput("ventA3", c.a[3], 4, 100) + " P&sup3; s</div>"
+    "<div style='" + row + "'>valid from " + curveInput("ventPMin", c.pMin, 3, 70) + " to " +
+    curveInput("ventPMax", c.pMax, 3, 70) + " bar</div>";
+  if (last) {
+    html += "<div style='" + row + "'><small>Last test (" + (when[0] ? when : "no time") + "): tau(P) = " + num(s.curve.a[0], 4) + " + " +
+      num(s.curve.a[1], 4) + " P + " + num(s.curve.a[2], 4) + " P&sup2; + " + num(s.curve.a[3], 4) + " P&sup3; s, " +
+      num(s.curve.pMin, 3) + "-" + num(s.curve.pMax, 3) + " bar</small>"
+      "<button type='button' class='btn-use' onclick=\"" +
+      "document.getElementById('ventA0').value='" + num(s.curve.a[0], 4) + "';" +
+      "document.getElementById('ventA1').value='" + num(s.curve.a[1], 4) + "';" +
+      "document.getElementById('ventA2').value='" + num(s.curve.a[2], 4) + "';" +
+      "document.getElementById('ventA3').value='" + num(s.curve.a[3], 4) + "';" +
+      "document.getElementById('ventPMin').value='" + num(s.curve.pMin, 3) + "';" +
+      "document.getElementById('ventPMax').value='" + num(s.curve.pMax, 3) + "'\">Use last test curve</button></div>";
+  }
+  html += "</div><div class='form-group'><label for='ventT0Ms'>T0 (ms) - valve mechanical delay</label><div style='" + row + "'>" +
+    curveInput("ventT0Ms", 1000.0f * c.t0, 2, 100);
+  if (last)
+    html += String(" <small>Last test: ") + num(1000.0f * s.curve.t0, 2) + " &plusmn; " + num(s.t0SeMs, 2) +
+      " ms</small><button type='button' class='btn-use' onclick=\"document.getElementById('ventT0Ms').value='" +
+      num(1000.0f * s.curve.t0, 2) + "'\">Use last test t0</button>";
+  html += "</div></div><ul>"
+    "<li>tau(P) is the time constant of the absolute pressure of 100 L of air at 20 &deg;C, with P in bar (gauge). "
+    "The firmware scales it to the headspace volume and the gas temperature.</li>"
+    "<li>Outside the valid range the end value is used above it and the ideal-nozzle scaling below it (docs/vent.md).</li>"
+    "<li>Curve now in use: " + (c.epoch ? String("dated ") + source : String("default (venting test of 18/09, t0 not measured)")) +
+    ". Changes are saved with Save, between batches only.</li></ul>";
+  return html;
+}
+
 static String ventSettingsHtml() {
   String html = "<hr><h2>Vent</h2><p>The valve vents the fermenter to the atmosphere for a time estimated from the flow curve "
     "and the headspace; the CO2 is counted from the real opening time (docs/vent.md). The target drop per vent is on the "
@@ -1036,8 +1087,9 @@ static String ventSettingsHtml() {
                            "min='1' max='1.3'",
                            "Effective polytropic exponent used to correct the temporary pressure drop caused by gas cooling during "
                            "venting. Use 1.00 for isothermal venting and approximately 1.29 for adiabatic CO2 venting.");
-  html += "<p><b>Flow curve:</b> " + curveText(FMTData.ventCurve) + "<br><b>Reference curve:</b> " +
-    curveText(FMTData.ventReferenceCurve) + "<br>Last vents: <a href='/ventstatus'>/ventstatus</a></p>";
+  html += flowCurveFieldsHtml();
+  html += "<p><b>Reference curve:</b> " + curveText(FMTData.ventReferenceCurve) +
+    "<br>Last vents: <a href='/ventstatus'>/ventstatus</a></p>";
   // Opening times with the current headspace and the gas temperature.
   const float headspace = CountersData.headSpaceVolume > 0.0f ? CountersData.headSpaceVolume
       : FMTData.FMTVolume - BatchData.initialBeerVolume;
@@ -1445,11 +1497,51 @@ void handleCalibrationDataUpdate(AsyncWebServerRequest *request) {
                   "pressure, and its current above that of point A.");
     return;
   }
+  // Flow curve and t0 typed on the page (or taken from the last venting test). The page shows the
+  // numbers rounded: a field that differs from the stored value by less than that rounding is left alone.
+  VentModel::Curve curve = FMTData.ventCurve;
+  bool curveChanged = false;
+  if (request->hasParam("ventA0", true)) {
+    // (the curve is a packed struct: no references to its fields)
+    const auto moved = [](float stored, float posted, float tolerance) { return fabsf(posted - stored) > tolerance; };
+    const char *coefficient[4] = {"ventA0", "ventA1", "ventA2", "ventA3"};
+    for (int i = 0; i < 4; ++i) {
+      const float posted = value(coefficient[i], curve.a[i]);
+      if (moved(curve.a[i], posted, 6e-5f)) { curve.a[i] = posted; curveChanged = true; }
+    }
+    const float postedMin = value("ventPMin", curve.pMin), postedMax = value("ventPMax", curve.pMax);
+    if (moved(curve.pMin, postedMin, 6e-4f)) { curve.pMin = postedMin; curveChanged = true; }
+    if (moved(curve.pMax, postedMax, 6e-4f)) { curve.pMax = postedMax; curveChanged = true; }
+    const float postedT0Ms = value("ventT0Ms", 1000.0f * curve.t0);
+    if (fabsf(postedT0Ms - 1000.0f * curve.t0) > 0.006f) {
+      curve.t0 = postedT0Ms / 1000.0f;
+      curveChanged = true;
+    }
+    if (curveChanged) {
+      if (!VentModel::validCurve(curve)) {
+        request->send(400, "text/plain", "Invalid flow curve: tau must stay between 1 and 100000 s over the valid range "
+                      "(0 to 4 bar, upper above lower) and t0 within 1 s.");
+        return;
+      }
+      if (SetPointData.mode == MODE_FERMENTING) {
+        request->send(409, "text/plain", "The flow curve is changed between batches only (mode is Fermenting).");
+        return;
+      }
+      curve.epoch = NTPEpoch() ? NTPEpoch() : 1;
+    }
+  }
   FMTData.pressure0Current = c0;
   FMTData.pressure1Bar = p1;
   FMTData.pressure1Current = c1;
   FMTData.flowLevelFactor = level;
   FMTData.FMTEffectiveVentingExponent = exponent;
+  if (curveChanged) {
+    FMTData.ventCurve = curve;
+    char details[160];
+    snprintf(details, sizeof(details), "typed on the page: a %.4f %.4f %.4f %.5f, t0 %.2f ms, %.3f-%.3f bar", curve.a[0],
+             curve.a[1], curve.a[2], curve.a[3], 1000.0f * curve.t0, curve.pMin, curve.pMax);
+    calibrationEventAppend("flow-curve-edited", details);
+  }
   if (request->hasParam("nucleationWindow", true)) {
     FMTData.nucleationWindow = request->getParam("nucleationWindow", true)->value().toInt();
   }

@@ -25,7 +25,7 @@ Regras gerais:
   pressão, nem de regra ou da nuvem, passa dele), Target drop of the gauge pressure per vent (1–15%), altitude, Cooling cycle, Heating cycle,
   Thermometers, Backup settings / Restore settings from backups. **User Configuration** — screensaver,
   PIN, brilho, Log interval e "Accept new setpoints and triggered actions from cloud". **Calibration**, em ordem: Pressure sensor (pontos A e B, reta; Sensor
-  zero), Fermenter volume, Venting test, Vent (Flow level factor e Effective Venting Exponent; a abertura
+  zero), Fermenter volume, Venting test, Vent (Flow level factor, Effective Venting Exponent, a curva τ(P) com a faixa de validade e o T0, todos editáveis e com os botões "Use last test curve" / "Use last test t0", que só preenchem os campos; vale com Save, entre lotes; a abertura
   mínima de 1,5 s e a queda de segurança de 2× a alvo são fixas), Dissolved CO2 dynamics (Nucleation
   window); um único Save/Cancel no fim grava os campos editáveis, e os eventos de
   calibração ficam no final da página. O **Valve cleaning** fica na página **Control**, junto com o **Valve** (Auto / Open / Closed:
