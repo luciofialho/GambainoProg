@@ -222,6 +222,8 @@ void setup() {
 
 
   povotoDataInit();
+  debugModeProvider = []() { return FMTData.debugMode; };
+  applyDebugMode(FMTData.debugMode);
   cloudLogBegin();
   cloudSyncBegin();
   ElegantOTA.onStart([]() {

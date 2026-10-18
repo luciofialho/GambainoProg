@@ -741,7 +741,11 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='form-group'>"
                "<label for='PovotoNum'>Povoto Number:</label>", remaining);
-  sprintf(buffer, "<input type='number' id='PovotoNum' name='PovotoNum' value='%d' min='0' max='255'>", FMTData.PovotoNum);
+  sprintf(buffer, "<div style='display:flex;align-items:center;gap:16px'>"
+                  "<input type='number' id='PovotoNum' name='PovotoNum' value='%d' min='0' max='255'>"
+                  "<label style='display:flex;align-items:center;gap:4px;margin:0;white-space:nowrap'>"
+                  "<input type='checkbox' name='debugMode' value='1'%s>Debug mode</label></div>",
+          FMTData.PovotoNum, FMTData.debugMode ? " checked" : "");
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -916,6 +920,10 @@ void handleFMTDataUpdate(AsyncWebServerRequest *request) {
   memcpy(FMTData.coolingCycle, cooling, sizeof(cooling));
   if (request->hasParam("PovotoNum", true)) {
     FMTData.PovotoNum = request->getParam("PovotoNum", true)->value().toInt();
+  }
+  if (request->hasParam("PovotoNum", true)) {
+    FMTData.debugMode = request->hasParam("debugMode", true);
+    applyDebugMode(FMTData.debugMode);
   }
   if (request->hasParam("FMTVolume", true)) {
     FMTData.FMTVolume = request->getParam("FMTVolume", true)->value().toFloat();

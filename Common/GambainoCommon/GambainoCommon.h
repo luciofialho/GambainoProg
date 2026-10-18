@@ -105,6 +105,9 @@ extern char datalogFolderNameInUse[20];
 void checkDebugMode();
 // Call after a project-specific Wi-Fi manager establishes a station connection.
 void updateDebugModeFromWiFi();
+// Optional: when set, debug mode comes from this callback instead of the IP.
+extern bool (*debugModeProvider)();
+void applyDebugMode(bool debug);  // sets debugging and the datalog folder
 void verifyWiFiConnection();
 
 bool parseMacAddress(const String &value, uint8_t mac[6]);

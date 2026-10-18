@@ -477,9 +477,17 @@ static const char kTagCmdPk[] = "\nCmdPk";
 static const char kTagInstb[] = "\nInstb";
 static const uint8_t kTagLen = 6;
 
+bool (*debugModeProvider)() = nullptr;
+
+void applyDebugMode(bool debug) {
+  debugging = debug;
+  strcpy(datalogFolderNameInUse, debugging ? "GambainoDebug" : "Beers");
+}
+
 void updateDebugModeFromWiFi() {
   if (WiFi.status() != WL_CONNECTED) return;
-  debugging = WiFi.localIP() != IPAddress(192,168,29,178) &&
+  if (debugModeProvider) debugging = debugModeProvider();  // configured, not IP based
+  else debugging = WiFi.localIP() != IPAddress(192,168,29,178) &&
               WiFi.localIP() != IPAddress(192,168,29,181) &&
               WiFi.localIP() != IPAddress(192,168,29,182);
   if (debugging) {

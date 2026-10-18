@@ -15,6 +15,7 @@
 FMTData_t FMTData = {
   .nvsSchemaVersion = 0, // Missing version must trigger the first rewrite.
   .PovotoNum = 0,
+  .debugMode = true,
   .FMTVolume = 120.0,
   .FMTAltitude = 0.0,
   .dataLogIntervalSeconds = DEFAULT_DATA_LOG_INTERVAL_SECONDS,
@@ -140,6 +141,7 @@ bool readFMTDataFromEEPROM() {
   FMTData.nucleationWindow = store.getInt("nucleation", defaultFMTData.nucleationWindow);
   FMTData.nvsSchemaVersion = store.getUInt("schemaVersion", 0);
   FMTData.PovotoNum = store.getUChar("number", defaultFMTData.PovotoNum);
+  FMTData.debugMode = store.getBool("debugMode", defaultFMTData.debugMode);
   FMTData.FMTVolume = store.getFloat("volume", defaultFMTData.FMTVolume);
   if (!isfinite(FMTData.FMTVolume)) FMTData.FMTVolume = defaultFMTData.FMTVolume;
   FMTData.FMTAltitude = store.getFloat("altitude", defaultFMTData.FMTAltitude);
@@ -203,6 +205,7 @@ bool writeFMTDataToNIV() {
   saved = (store.putBytes("ventRefCurve", &FMTData.ventReferenceCurve, sizeof(FMTData.ventReferenceCurve)) ==
            sizeof(FMTData.ventReferenceCurve)) && saved;
   saved = (store.putUChar("number", FMTData.PovotoNum) == sizeof(FMTData.PovotoNum)) && saved;
+  saved = (store.putBool("debugMode", FMTData.debugMode) == sizeof(uint8_t)) && saved;
   saved = (store.putFloat("volume", FMTData.FMTVolume) == sizeof(FMTData.FMTVolume)) && saved;
   saved = (store.putFloat("altitude", FMTData.FMTAltitude) == sizeof(FMTData.FMTAltitude)) && saved;
   saved = (store.putInt("logInterval", FMTData.dataLogIntervalSeconds) == sizeof(FMTData.dataLogIntervalSeconds)) && saved;

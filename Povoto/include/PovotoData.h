@@ -42,6 +42,7 @@ constexpr uint32_t PVT_NVS_SCHEMA_VERSION = 3;
 struct FMTData_t {
   uint32_t nvsSchemaVersion;
   byte PovotoNum;
+  bool debugMode; // bench board: simulated sensors, short timings (default true)
   float FMTVolume;
   float FMTAltitude;
   int dataLogIntervalSeconds;

@@ -139,7 +139,8 @@ Dois testes complementares:
 - Registros marcados com a flag 4 (sintético).
 - Em debug, a janela da nuvem acompanha o intervalo do log Cold quando ele
   for menor que 5 min, para acelerar o teste.
-- Verificar: o modo debug é definido pelo IP (`updateDebugModeFromWiFi()`), e
+- Verificar: o modo debug do Povoto vem da configuração do fermentador (checkbox
+  "Debug mode", NVS `debugMode`, default ligado), não do IP; e
   o auto-detect de peers exige o mesmo modo nos dois lados. Uma placa em
   debug pareada com o SideKick 1 de produção pode precisar do peer
   cadastrado à mão.
