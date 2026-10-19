@@ -1,6 +1,7 @@
 # Povoto: manual de calibração e manutenção
 
-Versão 1 (11/10/2026), método de **ventilação direta** (o vent não usa tanque de expansão; um tanque
+Versão 1.3 (19/10/2026; unifica a v1.2 da cópia do projeto: P1b ponto B, P3 sem barômetro próprio,
+P7b janela de nucleação, P10 na página Control sem controle de fases, seção 9 de parâmetros), método de **ventilação direta** (o vent não usa tanque de expansão; um tanque
 simples de volume conhecido só serve para medir o volume do fermentador, P4b).
 Firmware: branch `povoto-vent` (`docs/sem-te-plano.md`; detalhes em
 `docs/vent.md`, `docs/venting-test.md`, `docs/expansion-tank-volume.md`,
@@ -38,6 +39,7 @@ Regras gerais:
 - Anote tudo na folha de registro (seção 6) e guarde os arquivos em
   `A:\Nuvem\Povoto\Calibracoes` (os nomes já trazem o tipo, o FMT e a data e hora).
 - Todos os parâmetros de calibração e configuração, o que representam e de onde vêm: seção 9.
+  Planilhas e arquivos que o Povoto gera e o significado das colunas: seção 10.
 
 ## 1. Fluxograma
 
@@ -484,3 +486,200 @@ que define o valor.
 | Screensaver Time, Keypad PIN, Display Brightness, LED Brightness | Comportamento da TFT e do LED RGB | Preferência do operador |
 | Accept new setpoints and triggered actions from cloud | Se o Povoto aplica alterações vindas do cloud | Decisão do operador |
 | Google Sheets Datalog (liga/desliga e pasta), Log interval | Destino e frequência do registro | Decisão do operador |
+
+## 10. Planilhas e arquivos que o Povoto gera
+
+Pressões em **bar manométrico**, salvo onde diz absoluta; mols em mol; volumes em L; temperaturas em °C
+(onde não diz K). Horas são locais (NTP, UTC−3). Os CSV baixados da página usam `;` entre colunas e
+vírgula decimal, e deixam em branco o valor que não existe.
+
+Não incluídos: a exportação `povoto-graphs.csv` da página de gráficos, o backup de configurações
+(`povoto-settings.json`) e as linhas JSON do cloud (docs/cloud-log.md).
+
+### 10.1 Logs do Google Sheets (Cold, Relief e Task)
+
+Uma planilha por lote (nome = número do lote com 3 dígitos), na pasta definida em User Configuration
+("GambainoDebug" em modo debug). Cada planilha tem três abas, enviadas pelo SideKick. Sem lote nada é
+enviado; o Cold também não sai em OFF, e em Conditioning só sai a última linha dele (o Relief não sai). O cabeçalho é
+reenviado quando muda o lote ou a pasta. A primeira coluna das três abas é o carimbo de data e hora do
+envio (`AAAA-MM-DDThh:mm:ss`, local).
+
+#### Aba Cold: uma linha a cada "Log interval" (30 s a 10 min, padrão 1 min)
+
+| Coluna | Significado |
+|---|---|
+| FMT | Número do Povoto |
+| ReliefCount | Total de reliefs do lote até agora |
+| Temperature | Temperatura da cerveja (termômetro do fermentador) |
+| TempTarget | Setpoint de temperatura em vigor (direto; vazio se não houver) |
+| Pressure | Pressão manométrica lida |
+| PressureTarget | Setpoint de pressão em vigor |
+| gCO2/L/d | Taxa de produção de CO2 informada, com sinal; a origem está em `gCO2Source` |
+| HeadSpaceVolume | Volume de headspace aplicado nos cálculos (média de 24 h, valor retido, EMA ou inicial) |
+| BeerVolume | Volume de cerveja = volume do fermentador − headspace |
+| DumpedVolume | Cerveja retirada pelas tasks Dump no lote |
+| SG | Densidade calculada pelo balanço de CO2 |
+| ABV | Teor alcoólico calculado (% v/v) |
+| HeadSpaceCO2Mols | CO2 no headspace (mols), com Z real |
+| CO2MolsSol | CO2 dissolvido pelo modelo (mols) |
+| CO2MolSolIfEq | CO2 que estaria dissolvido em equilíbrio de Henry com a pressão, temperatura e SG de agora |
+| CO2MolsEjected | CO2 total ventado desde o início do lote (mols) |
+| TemperatureMode | Estado do controle: `CHILL`, `HEAT`, `IDLE` ou com `(paused)` quando o ciclo está em descanso |
+| TempState / PressState | Estabilidade da temperatura e da pressão: `STABLE`, `CHANGING_DIRECT`, `CHANGING_SLOW` ou `UNSTABLE` |
+| TempStableSince / PressStableSince | Hora em que ficou `STABLE`; vazio se não está |
+| taskWindowType | Task em curso ou em janela de descanso (`Dump`, `Gas`, `Liquid`, `Dry Hopping`, `Dynamic Hopping`); vazio se nenhuma |
+| ChillTime(h) / HeatTime(h) | Horas acumuladas de resfriamento e de aquecimento no lote |
+| DissolvedCO2Mode | Estado do CO2 dissolvido: `initial`, `immediate`, `half-life` ou `half-life-armed` (docs/dissolved-co2.md) |
+| DissolvedCO2CalculationPressure | Pressão usada no cálculo de Henry do dissolvido |
+| DissolvedCO2MolsAtEquilibrium | Mols de Henry usados como equilíbrio (média de 30 min nos estados initial e immediate) |
+| DissolvedCO2CriteriaState | Decisão da taxa de fase gasosa: `generating`, `between`, `idle` ou `no-decision` |
+| OperatingMode | Modo do equipamento: 0 Off, 1 Brewing/Transferring, 2 Fermenting, 3 Conditioning |
+| AtmosphericPressure / AtmosphericPressureSource | Pressão atmosférica em bar e a fonte em uso (`sidekick` ou `altitude`) |
+| EnvironmentTemperature | Temperatura ambiente (SideKick ou Dallas ambiente); vazio se inválida |
+| HeadSpaceEMA | Headspace pela média móvel exponencial dos reliefs |
+| HeadSpaceDaily | Média de 24 h do headspace (média das médias horárias); vazio sem horas |
+| DailyHours | Quantas horas de dados a média de 24 h tem (precisa de 18 para valer) |
+| DailyState | `valid` (média de 24 h), `hold` (último valor válido retido) ou `ema` (usa a EMA) |
+| gCO2Source | Origem de `gCO2/L/d`: `calculated`, `held` (valor retido depois de um reboot) ou `transition` (pressão ou temperatura em transição) |
+| GasCO2Rate | Taxa da fase gasosa que decide o estado do dissolvido (g/L/d); vazia sem decisão |
+| HeadspaceTemperature | Temperatura do termômetro do headspace; vazia sem sensor ou sem leitura |
+
+#### Aba Relief: uma linha por relief (vent)
+
+O nome ficou "Relief" por compatibilidade. Detalhes do ciclo e do modelo: docs/vent.md.
+
+| Coluna | Significado |
+|---|---|
+| FMT | Número do Povoto |
+| ReliefNumber | Número do relief no lote |
+| ValveOpenedMillis | `millis()` da abertura da válvula (referência de tempo da placa, vale só dentro do boot) |
+| Temperature | Temperatura da cerveja |
+| PressureTarget | Setpoint de pressão |
+| AtmosphericPressure / AtmosphericPressureSource | Patm (bar) e fonte (`sidekick` ou `altitude`) |
+| EnvironmentTemperature | Temperatura ambiente |
+| GasTemperature / GasTemperatureSource | Temperatura do gás usada na vazão e nos mols do headspace, e de onde veio (`headspace` ou `liquid`) |
+| EffectiveVentingExponent | Expoente politrópico em uso |
+| PressureOnReliefMeasured | Pressão lida no instante de abrir |
+| CurrentOnReliefMeasured | Corrente filtrada do sensor nesse instante (mA) |
+| PressureReachedTarget / PressureReachedTargetMillis | Pressão e `millis()` do momento em que a pressão alcançou o setpoint; a subida desde aí estima a pressão no fim da abertura |
+| PressureOnReliefExtrapolated | Pressão de abertura somada à subida da fermentação durante a abertura (no máximo 0,1 bar) |
+| PressureAfterRelief / PressureAfterReliefMillis | Pressão lida logo depois de fechar (0,4 a 0,8 s; gás ainda frio) e seu `millis()` |
+| CurrentAfterRelief | Corrente do sensor nessa leitura (mA) |
+| AdjustedPressureAfterRelief | Pressão assentada (isotérmica), calculada com o expoente a partir da leitura anterior |
+| VentEstimatedSeconds | Tempo estimado para a queda alvo com o headspace aplicado |
+| VentSafetySeconds | Tempo da queda de segurança (2 × alvo) com o menor headspace plausível |
+| VentPlannedSeconds | Tempo programado, depois do mínimo, da salvaguarda e do teto |
+| VentLimit | O que decidiu o tempo: `estimate`, `minimum` ou `safety` |
+| VentHeadspaceForTime | Headspace usado para calcular o tempo (L) |
+| VentRealSeconds | Tempo real de abertura, medido nas linhas do `digitalWrite` |
+| VentT0Seconds | t0 da válvula em uso (s) |
+| VentMeanPressure | Média logarítmica das pressões absolutas de abertura e de fechamento, em manométrica |
+| VentCoolingFactor | Fator de resfriamento do gás durante a abertura (√(T0/T) em P̄) |
+| VentFlowConstant | Constante de vazão do CO2 (curva, razão ar → CO2, Z e nível incluídos) |
+| FlowLevelFactor | Fator de nível em uso |
+| VentFlowMols | Mols pelo modelo de vazão (CO2 mais vapor) |
+| VentFermenterSideMols | Mols pelo lado do fermentador (queda assentada de P/Z × headspace de referência ÷ RT) |
+| VentOutOfRange | `above` ou `below` quando a pressão saiu da faixa da curva; vazio dentro |
+| VentCounted | O que foi contado: `flow`, `fermenter-side` ou `none` (fora de Fermenting) |
+| VentDropPercent | Queda assentada em % da pressão de abertura |
+| VentTargetDropPercent | Queda alvo configurada (%) |
+| VentVaporFraction | Fração de vapor de água e etanol no gás ventado (0 a 1) |
+| EjectedMolsWithVaporAtLog | Mols contados do vent, vapor incluído |
+| InstantPressureDropFactor | Pressão assentada ÷ pressão de abertura extrapolada |
+| HeadSpaceVolume | Headspace aplicado depois deste relief (L) |
+| BeerVolume | Volume de cerveja (L) |
+| EjectedMolsAtLog | Mols de CO2 deste vent (sem o vapor) |
+| TotalEjectedMols | CO2 ventado acumulado no lote |
+| HeadSpaceCO2Mols / DissolvedCO2Mols / TotalCO2Mols | CO2 no headspace, dissolvido e a soma dos três (ventado + dissolvido + headspace) |
+| BeerSG | Densidade calculada |
+| GasHeadspaceUpdateStatus | O que aconteceu com o headspace: `updated_daily_average`, `updated_ema`, `collecting_initial_samples`, `skipped_vent_check`, `skipped_task_window`, `missing_pressure_rise_reference`, `skipped_invalid_drop` ou `not_counted` |
+| PolytropicEstimatedExponent | Expoente medido na recuperação de pressão depois do relief anterior (informação; o 1,29 não muda por ele) |
+| PolytropicSampleCount / PolytropicFitRMSEBar | Quantas leituras entraram nessa regressão e o resíduo rms (bar) |
+| HeadSpaceMeasured | Headspace aparente deste vent quando ele alimentou a média; vazio se não alimentou |
+| HeadSpaceApparent | Mols contados × RT ÷ queda assentada de P/Z, sempre (monitor passivo de sujeira) |
+| HeadSpaceEMA / HeadSpaceDaily / DailyHours / DailyState | Como na aba Cold |
+| ReliefDropRatio | Mols pelo lado do fermentador ÷ mols pelo modelo (= queda medida ÷ esperada) |
+| ReliefCheck | Resultado da verificação: `ok`, `partial` (razão < 0,8), `no-effect` (< 0,25) ou vazio (não avaliado) |
+
+#### Aba Task: uma linha por task terminada ou cancelada
+
+| Coluna | Significado |
+|---|---|
+| FMT | Número do Povoto |
+| Task | `Dump`, `Gas`, `Liquid`, `Dry Hopping` ou `Dynamic Hopping` |
+| Outcome | `finished`, `timeout` ou `cancelled` |
+| Start / End | Início e fim (hora local) |
+| DurationSeconds | Duração (s) |
+| Temperature / EnvironmentTemperature / AtmosphericPressure | Temperatura da cerveja ao fim, ambiente e Patm (bar) |
+| DissolvedCO2Mode / GasCO2Rate | Estado do CO2 dissolvido ao fim e a taxa da fase gasosa (g/L/d; vazia sem decisão) |
+| PressureStart / PressureEnd | Pressão no início (P1) e a lida ao fim (P2) |
+| PressureEndIso | Dump: P2 depois da correção politrópica (a que entra no ΔH) |
+| HeadSpaceBefore / HeadSpaceAfter | Headspace antes e depois da task (L) |
+| DeltaH | Dump: variação do headspace aplicada; vazia se não foi aplicada |
+| BeerVolume | Volume de cerveja depois da task |
+| DumpedVolume | Total retirado no lote |
+| Pressure+1min, +3min, +5min, +10min | Pressão 1, 3, 5 e 10 min depois do fim; vazia se não coletada |
+
+### 10.2 CSV do ensaio de ventilação (`PovotoCalibration-Venting-FMT<n>-<hora>.csv`)
+
+Calibration → "Last test CSV" (ou "All tests CSV", `VentingHistory`, do mais antigo ao mais novo; "Current
+test CSV" durante o ensaio, com `Incomplete-` na frente e as colunas do ajuste vazias). **Uma linha por
+liberação**. As colunas de `test` a `temp_ferm_C` e as do ajuste (`fit_a0` em diante) se repetem em todas
+as linhas do mesmo ensaio. `python tests/venting_fit.py arquivo.csv` refaz o ajuste.
+
+| Coluna | Significado |
+|---|---|
+| test | Posição no histórico (0 = o mais novo); `current` para o ensaio em andamento |
+| date_time / epoch | Início do ensaio (hora local e época local em segundos) |
+| batch | Número do lote em andamento (ou o último) |
+| label | Etiqueta: `as-is`, `muffler-cleaned`, `valve-cleaned`, `new-valve` ou `after-cleaning-cycle` |
+| gas | `air` (o ensaio de calibração é sempre com ar) |
+| volume_L | Volume do fermentador usado nas contas (FMT volume) |
+| patm_bar / patm_source | Pressão atmosférica e a fonte (`sidekick` ou `altitude`) |
+| temp_amb_C / temp_ferm_C | Temperaturas ambiente e do fermentador no início |
+| firmware | Data de compilação do firmware |
+| release | Número da liberação no ensaio |
+| level | Patamar de pressão (1 é a pressão de partida; depois 1,9 / 1,5 / 1,1 / 0,8 / 0,5 / 0,25 bar) |
+| kind | `level` (uma das aberturas de 2, 0,5, 8, 1, 4 e 2 s do patamar) ou `step` (abertura longa para descer ao patamar seguinte) |
+| t_requested_s | Tempo de abertura pedido |
+| t_real_s | Tempo real, medido nas linhas do `digitalWrite` de abrir e fechar |
+| P1_bar | Pressão assentada antes da liberação (média de amostras, estável) |
+| P_close_bar | Pressão lida logo depois de fechar (gás ainda frio); dá o expoente da liberação |
+| P2_bar | Pressão assentada depois da liberação (é o P1 da seguinte) |
+| temp_ferm_K | Temperatura do fermentador em P1 (K) |
+| wait_s | Tempo de espera pela estabilização depois da liberação |
+| P1_noise_mbar / P2_noise_mbar | Erro padrão da média de cada pressão assentada, em mbar |
+| fit_a0 a fit_a3 | Coeficientes da cúbica τ(P) ajustada (s; 100 L de ar a 20 °C) |
+| fit_t0_s | t0 ajustado (s) |
+| t0_se_ms | Erro padrão do t0 (ms) |
+| shape_rms_pct | Resíduo rms de forma das aberturas ≥ 4 s (%), só informação |
+| chi2_reduced | Qui-quadrado reduzido do ajuste (~1 bom; > 3 a cúbica não acompanha) |
+| drift_pct / drift_se_pct | Deriva de vazão entre a primeira e a última abertura de 2 s de cada patamar (%) e seu erro padrão |
+| vs_ref_1_8_pct, vs_ref_1_2_pct, vs_ref_0_8_pct | Vazão do ensaio contra a da curva de referência a 1,8, 1,2 e 0,8 bar (%); em branco sem curva de referência |
+
+### 10.3 CSV da determinação do volume (`PovotoCalibration-FermenterVolume-FMT<n>-<hora>.csv`)
+
+Calibration → "Fermenter volume" → CSV. **Uma linha por relief** do tanque de expansão (todos, com as marcas
+de estabilidade). O resultado é a média dos reliefs estáveis.
+
+| Coluna | Significado |
+|---|---|
+| relief | Número do relief na rotina |
+| date_time | Hora local do relief |
+| tank_L | Volume do tanque de expansão informado |
+| P1_bar / P2_bar | Pressão assentada do fermentador antes de abrir para o tanque e depois de equalizar |
+| T_ferm1_C / T_ferm2_C | Temperatura do fermentador em P1 e em P2 |
+| T_tank1_C / T_tank2_C | Temperatura do tanque em P1 e em P2 (a ambiente; a do fermentador se não houver ambiente) |
+| patm1_bar / patm2_bar | Pressão atmosférica em P1 e em P2 |
+| wait_P1_s / wait_P2_s | Espera até a pressão estabilizar antes de P1 e de P2 |
+| vent_s | Tempo ventilando o tanque depois do relief |
+| settled_P1 / settled_P2 | `yes` se a pressão estava estável (inclinação < 0,1 mbar/min); `no` exclui o relief da média |
+| V_fermenter_L | Volume do fermentador pelo balanço completo de mols |
+| V_simple_L | Pela fórmula simples V = V_tanque · P2/(P1 − P2), com a razão de temperaturas |
+
+### 10.4 Eventos de calibração (`PovotoCalibration-Events-FMT<n>-<hora>.txt`)
+
+Calibration → "Calibration events" → "all". Texto, uma linha por evento: `hora local;tipo;detalhes`. Tipos:
+`sensor-zero`, `sensor-point-b`, `fermenter-volume`, `venting-test`, `flow-curve-saved`,
+`reference-curve-saved`, `flow-curve-edited`, `valve-cleaning` e `nucleation-estimate`. Os detalhes trazem os
+números do que foi gravado ou medido.
