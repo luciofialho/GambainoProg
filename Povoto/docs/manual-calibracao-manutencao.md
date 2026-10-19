@@ -522,7 +522,7 @@ envio (`AAAA-MM-DDThh:mm:ss`, local).
 | ABV | Teor alcoólico calculado (% v/v) |
 | HeadSpaceCO2Mols | CO2 no headspace (mols), com Z real |
 | CO2MolsSol | CO2 dissolvido pelo modelo (mols) |
-| CO2MolSolIfEq | CO2 que estaria dissolvido em equilíbrio de Henry com a pressão, temperatura e SG de agora |
+| CO2MolSolIfEq | Henry **instantâneo**: o CO2 que estaria dissolvido em equilíbrio com a pressão, temperatura, SG e volume de agora, sem média |
 | CO2MolsEjected | CO2 total ventado desde o início do lote (mols) |
 | TemperatureMode | Estado do controle: `CHILL`, `HEAT`, `IDLE` ou com `(paused)` quando o ciclo está em descanso |
 | TempState / PressState | Estabilidade da temperatura e da pressão: `STABLE`, `CHANGING_DIRECT`, `CHANGING_SLOW` ou `UNSTABLE` |
@@ -530,8 +530,8 @@ envio (`AAAA-MM-DDThh:mm:ss`, local).
 | taskWindowType | Task em curso ou em janela de descanso (`Dump`, `Gas`, `Liquid`, `Dry Hopping`, `Dynamic Hopping`); vazio se nenhuma |
 | ChillTime(h) / HeatTime(h) | Horas acumuladas de resfriamento e de aquecimento no lote |
 | DissolvedCO2Mode | Estado do CO2 dissolvido: `initial`, `immediate`, `half-life` ou `half-life-armed` (docs/dissolved-co2.md) |
-| DissolvedCO2CalculationPressure | Pressão usada no cálculo de Henry do dissolvido |
-| DissolvedCO2MolsAtEquilibrium | Mols de Henry usados como equilíbrio (média de 30 min nos estados initial e immediate) |
+| DissolvedCO2CalculationPressure | Pressão de referência do equilíbrio de Henry nesta linha. Em `initial` e `immediate`: a **média da pressão dos últimos 30 min** (amostras de 60 s; fica constante ao longo do dente de serra dos reliefs e acompanha subidas, descidas e mudanças de setpoint); vale a pressão atual até a primeira amostra. Em `half-life` e `half-life-armed`: a **pressão atual**. Ver nota abaixo da tabela |
+| DissolvedCO2MolsAtEquilibrium | CO2 que o equilíbrio de Henry diz que a cerveja teria dissolvido. Em `initial` e `immediate`: a **média de 30 min** do Henry de cada amostra (pressão, temperatura, SG e volume da própria amostra), e é esse valor que vira o dissolvido (`CO2MolsSol`). Em `half-life`: o Henry na pressão atual, usado como **teto** do que o líquido pode liberar |
 | DissolvedCO2CriteriaState | Decisão da taxa de fase gasosa: `generating`, `between`, `idle` ou `no-decision` |
 | OperatingMode | Modo do equipamento: 0 Off, 1 Brewing/Transferring, 2 Fermenting, 3 Conditioning |
 | AtmosphericPressure / AtmosphericPressureSource | Pressão atmosférica em bar e a fonte em uso (`sidekick` ou `altitude`) |
@@ -543,6 +543,15 @@ envio (`AAAA-MM-DDThh:mm:ss`, local).
 | gCO2Source | Origem de `gCO2/L/d`: `calculated`, `held` (valor retido depois de um reboot) ou `transition` (pressão ou temperatura em transição) |
 | GasCO2Rate | Taxa da fase gasosa que decide o estado do dissolvido (g/L/d); vazia sem decisão |
 | HeadspaceTemperature | Temperatura do termômetro do headspace; vazia sem sensor ou sem leitura |
+
+**Nota: as três colunas do equilíbrio de Henry.** O dissolvido (`CO2MolsSol`) em `initial` e `immediate`
+é a média de 30 min de Henry, e não o Henry na pressão de agora: com o dente de serra dos reliefs a
+pressão oscila ~6% e o Henry instantâneo oscilaria junto, o que é ruído, não CO2 saindo do líquido; a média
+é constante no ciclo e ainda acompanha as subidas, descidas e mudanças de setpoint sem salto.
+`DissolvedCO2CalculationPressure` mostra a pressão dessa média, `DissolvedCO2MolsAtEquilibrium` o valor
+médio de Henry em mols (a média dos mols, que não é exatamente o Henry da pressão média) e `CO2MolSolIfEq` o
+Henry instantâneo, para comparar. Em `half-life` o dissolvido não segue Henry: só muda com a fase gasosa
+medida, e o Henry na pressão atual (as duas primeiras colunas, nesse estado) serve de limite.
 
 #### Aba Relief: uma linha por relief (vent)
 
