@@ -12,6 +12,8 @@
 //extern TFT_eSPI tft;
 
 void initTFT();
+// TFT rotation: 3 in operation; 1 (turned 180 degrees) in debug mode, for the bench board. The touch follows.
+uint8_t tftRotation();
 void TFTWaintingWifiConnection();
 
 void processTouch();

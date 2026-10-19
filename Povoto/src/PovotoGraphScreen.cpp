@@ -551,7 +551,7 @@ void redrawEvolutionAxis() {
 
 void drawScreen() {
   if (!active || isScreenSaverActive()) return;
-  tft.setRotation(3);
+  tft.setRotation(tftRotation());
   tft.setSwapBytes(false);
   tft.invertDisplay(false);
   drawBars();

@@ -153,8 +153,11 @@ void textOut(byte alignment, const GFXfont *font, int x, int y, const char *text
   }
 }
 
+static uint8_t drawnRotation = 3; // rotation of the last main-screen redraw
+
 void screenBackground() {
-  tft.setRotation(3);
+  drawnRotation = tftRotation();
+  tft.setRotation(drawnRotation);
   
   // Mantem swap de bytes desativado no caminho normal de desenho.
   tft.setSwapBytes(false);
@@ -178,6 +181,11 @@ void screenData() {
     return;
   if (isBatchInfoActive())
     return;
+  // Debug mode switched on or off: turn the display.
+  if (tftRotation() != drawnRotation) {
+    mainScreen();
+    return;
+  }
 
   char co2RateLabel[32];
   getCO2RateLabel(co2RateLabel, sizeof(co2RateLabel));

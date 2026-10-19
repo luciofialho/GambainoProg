@@ -3,6 +3,7 @@
 #include <TFT_eSPI.h>  
 #include "User_Setup.h"
 #include "PovotoCommon.h"
+#include "GambainoCommon.h"
 #include "Povoto_UI.h"
 #include "PovotoGraphScreen.h"
 #include "PovotoData.h"
@@ -620,6 +621,8 @@ void resetDisplayHardware() {
   runDisplayHardwareReset();
 }
 
+uint8_t tftRotation() { return debugging ? 1 : 3; }
+
 void initTFT() {
   pinMode(TFT_BL, OUTPUT);
   setDisplayBacklight(true); // Acende a luz de fundo
@@ -630,7 +633,7 @@ void initTFT() {
 
   Serial.println("Iniciando TFT ST7796 SPI...");
   tft.init();
-  tft.setRotation(3);
+  tft.setRotation(tftRotation());
   setDisplayBacklight(true);
   drawBmp("/SplashScreen.bmp", 0, 0);
   delay(3000);
@@ -1416,6 +1419,10 @@ void processTouch() {
         if (x >= TFT_HEIGHT) x = TFT_HEIGHT - 1;
         x = TFT_HEIGHT - x; // Inverte eixo X para coordenadas da tela
         // Y mantido sem inversao
+        if (tftRotation() == 1) { // display turned 180 degrees (debug mode): both axes flip
+          x = TFT_HEIGHT - x;
+          y = TFT_WIDTH - y;
+        }
         if (UI_TOUCH_RAW_LOG) {
           Serial.printf("RAW: %02X %02X %02X %02X %02X %02X  |  ",
                         p[0], p[1], p[2], p[3], p[4], p[5]);
