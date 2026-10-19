@@ -372,7 +372,7 @@ void BKSecondaryControl() { // caramelization boil and circulation in whirlpool 
       elapsedTime = TimeInStatus + (float)RcpBoilTime*MINUTES;
 
     bool turnPumpOn = (elapsedTime <= 15*MINUTES) || 
-         (TimeInStatus > -30*MINUTES && int(elapsedTime) % (2*60) < 3); // constantes
+         (TimeInStatus > -30.0*MINUTES && int(elapsedTime) % (2*60) < 3); // constantes
     if (BKPump.asBoolean() && !turnPumpOn)
       BKPump = OFF;
     else if (!BKPump.asBoolean() && turnPumpOn)
@@ -576,7 +576,7 @@ void MainStateMachine() {
         else if (HLTVolume >= HLTTargetVolume && waterInIsDone()) {
           waterInStop();
         }
-        if (TimeInStatus > -4*HOURS)
+        if (TimeInStatus > -4.0*HOURS)
           if (ColdBankTargetTemp.getProgValue() != coldBankTargetTempCurve[1])
             ColdBankTargetTemp = coldBankTargetTempCurve[1];
         GoToNextStatus = TimeInStatus > 0;
@@ -663,7 +663,7 @@ void MainStateMachine() {
         MLTTargetTemp = RcpMashTemp;
       }
       else {
-        if (TimeInStatus >= - 15 * MINUTES) // in last 15 minutes, raise MLT temperature to save time in mashout
+        if (TimeInStatus >= - 15.0 * MINUTES) // in last 15 minutes, raise MLT temperature to save time in mashout
           if (MLTTargetTemp != FINALMASHTEMPERATURE)
             MLTTargetTemp = FINALMASHTEMPERATURE;
         
@@ -964,7 +964,7 @@ void MainStateMachine() {
       
     case KS_SOURING:
       if (EnteringStatus) {
-        TimeInStatus = -4*24*HOURS;
+        TimeInStatus = -4.0*24*HOURS;
         Todo_InoculateInKettle.start();
         Todo_InoculateInKettle.neededTodoIsReady();
         Todo_PurgeLine.start();
@@ -992,7 +992,7 @@ void MainStateMachine() {
       }
       else {
         if (SubStatus==0) {
-          if (TimeInStatus > -5*MINUTES) { /**** Constante ****/
+          if (TimeInStatus > -5.0*MINUTES) { /**** Constante ****/
             sendTransferStartPacket();
             SubStatus = 1;
           }
@@ -1012,7 +1012,7 @@ void MainStateMachine() {
         static float totalTempVol = 0;
 
         if (EnteringStatus) {
-          TimeInStatus = -15*SECONDS; /**** Constante ****/      
+          TimeInStatus = -15.0*SECONDS; /**** Constante ****/      
           if (debugging) BKLevel = 4;
 
           setSubStatus(1,"Count down");
@@ -1849,7 +1849,7 @@ void MainStateMachine() {
             Buzzer = ON;
           }
           else {        
-            if (int(TimeInStatus)%60 > 5*SECONDS)
+            if (int(TimeInStatus)%60 > (int)(5*SECONDS))
               Buzzer = OFF;
             else
               Buzzer = ON;   
