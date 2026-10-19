@@ -273,6 +273,8 @@ void setup() {
   server.on("/calibration/zero/start", HTTP_POST, handleSensorZeroStart);
   server.on("/calibration/zero/abort", HTTP_POST, handleSensorZeroAbort);
   server.on("/calibration/zero/save", HTTP_POST, handleSensorZeroSave);
+  server.on("/calibration/pointb/start", HTTP_POST, handleSensorPointBStart);
+  server.on("/calibration/pointb/save", HTTP_POST, handleSensorPointBSave);
   server.on("/calibration/events.txt", HTTP_GET, handleCalibrationEventsText);
   server.on("/calibration/venting/start", HTTP_POST, handleVentingTestStart);
   server.on("/calibration/venting/abort", HTTP_POST, handleVentingTestAbort);

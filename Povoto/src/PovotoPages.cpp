@@ -1112,7 +1112,7 @@ static String pressureSensorSectionHtml(float pageCurrentReading, bool usingAver
   auto num = [](float v, int d) { return isfinite(v) ? String(v, d) : String("n/a"); };
   char buffer[420];
   snprintf(buffer, sizeof(buffer),
-    "<h2>Pressure sensor</h2><div class='current-row'><div class='current-badge'>&#128268; Actual current reading%s: <b>%.2f mA</b>"
+    "<h2>Pressure sensor</h2><div class='current-row'><div class='current-badge'>&#128268; Actual current reading%s: <b>%.3f mA</b>"
     "</div><a class='btn-refresh' href='/calibration/refresh-current'>Update</a></div>",
     usingAverageCurrent ? " (30s avg)" : "", pageCurrentReading);
   String html = buffer;
@@ -1120,20 +1120,20 @@ static String pressureSensorSectionHtml(float pageCurrentReading, bool usingAver
           "<input type='number' value='0.00' disabled></div>";
   snprintf(buffer, sizeof(buffer),
     "<div class='form-group'><label for='pressure0Current'>Current (mA):</label><div class='input-row'>"
-    "<input type='number' id='pressure0Current' name='pressure0Current' form='calForm' value='%.2f' step='0.01'>"
-    "<button type='button' class='btn-use' onclick=\"document.getElementById('pressure0Current').value='%.2f'\">Use actual</button>"
+    "<input type='number' id='pressure0Current' name='pressure0Current' form='calForm' value='%.3f' step='0.001'>"
+    "<button type='button' class='btn-use' onclick=\"document.getElementById('pressure0Current').value='%.3f'\">Use actual</button>"
     "</div></div></div>", FMTData.pressure0Current, pageCurrentReading);
   html += buffer;
   snprintf(buffer, sizeof(buffer),
     "<div class='point-row'><div class='point-caption'>Point B</div><div class='form-group'>"
     "<label for='pressure1Bar'>Pressure (bar):</label>"
-    "<input type='number' id='pressure1Bar' name='pressure1Bar' form='calForm' value='%.2f' step='0.01'></div>",
+    "<input type='number' id='pressure1Bar' name='pressure1Bar' form='calForm' value='%.3f' step='0.001'></div>",
     FMTData.pressure1Bar);
   html += buffer;
   snprintf(buffer, sizeof(buffer),
     "<div class='form-group'><label for='pressure1Current'>Current (mA):</label><div class='input-row'>"
-    "<input type='number' id='pressure1Current' name='pressure1Current' form='calForm' value='%.2f' step='0.01'>"
-    "<button type='button' class='btn-use' onclick=\"document.getElementById('pressure1Current').value='%.2f'\">Use actual</button>"
+    "<input type='number' id='pressure1Current' name='pressure1Current' form='calForm' value='%.3f' step='0.001'>"
+    "<button type='button' class='btn-use' onclick=\"document.getElementById('pressure1Current').value='%.3f'\">Use actual</button>"
     "</div></div></div>", FMTData.pressure1Current, pageCurrentReading);
   html += buffer;
 
@@ -1147,7 +1147,7 @@ static String pressureSensorSectionHtml(float pageCurrentReading, bool usingAver
     "<li>Open the fermenter to the atmosphere (ideally one opening at the top and one at the bottom) and wait a few minutes.</li>"
     "<li>The routine takes 5 min and opens no valve.</li>"
     "<li>It averages the filtered sensor current and compares it with the stored zero.</li></ul>";
-  if (sensorZeroActive()) {
+  if (sensorZeroActive() && !sensorPointBActive()) {
     html += "<p><b>Running:</b> " + String(sensorZeroProgressMinutes(), 1) + " min; current " + num(currentReading, 3) +
       " mA. <form action='/calibration/zero/abort' method='POST'><button>Abort</button></form></p>";
   } else {
@@ -1158,7 +1158,7 @@ static String pressureSensorSectionHtml(float pageCurrentReading, bool usingAver
     html += "<p>Mean current " + num(r.meanCurrent, 4) + " mA over " + num(r.minutes, 1) + " min (" + String(r.samples) +
       " samples); sd " + num(r.sdCurrent * r.barPerMilliamp * 1000.0f, 2) + " mbar; range of 10-s means " +
       num(r.blockAmplitude * r.barPerMilliamp * 1000.0f, 2) + " mbar; trend " + num(r.trend * r.barPerMilliamp * 1000.0f, 2) +
-      " mbar.<br>Stored zero " + num(r.storedZero, 4) + " mA; difference <b>" + (r.difference >= 0 ? "+" : "") +
+      " mbar.<br>Stored zero " + num(r.storedCurrent, 4) + " mA; difference <b>" + (r.difference >= 0 ? "+" : "") +
       num(r.difference, 4) + " mA = " + (r.difference >= 0 ? "+" : "") + num(r.difference * r.barPerMilliamp * 1000.0f, 2) +
       " mbar</b> (no clipping).</p>";
     if (!r.stable)
@@ -1169,6 +1169,41 @@ static String pressureSensorSectionHtml(float pageCurrentReading, bool usingAver
     if (r.canSave)
       html += "<form action='/calibration/zero/save' method='POST'><button>Save zero</button> "
         "(shifts the two calibration currents by the difference; the gain is kept)</form>";
+  }
+
+  // Point B: the current at a steady pressure read on the reference manometer.
+  const SensorZeroResult b = getSensorPointBResult();
+  html += "<h3>Point B reading</h3><ul>"
+    "<li>Hold a steady pressure above 0.5 bar and wait 5 min for the gas temperature to settle.</li>"
+    "<li>Type the pressure read on the reference manometer.</li>"
+    "<li>The routine takes 2 min and opens no valve.</li>"
+    "<li>It averages the filtered sensor current.</li></ul>";
+  if (sensorPointBActive()) {
+    html += "<p><b>Running:</b> " + String(sensorZeroProgressMinutes(), 1) + " min; current " + num(currentReading, 3) +
+      " mA. <form action='/calibration/zero/abort' method='POST'><button>Abort</button></form></p>";
+  } else {
+    html += "<form action='/calibration/pointb/start' method='POST'><label>Reference pressure (bar) "
+      "<input type='number' name='reference' step='0.001' min='0.501' style='width:100px' required></label> "
+      "<label><input type='checkbox' name='steady' value='1' required> The pressure has been steady for 5 min</label> "
+      "<button>Run point B reading</button></form>";
+  }
+  if (b.available) {
+    const float mbar = b.barPerMilliamp * 1000.0f;
+    html += "<p>Mean current " + num(b.meanCurrent, 4) + " mA over " + num(b.minutes, 1) + " min (" + String(b.samples) +
+      " samples); sd " + num(b.sdCurrent * mbar, 2) + " mbar; range of 10-s means " + num(b.blockAmplitude * mbar, 2) +
+      " mbar; trend " + num(b.trend * mbar, 2) + " mbar.<br>Reference " + num(b.referenceBar, 3) +
+      " bar; the stored line reads <b>" + num(b.readingBar, 3) + " bar</b> at this current (" +
+      (b.readingBar >= b.referenceBar ? "+" : "") + num((b.readingBar - b.referenceBar) * 1000.0f, 1) +
+      " mbar).<br>Stored point B " + num(b.storedCurrent, 4) + " mA; difference " + (b.difference >= 0 ? "+" : "") +
+      num(b.difference, 4) + " mA.</p>";
+    if (!b.stable)
+      html += "<p><b>Unstable reading: pressure not steady, gas flowing or sensor drifting.</b> Check and repeat.</p>";
+    if (!b.warmedUp)
+      html += "<p><b>The board was on for less than 30 min at the start:</b> repeat later to save.</p>";
+    if (b.saved) html += "<p>Saved.</p>";
+    if (b.canSave)
+      html += "<form action='/calibration/pointb/save' method='POST'><button>Save point B</button> "
+        "(point B becomes the reference pressure and the mean current)</form>";
   }
   return html;
 }
@@ -1425,6 +1460,29 @@ void handleSensorZeroSave(AsyncWebServerRequest *request) {
   request->redirect("/calibration");
 }
 
+void handleSensorPointBStart(AsyncWebServerRequest *request) {
+  if (!request->hasParam("steady", true) || !request->hasParam("reference", true)) {
+    sendCalibrationMessage(request, "Point B not started", "Type the reference pressure and confirm that it has been steady for 5 min.");
+    return;
+  }
+  const float reference = request->getParam("reference", true)->value().toFloat();
+  char reason[100];
+  if (!startSensorPointB(reference, reason, sizeof(reason))) {
+    sendCalibrationMessage(request, "Point B not started", reason);
+    return;
+  }
+  request->redirect("/calibration");
+}
+
+void handleSensorPointBSave(AsyncWebServerRequest *request) {
+  char reason[120];
+  if (!saveSensorPointB(reason, sizeof(reason))) {
+    sendCalibrationMessage(request, "Point B not saved", reason);
+    return;
+  }
+  request->redirect("/calibration");
+}
+
 void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   float pageCurrentReading = currentReading;
   bool usingAverageCurrent = false;
@@ -1530,9 +1588,12 @@ void handleCalibrationDataUpdate(AsyncWebServerRequest *request) {
       curve.epoch = NTPEpoch() ? NTPEpoch() : 1;
     }
   }
-  FMTData.pressure0Current = c0;
-  FMTData.pressure1Bar = p1;
-  FMTData.pressure1Current = c1;
+  // The page shows 3 decimals: a point that differs from the stored one by less than that rounding
+  // is kept as it is (the Sensor zero and the Point B reading store more digits).
+  const auto keepIfRounded = [](float stored, float posted) { return fabsf(posted - stored) > 6e-4f ? posted : stored; };
+  FMTData.pressure0Current = keepIfRounded(FMTData.pressure0Current, c0);
+  FMTData.pressure1Bar = keepIfRounded(FMTData.pressure1Bar, p1);
+  FMTData.pressure1Current = keepIfRounded(FMTData.pressure1Current, c1);
   FMTData.flowLevelFactor = level;
   FMTData.FMTEffectiveVentingExponent = exponent;
   if (curveChanged) {

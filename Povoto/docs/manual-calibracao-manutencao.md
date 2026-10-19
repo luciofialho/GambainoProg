@@ -24,7 +24,7 @@ Regras gerais:
   limite), Maximum pressure setpoint (até 2,0 bar e abaixo da pressão de segurança; nenhum setpoint de
   pressão, nem de regra ou da nuvem, passa dele), Target drop of the gauge pressure per vent (1–15%), altitude, Cooling cycle, Heating cycle,
   Thermometers, Backup settings / Restore settings from backups. **User Configuration** — screensaver,
-  PIN, brilho, Log interval e "Accept new setpoints and triggered actions from cloud". **Calibration**, em ordem: Pressure sensor (pontos A e B, reta; Sensor
+  PIN, brilho, Log interval e "Accept new setpoints and triggered actions from cloud". **Calibration**, em ordem: Pressure sensor (pontos A e B, reta; Point B reading, Sensor
   zero), Fermenter volume, Venting test, Vent (Flow level factor, Effective Venting Exponent, a curva τ(P) com a faixa de validade e o T0, todos editáveis e com os botões "Use last test curve" / "Use last test t0", que só preenchem os campos; vale com Save, entre lotes; a abertura
   mínima de 1,5 s e a queda de segurança de 2× a alvo são fixas), Dissolved CO2 dynamics (Nucleation
   window); um único Save/Cancel no fim grava os campos editáveis, e os eventos de
@@ -36,14 +36,16 @@ Regras gerais:
   `nodate` sem NTP). Tipos: `Venting`, `VentingHistory` (todos, hora do download) e `FermenterVolume`;
   `Incomplete-` na frente se baixado antes do fim; eventos: `PovotoCalibration-Events-FMT<n>-<hora>.txt`.
 - Anote tudo na folha de registro (seção 6) e guarde os arquivos em
-  `A:\Nuvem\Povoto\Calibracoes` com a data na frente (`AAAA-MM-DD_...`).
+  `A:\Nuvem\Povoto\Calibracoes` (os nomes já trazem o tipo, o FMT e a data e hora).
+- Todos os parâmetros de calibração e configuração, o que representam e de onde vêm: seção 9.
 
 ## 1. Fluxograma
 
 ```mermaid
 flowchart TD
     A([Instalação nova, placa trocada<br/>ou fermentador novo]) --> B[P1 Zero do sensor de pressão]
-    B --> C[P2 Intercalibração dos Dallas<br/>fermentador × ambiente × headspace]
+    B --> B2[P1b Ponto B do sensor<br/>manômetro digital de referência]
+    B2 --> C[P2 Intercalibração dos Dallas<br/>fermentador × ambiente × headspace]
     C --> D[P3 Fonte da Patm<br/>SideKick / altitude]
     D --> E{Volume do fermentador<br/>conhecido?}
     E -- não --> F{Dá para pesar<br/>com água?}
@@ -86,8 +88,8 @@ perdas ficarem sempre < 1%.
 ## 2. Material
 
 - Fermentador vazio, limpo e seco; compressor de ar com regulador.
-- Manômetro analógico do fermentador (conferência grosseira do ganho do
-  sensor).
+- Manômetro digital de referência (ponto B do sensor, P1b) e regulador de pressão para um patamar
+  estável. O manômetro analógico do fermentador serve só como conferência grosseira.
 - Recipiente com água para a intercalibração dos Dallas.
 - Só no FMT1: Dallas de 15 cm e poço longo para a porta tri-clamp (headspace).
 - Garrafa PET seca com conexão de entrada pelo fundo (testemunha) e silenciador
@@ -123,10 +125,30 @@ rotina usa a corrente bruta do sensor.
    mbar (sem corte). Dentro de ±2 mbar: não precisa gravar.
 6. Fora disso: "Save zero" (desloca os dois pontos da calibração pela mesma
    diferença, sem mudar o ganho). Repita para conferir.
-7. Ganho: a conversão é a reta pelos pontos A e B. Para uma conferência grosseira, feche o
-   fermentador, pressurize a ~1,9 bar e compare a pressão sem corte do `/getstatus` com o
-   manômetro analógico; diferença maior que a incerteza de leitura dele (alguns %):
-   registre (ver seção 5).
+7. Ganho: a conversão é a reta pelos pontos A e B; o ponto B se mede em P1b.
+
+### P1b. Ponto B do sensor de pressão
+
+Quando: instalação, troca de sensor ou placa, depois de P1; se a pressão sem corte do `/getstatus`
+divergir do manômetro digital. O Save zero desloca os dois pontos pela mesma diferença: faça P1 antes.
+
+1. Modo OFF, fermentador fechado, sem lote. Ligue o ar comprimido pelo regulador num patamar estável
+   acima de 0,5 bar (de preferência perto da pressão de trabalho, 1,5–1,9 bar), com o manômetro digital
+   de referência no mesmo ponto.
+2. Espere **5 min** com a pressão estável, para a temperatura do gás assentar.
+3. Calibration → "Point B reading": digite a pressão do manômetro digital (3 casas), marque que a
+   pressão está estável há 5 min e aperte "Run point B reading". A rotina mede a corrente por 2 min
+   (não abre válvula nenhuma, o tempo não é ajustável) e exige a placa ligada há pelo menos 30 min
+   para poder gravar.
+4. Resultado: corrente média, desvio padrão, amplitude das médias de 10 s e tendência (os mesmos
+   critérios do zero: 1, 1 e 0,5 mbar), a pressão que a reta gravada lê nessa corrente contra a
+   referência (em mbar) e a diferença da corrente em relação ao ponto B gravado.
+5. "Unstable reading": a pressão não estava estável (vazamento, regulador oscilando, temperatura ainda
+   assentando) ou saiu gás. Corrija e repita; o botão de gravar não aparece.
+6. "Save point B": a pressão de referência e a corrente média passam a ser o ponto B. Nada é gravado sem
+   o botão; o mesmo resultado não é gravado duas vezes, e a gravação entra nos eventos de calibração.
+7. Confira repetindo a leitura noutra pressão (por exemplo 1,0 bar): a diferença em mbar entre a reta e o
+   manômetro deve ficar pequena. O erro de ganho que sobrar é o do próprio manômetro de referência.
 
 ### P2. Intercalibração dos Dallas (fermentador × ambiente × headspace)
 
@@ -316,7 +338,7 @@ Não use soda nem Vanish em pó (corpo de alumínio). Não molhe a bobina.
 |---|---|---|
 | P1: "Unstable reading" | fermentador mal aberto, gás saindo, sensor derivando | mais aberturas (em cima e embaixo), esperar, repetir; se persistir, verificar o sensor |
 | Zero do sensor fora de ±2 mbar | deriva do sensor ou do shunt | gravar o zero (P1); se voltar a sair entre lotes, verificar hardware (INA226, shunt, fonte do 4–20 mA) |
-| Ganho fora (pressão sem corte muito diferente do manômetro analógico) | pontos A e B da calibração desatualizados | refazer os pontos A e B (Calibration → Pressure sensor, "Use actual") |
+| Ganho fora (pressão sem corte muito diferente do manômetro analógico) | pontos A e B da calibração desatualizados | refazer o zero (P1) e o ponto B (P1b) |
 | Diferença dos Dallas > 0,7 °C | sensor ruim ou não original | trocar e repetir P2 |
 | Headspace (FMT1): leitura muda muito ao puxar a sonda 3–4 cm | condução pela haste/poço | isolar melhor a conexão por fora; registrar e avaliar se vale manter atribuído |
 | P4b: volume muda com a pressão inicial | offset do sensor ou pressão residual no tanque | repetir P1; ventilar o tanque por mais tempo; conferir retenção na saída |
@@ -345,6 +367,7 @@ Uma linha por evento. Guarde junto com os CSV.
 | Procedimento | Quando |
 |---|---|
 | P1 Zero | instalação; troca de sensor/placa; antes de P4b e P5 de calibração; se a pressão em repouso não for 0 |
+| P1b Ponto B | instalação; troca de sensor/placa (depois do zero); se divergir do manômetro digital |
 | P2 Dallas | instalação; troca de sensor; anual |
 | P3 Patm | instalação; troca de placa ou de SideKick |
 | P4 Volume | fermentador novo; alteração na tubulação |
@@ -385,7 +408,7 @@ rodando sozinho).
        isolar a conexão por fora; Settings → Thermometers → "Rescan bus" e
        atribuir o papel "Headspace". Em todos: conferir que fermentador e
        ambiente continuam atribuídos.
-6. [ ] P1 Zero do sensor e conferência com o manômetro analógico.
+6. [ ] P1 Zero do sensor e P1b ponto B com o manômetro digital.
 7. [ ] P3 Conferir fonte da Patm e altitude.
 8. [ ] P5 Ensaio de ventilação com ar, etiqueta `new-valve` ou `as-is`.
 9. [ ] Baixar o CSV e mandar para análise. **Não gravar curva nem t0 ainda.**
@@ -400,3 +423,64 @@ rodando sozinho).
 - [ ] OTA da tag `te-final-2026-10-11` (firmware e páginas), religar o TE na
       porta A e o Dallas do TE, conferir kCO2, Vr e o papel do Dallas do TE no
       Settings (as chaves ficaram gravadas).
+
+## 9. Parâmetros de calibração e configuração
+
+O que cada parâmetro representa e de onde vem o valor. "Onde": página do Povoto (Settings = Fermenter
+Settings; Calibration; User Configuration). A coluna "Origem" cita o procedimento (P1, P4a...) ou a decisão
+que define o valor.
+
+### Sensor de pressão (Calibration → Pressure sensor)
+
+| Parâmetro | O que representa | Origem |
+|---|---|---|
+| Ponto A: pressão 0 bar, corrente (mA) | Corrente do transmissor com o fermentador aberto à atmosfera (pressão manométrica zero) | Rotina Sensor zero, 5 min, botão "Save zero" (P1); ou "Use actual" |
+| Ponto B: pressão (bar) | Pressão de referência em que se mediu a corrente do ponto B | Manômetro digital de referência, digitada na rotina "Point B reading" (P1b) |
+| Ponto B: corrente (mA) | Corrente média do transmissor nessa pressão | Rotina "Point B reading", 2 min, botão "Save point B" (P1b); ou "Use actual" |
+| Maximum security pressure | Pressão acima da qual a válvula abre sempre, com qualquer opção do Valve | Decisão de projeto: acima de 2,0 e até 2,3 bar, o limite em que o sensor de 0 a 2 bar lê bem |
+| Maximum pressure setpoint | Maior setpoint de pressão aceito (página, regras e nuvem) | Decisão do operador: até 2,0 bar e abaixo da pressão de segurança |
+
+### Fermentador e local (Settings)
+
+| Parâmetro | O que representa | Origem |
+|---|---|---|
+| FMT Total Volume (L) | Volume interno total do fermentador; o headspace é esse volume menos a cerveja | Pesagem com água (P4a) ou rotina "Fermenter volume" com o tanque de expansão (P4b, "Save as new FMT volume") |
+| Expansion tank volume (L), campo da rotina Fermenter volume | Volume do tanque de referência usado só nessa rotina | Tanque pesado vazio e cheio de água |
+| Altitude (m) | Altitude do local, usada para a pressão atmosférica quando o SideKick não a fornece | Altitude do local |
+| Povoto Number | Número do equipamento (0 a 99; no cloud, site × 100 + número) | Definido na instalação |
+| Debug mode | Placa de bancada: sensores simulados, tempos curtos, TFT girado 180° | Decisão do operador |
+
+### Vent (Calibration → Vent, e Settings)
+
+| Parâmetro | O que representa | Origem |
+|---|---|---|
+| Target drop per vent (%) (Settings) | Queda alvo da pressão manométrica em cada relief; define o dente de serra em torno do setpoint (relief em setpoint/√(1 − queda)) | Decisão de projeto, padrão 6% |
+| Flow curve: a0, a1, a2, a3 | Coeficientes da cúbica τ(P) = a0 + a1·P + a2·P² + a3·P³ (s): constante de tempo da pressão absoluta de 100 L de ar a 20 °C, com P manométrica em bar. O firmware a escala para o volume de headspace e a temperatura do gás | Ajuste de mínimos quadrados (pesos P_abs²) das liberações do ensaio de ventilação, com ar e o fermentador vazio (P5); "Save curve and t0", "Use last test curve" ou digitados |
+| Flow curve: valid from / to (bar) | Faixa de pressão coberta pelo ensaio; fora dela vale o valor da ponta (acima) ou a escala do bocal (abaixo) | Ensaio de ventilação (pressão mais alta e mais baixa medidas) |
+| T0 (ms) | Atraso mecânico da válvula entre o comando e o gás sair; é descontado do tempo aberto | Intercepto do ajuste do ensaio de ventilação (P5), "Use last test t0" |
+| Reference curve | Curva fixa de comparação, para medir a perda de vazão (sujeira) em 1,8 / 1,2 / 0,8 bar | Primeiro ensaio de calibração, "Save as reference curve" |
+| Flow level factor | Multiplicador (1,0 = teoria) da vazão molar de CO2 calculada. Representa o desvio entre a vazão real de CO2 e a teórica (conversão ar → CO2 do bocal ideal, Z do CO2 e curva medida com ar) | Ajustado entre lotes pela SG desgaseificada medida (P6 e P7) |
+| Effective Venting Exponent | Expoente politrópico n da expansão do gás durante a abertura (1 = isotérmico, 1,29 ≈ adiabático do CO2); entra no resfriamento durante o vent e na pressão assentada logo após o fechamento | Ajustado nos dados do lote 160 (recuperação medida na média diária, τ ≈ 30 s); padrão 1,29, não mudar sem dados novos |
+| Abertura mínima, queda de segurança, teto de abertura | 1,5 s; 2 × a queda alvo; 30 s | Fixos no código (docs/vent.md) |
+
+### Temperatura (Settings)
+
+| Parâmetro | O que representa | Origem |
+|---|---|---|
+| Thermometers: fermentador, ambiente, headspace | Qual sonda Dallas tem cada papel; a do headspace é opcional | "Rescan bus" e atribuição; intercalibração das sondas (P2) |
+| Cooling cycle: tempo ligado e de descanso em 20, 10 e 0 °C | Cadência do chiller conforme a temperatura | Ajustado ao equipamento e à instalação |
+| Heating cycle: habilitar, tempo ligado e de descanso | Cadência do aquecedor | Ajustado ao equipamento e à instalação |
+
+### CO2 dissolvido (Calibration)
+
+| Parâmetro | O que representa | Origem |
+|---|---|---|
+| Nucleation window (min) | Tempo, depois de Gas, Liquid, Dry hopping e Dynamic hopping, em que o headspace não é medido e o dissolvido fica parado | Padrão 30 min; decidido depois de vários lotes pela estimativa do firmware (P7b) |
+
+### Preferências (User Configuration)
+
+| Parâmetro | O que representa | Origem |
+|---|---|---|
+| Screensaver Time, Keypad PIN, Display Brightness, LED Brightness | Comportamento da TFT e do LED RGB | Preferência do operador |
+| Accept new setpoints and triggered actions from cloud | Se o Povoto aplica alterações vindas do cloud | Decisão do operador |
+| Google Sheets Datalog (liga/desliga e pasta), Log interval | Destino e frequência do registro | Decisão do operador |

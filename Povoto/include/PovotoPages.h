@@ -26,6 +26,8 @@ void handleCalibrationDataUpdate(AsyncWebServerRequest *request);
 void handleSensorZeroStart(AsyncWebServerRequest *request);
 void handleSensorZeroAbort(AsyncWebServerRequest *request);
 void handleSensorZeroSave(AsyncWebServerRequest *request);
+void handleSensorPointBStart(AsyncWebServerRequest *request);
+void handleSensorPointBSave(AsyncWebServerRequest *request);
 void handleVentingTestStart(AsyncWebServerRequest *request);
 void handleVentingTestAbort(AsyncWebServerRequest *request);
 void handleVentingTestSave(AsyncWebServerRequest *request);
