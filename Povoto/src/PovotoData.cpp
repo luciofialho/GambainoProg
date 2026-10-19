@@ -38,7 +38,7 @@ FMTData_t FMTData = {
   .dallasAddress = {}
 };
 
-UserConfigurationData_t UserConfigurationData = {120, 6350, 10};
+UserConfigurationData_t UserConfigurationData = {120, 6350, 10, 10};
 
 float Patm = 1.0f;
 
@@ -249,6 +249,8 @@ bool readUserConfigurationDataFromEEPROM() {
   UserConfigurationData.screensaverTime = store.getInt("screensaver", defaultUserConfigurationData.screensaverTime);
   UserConfigurationData.keypadPin = store.getInt("keypadPin", defaultUserConfigurationData.keypadPin);
   UserConfigurationData.displayBrightness = store.getInt("brightness", defaultUserConfigurationData.displayBrightness);
+  UserConfigurationData.ledBrightness = store.getInt("ledBrightness", defaultUserConfigurationData.ledBrightness);
+  if (UserConfigurationData.ledBrightness < 1 || UserConfigurationData.ledBrightness > 10) UserConfigurationData.ledBrightness = defaultUserConfigurationData.ledBrightness;
   if (UserConfigurationData.screensaverTime < 10) UserConfigurationData.screensaverTime = defaultUserConfigurationData.screensaverTime;
   if (UserConfigurationData.keypadPin < 0 || UserConfigurationData.keypadPin > 9999) UserConfigurationData.keypadPin = defaultUserConfigurationData.keypadPin;
   if (UserConfigurationData.displayBrightness < 1 || UserConfigurationData.displayBrightness > 10) UserConfigurationData.displayBrightness = defaultUserConfigurationData.displayBrightness;
@@ -266,6 +268,7 @@ bool writeUserConfigurationDataToNIV() {
   saved = (store.putInt("screensaver", UserConfigurationData.screensaverTime) == sizeof(UserConfigurationData.screensaverTime)) && saved;
   saved = (store.putInt("keypadPin", UserConfigurationData.keypadPin) == sizeof(UserConfigurationData.keypadPin)) && saved;
   saved = (store.putInt("brightness", UserConfigurationData.displayBrightness) == sizeof(UserConfigurationData.displayBrightness)) && saved;
+  saved = (store.putInt("ledBrightness", UserConfigurationData.ledBrightness) == sizeof(UserConfigurationData.ledBrightness)) && saved;
   store.end();
   if (!saved) Serial.println("NVS: UserConfigurationData save incomplete");
   return saved;

@@ -108,6 +108,7 @@ struct UserConfigurationData_t {
   int screensaverTime;
   int keypadPin;
   int displayBrightness; // 1..10
+  int ledBrightness;     // 1..10, the RGB status LED (neopixel)
 } __attribute__((packed));
 extern UserConfigurationData_t UserConfigurationData;
 bool readUserConfigurationDataFromEEPROM();

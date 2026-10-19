@@ -31,6 +31,8 @@ falls back to 2.3) and `maxSetPress` (highest pressure set point, default and li
 `maxPressure`; a missing or invalid value falls back to the default kept below `maxPressure`). `number`
 (Povoto number) is 0 to 99; an invalid value falls back to 0. `lastExpTankVol` is the last expansion tank volume typed on the
 fermenter volume routine (initial value of its field).
+pvt_user: `brightness` (display) and `ledBrightness` (RGB status LED), 1 to 10; a missing or invalid
+`ledBrightness` falls back to 10 (full brightness).
 Direct vent (docs/vent.md): `ventDrop`, `flowLevel` (floats; `ventMinSec`, `ventSafeDrop` and
 `liquidGasMass` are no longer read or written and stay in NVS, unused) and the blobs `ventCurve` / `ventRefCurve`
 (VentModel::Curve, 28 bytes: a0..a3, t0, pMin, pMax, epoch); a blob of another

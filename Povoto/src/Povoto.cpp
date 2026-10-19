@@ -426,7 +426,7 @@ void setup() {
   digitalWrite(PINTRANSFERVALVE, LOW);
   digitalWrite(PINVENTINGLED, LOW);
   digitalWrite(PINBUZZER, LOW);
-  neopixelWrite(PINLED, 0, 0, 0);
+  statusLedWrite(0, 0, 0);
   povotoAlarmsSetup();
 
   mainScreen();

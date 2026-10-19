@@ -148,7 +148,7 @@ void processPovotoAlarms() {
     if (alarm != ALARM_NONE) sendAlarmMail(alarm, 0);
     if (alarm == ALARM_NONE) {
       digitalWrite(PINVENTINGLED, LOW);
-      neopixelWrite(PINLED, 0, 0, 0); // the Wi-Fi indication resumes
+      statusLedWrite(0, 0, 0); // the Wi-Fi indication resumes
     }
   }
   // Also follows a change of the problem (pressure: not responding / out of
@@ -174,7 +174,7 @@ void processPovotoAlarms() {
     if (alarmBlink != blinkOn) {
       blinkOn = alarmBlink;
       digitalWrite(PINVENTINGLED, alarmBlink ? HIGH : LOW);
-      neopixelWrite(PINLED, alarmBlink ? 255 : 0, 0, 0);
+      statusLedWrite(alarmBlink ? 255 : 0, 0, 0);
     }
   }
 

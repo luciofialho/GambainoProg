@@ -16,6 +16,8 @@ extern TFT_eSPI tft;
 
 #define PINBUZZER 47
 #define PINLED    48  // Addressable RGB LED built into the ESP32-S3 DevKitC.
+// Writes the RGB LED scaled by the LED brightness of the User Configuration page (1..10 of 10).
+void statusLedWrite(uint8_t red, uint8_t green, uint8_t blue);
 
 #define PINBTN    14
 #define PINATTENTIONLED 13 // front panel LED: alarms (fast) and running tasks (slow)

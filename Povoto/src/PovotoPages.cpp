@@ -2964,6 +2964,11 @@ void handleUserConfigPage(AsyncWebServerRequest *request) {
   html += "</output> / 10</label><input type='range' id='displayBrightness' name='displayBrightness' "
     "min='1' max='10' step='1' oninput=\"document.getElementById('brightnessValue').value=this.value\" value='";
   html += String(UserConfigurationData.displayBrightness);
+  html += "'><label for='ledBrightness'>LED Brightness: <output id='ledBrightnessValue'>";
+  html += String(UserConfigurationData.ledBrightness);
+  html += "</output> / 10</label><input type='range' id='ledBrightness' name='ledBrightness' "
+    "min='1' max='10' step='1' oninput=\"document.getElementById('ledBrightnessValue').value=this.value\" value='";
+  html += String(UserConfigurationData.ledBrightness);
   html += "'><h2>Google Sheets Datalog</h2>"
     "<input type='hidden' name='googleLogField' value='1'>"
     "<label><input type='checkbox' name='googleLogEnabled' value='1'";
@@ -3007,9 +3012,11 @@ void handleUserConfigUpdate(AsyncWebServerRequest *request) {
   int screensaverTime = UserConfigurationData.screensaverTime;
   int keypadPin = UserConfigurationData.keypadPin;
   int brightness = UserConfigurationData.displayBrightness;
+  int ledBrightness = UserConfigurationData.ledBrightness;
   if (!readUserConfigInteger(request, "screensaverTime", 10, 2147483647, screensaverTime) ||
       !readUserConfigInteger(request, "keypadPin", 0, 9999, keypadPin) ||
-      !readUserConfigInteger(request, "displayBrightness", 1, 10, brightness)) {
+      !readUserConfigInteger(request, "displayBrightness", 1, 10, brightness) ||
+      !readUserConfigInteger(request, "ledBrightness", 1, 10, ledBrightness)) {
     request->send(400, "text/plain", "Invalid settings: screensaver >= 10 seconds, PIN 0-9999, brightness 1-10.");
     return;
   }
@@ -3044,6 +3051,7 @@ void handleUserConfigUpdate(AsyncWebServerRequest *request) {
   UserConfigurationData.screensaverTime = screensaverTime;
   UserConfigurationData.keypadPin = keypadPin;
   UserConfigurationData.displayBrightness = brightness;
+  UserConfigurationData.ledBrightness = ledBrightness;
   writeUserConfigurationDataToNIV();
   if (logInterval != FMTData.dataLogIntervalSeconds || googleLogEnabled != FMTData.googleLogEnabled ||
       strcmp(googleLogFolder, FMTData.googleLogFolder) != 0) {

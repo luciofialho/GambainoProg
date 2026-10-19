@@ -9,8 +9,15 @@
 #include "IOTK_ESPAsyncServer.h"
 #include "GambainoCommon.h"
 #include "PovotoCommon.h"
+#include "PovotoData.h"
 #include "displayUtils.h"
 #include "PovotoAlarms.h"
+
+void statusLedWrite(uint8_t red, uint8_t green, uint8_t blue) {
+  const int level = constrain(UserConfigurationData.ledBrightness, 1, 10);
+  const auto scaled = [level](uint8_t value) { return (uint8_t)((value * level + 5) / 10); };
+  neopixelWrite(PINLED, scaled(red), scaled(green), scaled(blue));
+}
 
 namespace {
 constexpr char WIFI_NAMESPACE[] = "pvt_wifi";
@@ -81,10 +88,12 @@ void updateWiFiStatusLed() {
     red = 255;                             // Configured but disconnected: red.
   }
 
-  const uint32_t color = (uint32_t(red) << 16) | (uint32_t(green) << 8) | blue;
+  // The brightness is part of the key: changing it rewrites the LED.
+  const uint32_t color = (uint32_t(red) << 16) | (uint32_t(green) << 8) | blue |
+                         (uint32_t(UserConfigurationData.ledBrightness) << 24);
   if (color == previousColor) return;
   previousColor = color;
-  neopixelWrite(PINLED, red, green, blue);
+  statusLedWrite(red, green, blue);
 }
 
 String htmlEscape(const String &value) {

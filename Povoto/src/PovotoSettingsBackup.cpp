@@ -89,7 +89,8 @@ String savePovotoSettingsBackup() {
     appendDallasAddress(json, DALLAS_BACKUP_KEYS[role], FMTData.dallasAddress[role]);
   appendNumber(json, "screensaverTime", UserConfigurationData.screensaverTime, 0);
   appendNumber(json, "keypadPin", UserConfigurationData.keypadPin, 0);
-  appendNumber(json, "displayBrightness", UserConfigurationData.displayBrightness, 0, true);
+  appendNumber(json, "displayBrightness", UserConfigurationData.displayBrightness, 0);
+  appendNumber(json, "ledBrightness", UserConfigurationData.ledBrightness, 0, true);
   json += "}\n";
   return json;
 }
@@ -262,6 +263,8 @@ bool loadPovotoSettingsBackup(const String &settings) {
   READ_BACKUP_INT("screensaverTime", loadedUser.screensaverTime);
   READ_BACKUP_INT("keypadPin", loadedUser.keypadPin);
   READ_BACKUP_INT("displayBrightness", loadedUser.displayBrightness);
+  READ_BACKUP_INT("ledBrightness", loadedUser.ledBrightness);  // missing in older files: kept
+  if (loadedUser.ledBrightness < 1 || loadedUser.ledBrightness > 10) return false;
   loadedFmt.PovotoNum = static_cast<byte>(povotoNumber);
 
   for (uint8_t i = 0; i < 3; ++i) {
