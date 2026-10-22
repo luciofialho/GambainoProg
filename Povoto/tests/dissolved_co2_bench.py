@@ -11,9 +11,11 @@ import math
 import random
 import statistics
 import nucleation_estimate as ne
+import vent_model as vm
 
 R = 0.0831446      # L.bar/(mol.K)
 PATM = 0.93
+ABV = 4.0          # % v/v, fixed: the bench has no fermentation model for the ABV
 M = 44.01
 DT = 60            # s, one step = one CO2 sample
 # Firmware constants
@@ -28,10 +30,12 @@ BOOT_WAIT = 120
 HENRY_WIN = 30     # samples (60 s): 30-min mean of Henry
 
 
-def henry(p, t, v):
+def henry(p, t, v, abv=ABV):
+    # Partial pressure of CO2: P_abs * (1 - y), as CO2DissolvedMols() in the firmware.
     tk = t + 273.15
     kh = 0.0334 * math.exp(2400 * (1 / tk - 1 / 298.15))
-    return kh * (p + PATM) * 0.986923 * v
+    p_abs = p + PATM
+    return kh * p_abs * (1 - vm.vent_vapor_fraction(t, abv, p_abs)) * 0.986923 * v
 
 
 class Fermenter:
