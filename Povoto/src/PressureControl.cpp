@@ -290,7 +290,11 @@ float CO2DissolvedMols(float pressureBar, float sg, float temperatureC, float vo
 
   const float tempK = temperatureC + 273.15f;
   const float kH_298 = 0.0334f; // mol/(L*atm) at 25C for CO2 in water fonte: Sander, R. (2015). Compilation of Henry's law constants (version 4.0) for water as solvent. Atmospheric Chemistry and Physics, 15(8), 4399-4981. https://doi.org/10.5194/acp-15-4399-2015
-  const float pressureAtm = (pressureBar+Patm) * 0.986923f; // constant is bar --> atm conversion
+  // Henry holds for the partial pressure of CO2: the headspace gas is saturated with water and
+  // ethanol vapor, the same fraction the vent discounts (docs/vent.md, section 4).
+  const float pAbs = pressureBar + Patm;
+  const float vaporFraction = float(VentModel::ventVaporFraction(temperatureC, beerABV, pAbs));
+  const float pressureAtm = pAbs * (1.0f - vaporFraction) * 0.986923f; // constant is bar --> atm conversion
 
   float kH = kH_298 * expf(2400.0f * (1.0f / tempK - 1.0f / 298.15f));
 
