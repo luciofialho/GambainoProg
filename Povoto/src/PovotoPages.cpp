@@ -28,6 +28,8 @@
 #include "VentingTest.h"
 #include "ValveCleaning.h"
 #include "ExpansionTank.h"
+#include "LeakHold.h"
+#include "BuildId.h"
 #include "NucleationRecord.h"
 #include "AtmosphericPressure.h"
 
@@ -1013,10 +1015,9 @@ static String curveText(const VentModel::Curve &curve) {
   if (!VentModel::validCurve(curve)) return "none";
   char when[20];
   formatLocalEpochISO(curve.epoch, when, sizeof(when));
-  return String("tau(P) = ") + String(curve.a[0], 3) + " + " + String(curve.a[1], 3) + " P + " + String(curve.a[2], 3) +
-    " P&sup2; + " + String(curve.a[3], 4) + " P&sup3; s (100 L of air, 20 &deg;C), t0 " + String(1000.0f * curve.t0, 1) +
-    " ms, " + String(curve.pMin, 2) + "-" + String(curve.pMax, 2) + " bar, " +
-    (when[0] ? String("test of ") + when : String("default: venting test of 18/09, t0 not measured"));
+  return String("tau(P) = k / psi(P), k ") + String(curve.k, 3) + " s, beta " + String(curve.beta, 4) +
+    " (100 L of air, 20 &deg;C), measured " + String(curve.pMin, 2) + "-" + String(curve.pMax, 2) + " bar, " +
+    (when[0] ? String("test of ") + when : String("default: tests of 20-21/10/2026"));
 }
 
 static String calibrationField(const char *name, const char *label, float value, int decimals, const char *range,
@@ -1031,7 +1032,7 @@ static String curveInput(const char *name, float value, int decimals, int widthP
     String(value, decimals) + "' style='width:" + widthPx + "px;padding:6px'>";
 }
 
-// The flow curve and t0 of the page: editable fields, and the last venting test with
+// The flow curve of the page: editable fields, and the last venting test with
 // a button to take its values (the button only fills the fields; Save stores them).
 static String flowCurveFieldsHtml() {
   const VentModel::Curve &c = FMTData.ventCurve;
@@ -1044,34 +1045,25 @@ static String flowCurveFieldsHtml() {
   char source[20];
   formatLocalEpochISO(c.epoch, source, sizeof(source));
 
-  String html = "<div class='form-group'><label>Flow curve</label><div style='" + row + "'>tau(P) = " +
-    curveInput("ventA0", c.a[0], 4, 100) + " + " + curveInput("ventA1", c.a[1], 4, 100) + " P + " +
-    curveInput("ventA2", c.a[2], 4, 100) + " P&sup2; + " + curveInput("ventA3", c.a[3], 4, 100) + " P&sup3; s</div>"
-    "<div style='" + row + "'>valid from " + curveInput("ventPMin", c.pMin, 3, 70) + " to " +
+  String html = "<div class='form-group'><label>Flow curve</label><div style='" + row + "'>tau(P) = k / psi(P): k " +
+    curveInput("ventK", c.k, 3, 100) + " s, beta " + curveInput("ventBeta", c.beta, 4, 100) + "</div>"
+    "<div style='" + row + "'>measured from " + curveInput("ventPMin", c.pMin, 3, 70) + " to " +
     curveInput("ventPMax", c.pMax, 3, 70) + " bar</div>";
   if (last) {
-    html += "<div style='" + row + "'><small>Last test (" + (when[0] ? when : "no time") + "): tau(P) = " + num(s.curve.a[0], 4) + " + " +
-      num(s.curve.a[1], 4) + " P + " + num(s.curve.a[2], 4) + " P&sup2; + " + num(s.curve.a[3], 4) + " P&sup3; s, " +
-      num(s.curve.pMin, 3) + "-" + num(s.curve.pMax, 3) + " bar</small>"
+    html += "<div style='" + row + "'><small>Last test (" + (when[0] ? when : "no time") + "): k " + num(s.curve.k, 3) +
+      " s, beta " + num(s.curve.beta, 4) + ", " + num(s.curve.pMin, 3) + "-" + num(s.curve.pMax, 3) + " bar</small>"
       "<button type='button' class='btn-use' onclick=\"" +
-      "document.getElementById('ventA0').value='" + num(s.curve.a[0], 4) + "';" +
-      "document.getElementById('ventA1').value='" + num(s.curve.a[1], 4) + "';" +
-      "document.getElementById('ventA2').value='" + num(s.curve.a[2], 4) + "';" +
-      "document.getElementById('ventA3').value='" + num(s.curve.a[3], 4) + "';" +
+      "document.getElementById('ventK').value='" + num(s.curve.k, 3) + "';" +
+      "document.getElementById('ventBeta').value='" + num(s.curve.beta, 4) + "';" +
       "document.getElementById('ventPMin').value='" + num(s.curve.pMin, 3) + "';" +
       "document.getElementById('ventPMax').value='" + num(s.curve.pMax, 3) + "'\">Use last test curve</button></div>";
   }
-  html += "</div><div class='form-group'><label for='ventT0Ms'>T0 (ms) - valve mechanical delay</label><div style='" + row + "'>" +
-    curveInput("ventT0Ms", 1000.0f * c.t0, 2, 100);
-  if (last)
-    html += String(" <small>Last test: ") + num(1000.0f * s.curve.t0, 2) + " &plusmn; " + num(s.t0SeMs, 2) +
-      " ms</small><button type='button' class='btn-use' onclick=\"document.getElementById('ventT0Ms').value='" +
-      num(1000.0f * s.curve.t0, 2) + "'\">Use last test t0</button>";
-  html += "</div></div><ul>"
-    "<li>tau(P) is the time constant of the absolute pressure of 100 L of air at 20 &deg;C, with P in bar (gauge). "
+  html += "</div>";
+  html += "</div><ul>"
+    "<li>tau(P) is the time constant of the absolute pressure of 100 L of air at 20 &deg;C, with P in bar (gauge): "
+    "k is the capacity of the valve nozzle and beta the resistance of its outlet (docs/vent.md). "
     "The firmware scales it to the headspace volume and the gas temperature.</li>"
-    "<li>Outside the valid range the end value is used above it and the ideal-nozzle scaling below it (docs/vent.md).</li>"
-    "<li>Curve now in use: " + (c.epoch ? String("dated ") + source : String("default (venting test of 18/09, t0 not measured)")) +
+    "<li>Curve now in use: " + (c.epoch ? String("dated ") + source : String("default (tests of 20-21/10/2026)")) +
     ". Changes are saved with Save, between batches only.</li></ul>";
   return html;
 }
@@ -1101,8 +1093,8 @@ static String ventSettingsHtml() {
         p * (1.0 - FMTData.ventTargetDropPercent / 100.0), Patm, tK, FMTData.FMTEffectiveVentingExponent);
     html += " " + String(p, 1) + " bar " + (isfinite(seconds) ? String(seconds, 2) + " s" : String("n/a")) + ";";
   }
-  html += " CO2/air flow " + String(VentModel::co2AirRatio(1.9, Patm), 3) + " (choked) to " +
-    String(VentModel::co2AirRatio(0.5, Patm), 3) + " (0.5 bar).</p>";
+  html += " CO2/air flow " + String(VentModel::co2AirRatio(FMTData.ventCurve.beta, 1.9, Patm), 3) + " (1.9 bar) to " +
+    String(VentModel::co2AirRatio(FMTData.ventCurve.beta, 0.5, Patm), 3) + " (0.5 bar).</p>";
   return html;
 }
 
@@ -1144,6 +1136,7 @@ static String pressureSensorSectionHtml(float pageCurrentReading, bool usingAver
           "Do not press Save before analysing the data (docs/manual-calibracao-manutencao.md). "
           "Vent diagnostics: <a href='/ventstatus'>/ventstatus</a>.</p><hr>";
   html += "<h3>Sensor zero</h3><ul>"
+    "<li>Keep the board on for at least 30 min (the transmitter and the INA226 warm up).</li>"
     "<li>Open the fermenter to the atmosphere (ideally one opening at the top and one at the bottom) and wait a few minutes.</li>"
     "<li>The routine takes 5 min and opens no valve.</li>"
     "<li>It averages the filtered sensor current and compares it with the stored zero.</li></ul>";
@@ -1163,8 +1156,6 @@ static String pressureSensorSectionHtml(float pageCurrentReading, bool usingAver
       " mbar</b> (no clipping).</p>";
     if (!r.stable)
       html += "<p><b>Unstable reading: fermenter not open, gas flowing or sensor drifting.</b> Check and repeat.</p>";
-    if (!r.warmedUp)
-      html += "<p><b>The board was on for less than 30 min at the start:</b> repeat later to save.</p>";
     if (r.saved) html += "<p>Saved.</p>";
     if (r.canSave)
       html += "<form action='/calibration/zero/save' method='POST'><button>Save zero</button> "
@@ -1174,6 +1165,7 @@ static String pressureSensorSectionHtml(float pageCurrentReading, bool usingAver
   // Point B: the current at a steady pressure read on the reference manometer.
   const SensorZeroResult b = getSensorPointBResult();
   html += "<h3>Point B reading</h3><ul>"
+    "<li>Keep the board on for at least 30 min (the transmitter and the INA226 warm up).</li>"
     "<li>Hold a steady pressure above 0.5 bar and wait 5 min for the gas temperature to settle.</li>"
     "<li>Type the pressure read on the reference manometer.</li>"
     "<li>The routine takes 2 min and opens no valve.</li>"
@@ -1198,8 +1190,6 @@ static String pressureSensorSectionHtml(float pageCurrentReading, bool usingAver
       num(b.difference, 4) + " mA.</p>";
     if (!b.stable)
       html += "<p><b>Unstable reading: pressure not steady, gas flowing or sensor drifting.</b> Check and repeat.</p>";
-    if (!b.warmedUp)
-      html += "<p><b>The board was on for less than 30 min at the start:</b> repeat later to save.</p>";
     if (b.saved) html += "<p>Saved.</p>";
     if (b.canSave)
       html += "<form action='/calibration/pointb/save' method='POST'><button>Save point B</button> "
@@ -1222,9 +1212,9 @@ static String ventingTestSectionHtml() {
     "<li>The test alternates openings of 2, 0.5, 8, 1, 4 and 2 s, waiting for a stable pressure after each one.</li>"
     "<li>After the start pressure, it repeats at 1.9 (when at least 0.15 bar below the start), 1.5, 1.1, 0.8, 0.5 and "
     "0.25 bar; a long opening steps down between levels.</li>"
-    "<li>It takes about 55&ndash;65 min.</li>"
+    "<li>It takes about 2 h 15 min.</li>"
     "<li>Vents outside the pressure range of the saved curve are flagged.</li>"
-    "<li>Result: flow curve and the valve's own delay (t0).</li></ul>";
+    "<li>Result: flow curve of the valve and its outlet (k, beta).</li></ul>";
   if (ventingTestActive()) {
     html += "<p><b>" + ventingTestProgressText() + "</b></p><form action='/calibration/venting/abort' method='POST'>"
       "<button>Abort</button></form><p><a href='/calibration/venting.csv?test=current'>Current test CSV</a> "
@@ -1245,10 +1235,9 @@ static String ventingTestSectionHtml() {
       (s.co2 ? "CO2" : "air") + ", " + num(s.volume, 1) + " L, Patm " + num(1000.0f * s.patm, 1) + " hPa " +
       atmosphericPressureSourceLabel(s.patmSource) + ", " + String(s.releases) + " releases): ";
     if (s.fitted) {
-      html += "tau(P) = " + num(s.curve.a[0], 3) + " + " + num(s.curve.a[1], 3) + " P + " + num(s.curve.a[2], 3) +
-        " P&sup2; + " + num(s.curve.a[3], 4) + " P&sup3; s (100 L, 20 &deg;C, " + num(s.curve.pMin, 2) + "-" +
-        num(s.curve.pMax, 2) + " bar); <b>t0 " + num(1000.0f * s.curve.t0, 1) + " &plusmn; " + num(s.t0SeMs, 1) +
-        " ms</b>; reduced chi-square " + (s.chiSquare > 3.0f ? "<b>" + num(s.chiSquare, 2) + " (above 3: the cubic does not "
+      html += "tau(P) = k / psi(P), k " + num(s.curve.k, 3) + " s, beta " + num(s.curve.beta, 4) + " (100 L, 20 &deg;C, " +
+        num(s.curve.pMin, 2) + "-" +
+        num(s.curve.pMax, 2) + " bar); reduced chi-square " + (s.chiSquare > 3.0f ? "<b>" + num(s.chiSquare, 2) + " (above 3: the model does not "
         "follow the data)</b>" : num(s.chiSquare, 2)) + " (shape residual " + num(s.shapeRmsPercent, 2) + "% rms); drift " +
         num(s.driftPercent, 2) + " &plusmn; " +
         num(s.driftSePercent, 2) + "%.<br>Flow against the reference at 1.8 / 1.2 / 0.8 bar: " + pct(s.vsReference[0]) + " / " + pct(s.vsReference[1]) +
@@ -1256,7 +1245,7 @@ static String ventingTestSectionHtml() {
         " / " + pct(s.vsSaved[2]) + ".</p>";
       if (!ventingTestActive())
         html += "<form action='/calibration/venting/save' method='POST'><input type='hidden' name='test' value='0'>"
-          "<button name='target' value='curve'>Save curve and t0</button> "
+          "<button name='target' value='curve'>Save curve</button> "
           "<button name='target' value='reference'>Save as reference curve</button> (analyse the CSV first)</form>";
     } else {
       html += "fit failed.</p>";
@@ -1265,14 +1254,14 @@ static String ventingTestSectionHtml() {
   if (count > 0) {
     html += "<p><a href='/calibration/venting.csv?test=0'>Last test CSV</a> | <a href='/calibration/venting.csv?test=all'>"
       "All tests CSV</a> (" + String(count) + " in the history; <code>python tests/venting_fit.py file.csv</code> "
-      "redoes the fit)</p><table style='width:100%;font-size:0.85em'><tr><th>#</th><th>Time</th><th>Label</th><th>t0 ms</th>"
+      "redoes the fit)</p><table style='width:100%;font-size:0.85em'><tr><th>#</th><th>Time</th><th>Label</th><th>k s</th><th>beta</th>"
       "<th>vs ref 1.8/1.2/0.8</th><th>Drift</th><th>chi2</th></tr>";
     for (uint8_t i = 0; i < count && i < 10; ++i) {
       if (!getVentingTestSummary(i, s)) continue;
       char when[20];
       formatLocalEpochISO(s.epoch, when, sizeof(when));
       html += "<tr><td><a href='/calibration/venting.csv?test=" + String(i) + "'>" + String(i) + "</a></td><td>" + when +
-        "</td><td>" + ventingTestLabelName(s.label) + "</td><td>" + num(1000.0f * s.curve.t0, 1) + "</td><td>" +
+        "</td><td>" + ventingTestLabelName(s.label) + "</td><td>" + num(s.curve.k, 2) + "</td><td>" + num(s.curve.beta, 3) + "</td><td>" +
         pct(s.vsReference[0]) + " " + pct(s.vsReference[1]) + " " + pct(s.vsReference[2]) + "</td><td>" +
         num(s.driftPercent, 2) + "%</td><td>" + num(s.chiSquare, 2) + "</td></tr>";
     }
@@ -1352,6 +1341,37 @@ static String fermenterVolumeSectionHtml() {
   if (r.total > 0) {
     html += "<table style='width:100%;font-size:0.85em'><tr><th>#</th><th>P1 bar</th><th>P2 bar</th><th>T ferm &deg;C</th>"
       "<th>T tank &deg;C</th><th>V L</th><th>simple L</th><th>stable</th></tr>" + expansionTankRowsHtml() + "</table>";
+  }
+  return html;
+}
+
+// Gas-loss test (docs/leak-hold-test.md).
+static String leakHoldSectionHtml() {
+  const LeakHoldResult r = getLeakHoldResult();
+  String html = "<hr><h2>Leak test</h2><ul>"
+    "<li>Measures gas losses of the fermenter and of the expansion tank side.</li>"
+    "<li>Connect the expansion tank to port A, pressurize to ~1.5&ndash;2 bar, wait 15 min and press Start.</li>"
+    "<li>It takes 25 min: 10 min with the valve closed (fermenter alone), then 15 min with the valve open.</li></ul>"
+    "<p><b>" + leakHoldStatusText() + "</b></p>";
+  if (leakHoldActive()) {
+    html += "<form action='/calibration/leak/abort' method='POST'><button>Abort</button></form>";
+  } else {
+    html += "<form action='/calibration/leak/start' method='POST'><label>Expansion tank volume (L) <input type='number' name='tank' "
+      "step='0.001' min='0.5' style='width:90px' required value='" + String(FMTData.lastExpTankVolume, 3) +
+      "'></label> <button>Start</button></form>";
+  }
+  if (leakHoldHasData())
+    html += "<p><a href='/calibration/leak.csv'>" + String(leakHoldActive() ? "Current run CSV" : "CSV") + "</a></p>";
+  if (r.available) {
+    auto row = [](const char *name, const LeakHoldPhase &p) {
+      if (!p.valid) return String("<tr><td>") + name + "</td><td colspan='5'>not enough data</td></tr>";
+      return String("<tr><td>") + name + "</td><td>" + String(p.pressure, 3) + "</td><td>" + String(p.slope, 3) + "</td><td>" +
+        String(p.tempSlope, 3) + "</td><td>" + String(p.lossPercent, 4) + "</td><td>" + String(p.flow, 1) + "</td></tr>";
+    };
+    html += "<table style='width:100%;font-size:0.85em'><tr><th></th><th>P bar</th><th>mbar/min</th><th>K/min</th>"
+      "<th>%/min</th><th>mL/min</th></tr>" + row("Fermenter", r.closed) + row("Fermenter + tank", r.open) + "</table>";
+    if (r.tankSideValid)
+      html += "<p>Tank side: <b>" + String(r.tankSideFlow, 1) + " mL/min</b> of gas at atmospheric pressure lost.</p>";
   }
   return html;
 }
@@ -1446,6 +1466,21 @@ void handleExpansionTankSave(AsyncWebServerRequest *request) {
   request->redirect("/calibration");
 }
 
+void handleLeakHoldStart(AsyncWebServerRequest *request) {
+  const float tank = request->hasParam("tank", true) ? request->getParam("tank", true)->value().toFloat() : NAN;
+  char reason[100];
+  if (!startLeakHold(tank, reason, sizeof(reason))) {
+    sendCalibrationMessage(request, "Leak test not started", reason);
+    return;
+  }
+  request->redirect("/calibration");
+}
+
+void handleLeakHoldAbort(AsyncWebServerRequest *request) {
+  abortLeakHold();
+  request->redirect("/calibration");
+}
+
 void handleSensorZeroAbort(AsyncWebServerRequest *request) {
   abortSensorZero();
   request->redirect("/calibration");
@@ -1518,6 +1553,7 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
     "<form id='calForm' action='/calibration/update' method='POST'></form>";
   page += pressureSensorSectionHtml(pageCurrentReading, usingAverageCurrent);
   page += fermenterVolumeSectionHtml();
+  page += leakHoldSectionHtml();
   page += ventingTestSectionHtml();
   page += ventSettingsHtml();
   page += dissolvedCO2SectionHtml();
@@ -1527,8 +1563,9 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   if (events.length())
     page += "<hr><h3>Calibration events</h3><p>Newest first; <a href='/calibration/events.txt'>all</a></p>"
       "<table style='width:100%;font-size:0.9em'><tr><th>Time</th><th>Event</th><th>Details</th></tr>" + events + "</table>";
+  page += String("<p style='font-size:0.8em'>Build ") + BUILD_INFO + " (" + BUILD_ID + ")</p>";
   page += "</div></body></html>";
-  if (sensorZeroActive() || ventingTestActive() || expansionTankActive())
+  if (sensorZeroActive() || ventingTestActive() || expansionTankActive() || leakHoldActive())
     page.replace("<head>", "<head><meta http-equiv='refresh' content='10'>");
   request->send(200, "text/html", page);
 }
@@ -1555,30 +1592,23 @@ void handleCalibrationDataUpdate(AsyncWebServerRequest *request) {
                   "pressure, and its current above that of point A.");
     return;
   }
-  // Flow curve and t0 typed on the page (or taken from the last venting test). The page shows the
+  // Flow curve typed on the page (or taken from the last venting test). The page shows the
   // numbers rounded: a field that differs from the stored value by less than that rounding is left alone.
   VentModel::Curve curve = FMTData.ventCurve;
   bool curveChanged = false;
-  if (request->hasParam("ventA0", true)) {
+  if (request->hasParam("ventK", true)) {
     // (the curve is a packed struct: no references to its fields)
     const auto moved = [](float stored, float posted, float tolerance) { return fabsf(posted - stored) > tolerance; };
-    const char *coefficient[4] = {"ventA0", "ventA1", "ventA2", "ventA3"};
-    for (int i = 0; i < 4; ++i) {
-      const float posted = value(coefficient[i], curve.a[i]);
-      if (moved(curve.a[i], posted, 6e-5f)) { curve.a[i] = posted; curveChanged = true; }
-    }
+    const float postedK = value("ventK", curve.k), postedBeta = value("ventBeta", curve.beta);
+    if (moved(curve.k, postedK, 6e-4f)) { curve.k = postedK; curveChanged = true; }
+    if (moved(curve.beta, postedBeta, 6e-5f)) { curve.beta = postedBeta; curveChanged = true; }
     const float postedMin = value("ventPMin", curve.pMin), postedMax = value("ventPMax", curve.pMax);
     if (moved(curve.pMin, postedMin, 6e-4f)) { curve.pMin = postedMin; curveChanged = true; }
     if (moved(curve.pMax, postedMax, 6e-4f)) { curve.pMax = postedMax; curveChanged = true; }
-    const float postedT0Ms = value("ventT0Ms", 1000.0f * curve.t0);
-    if (fabsf(postedT0Ms - 1000.0f * curve.t0) > 0.006f) {
-      curve.t0 = postedT0Ms / 1000.0f;
-      curveChanged = true;
-    }
     if (curveChanged) {
       if (!VentModel::validCurve(curve)) {
-        request->send(400, "text/plain", "Invalid flow curve: tau must stay between 1 and 100000 s over the valid range "
-                      "(0 to 4 bar, upper above lower) and t0 within 1 s.");
+        request->send(400, "text/plain", "Invalid flow curve: k between 1 and 10000 s, beta between 0.001 and 1000, "
+                      "the measured range 0 to 4 bar (upper above lower).");
         return;
       }
       if (SetPointData.mode == MODE_FERMENTING) {
@@ -1599,8 +1629,8 @@ void handleCalibrationDataUpdate(AsyncWebServerRequest *request) {
   if (curveChanged) {
     FMTData.ventCurve = curve;
     char details[160];
-    snprintf(details, sizeof(details), "typed on the page: a %.4f %.4f %.4f %.5f, t0 %.2f ms, %.3f-%.3f bar", curve.a[0],
-             curve.a[1], curve.a[2], curve.a[3], 1000.0f * curve.t0, curve.pMin, curve.pMax);
+    snprintf(details, sizeof(details), "typed on the page: k %.3f s, beta %.4f, %.3f-%.3f bar", curve.k,
+             curve.beta, curve.pMin, curve.pMax);
     calibrationEventAppend("flow-curve-edited", details);
   }
   if (request->hasParam("nucleationWindow", true)) {

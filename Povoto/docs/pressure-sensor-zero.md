@@ -25,12 +25,16 @@ mesma curva de calibração sem o corte.
   diferença em mA e em mbar, sem corte. A conversão para mbar usa a inclinação
   da calibração perto do zero, `pressure1Bar / (pressure1Current − pressure0Current)`.
 - **"Unstable reading"** (sem botão de gravar): desvio padrão > 1 mbar,
-  amplitude das médias de 10 s > 1 mbar, |tendência| > 0,5 mbar ou mais de 5%
+  amplitude das médias de 10 s > 3 mbar, |tendência| > 2 mbar ou mais de 5%
   das leituras descartadas. A amplitude é das médias de 10 s, não das leituras:
   com o ruído de uma leitura (~0,5 mbar), a amplitude de 300 leituras passaria
-  de 1 mbar sem nenhum problema.
-- Placa ligada há menos de 30 min no início da medição (aquecimento do
-  transmissor e do INA226): aviso, sem botão de gravar.
+  de 1 mbar sem nenhum problema. Os limites de amplitude e tendência (antes 1 e
+  0,5 mbar) foram afrouxados após testes na bancada: a placa recém-aquecida
+  mostrou deriva lenta repetível de ~1,3 mbar em 5 min, abaixo da precisão do
+  sensor (~5-10 mbar), e gás fluindo ou fermentador fechado dão desvios maiores.
+- Aquecimento (transmissor e INA226): a página orienta manter a placa ligada há pelo menos 30 min.
+  O firmware não mede nem exige: quem calibra é responsável por isso (um reinício por OTA não
+  esfria a placa, e o relógio de boot não saberia).
 - **"Save zero"** desloca `pressure0Current` e `pressure1Current` pela mesma diferença (um desvio de zero do
   transmissor ou do shunt é aditivo: o ganho fica). Nada é gravado sem o botão;
   o mesmo resultado não é gravado duas vezes. A gravação entra nos eventos de
@@ -47,9 +51,9 @@ pressão sem corte ficam no `/getstatus`. O ponto B se mede com a rotina "Point 
   com o regulador e **espera 5 min** antes de iniciar, para a temperatura do gás assentar.
 - O operador digita a pressão lida no manômetro digital de referência e confirma que está estável.
 - Mede por 2 min (fixo): uma amostra por segundo, blocos de 10 s, os mesmos critérios do zero
-  (desvio padrão ≤ 1 mbar, amplitude das médias de 10 s ≤ 1 mbar, |tendência| ≤ 0,5 mbar ao longo
+  (desvio padrão ≤ 1 mbar, amplitude das médias de 10 s ≤ 3 mbar, |tendência| ≤ 2 mbar ao longo
   dos 2 min, no máximo 5% das leituras descartadas, em mbar pela inclinação da reta gravada). Placa
-  ligada há menos de 30 min no início: aviso, sem botão de gravar.
+  ligada há pelo menos 30 min: orientação na página, sem bloqueio.
 - Resultado: corrente média, desvio, amplitude, tendência, a pressão que a reta gravada lê nessa
   corrente contra a referência (mbar) e a diferença da corrente em relação ao ponto B gravado.
 - **"Save point B"**: a pressão de referência e a corrente média passam a ser `pressure1Bar` e

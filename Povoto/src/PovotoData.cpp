@@ -166,11 +166,14 @@ bool readFMTDataFromEEPROM() {
   if (!isValidFlowLevelFactor(FMTData.flowLevelFactor)) FMTData.flowLevelFactor = defaultFMTData.flowLevelFactor;
   // A blob of another size or an invalid curve keeps the default (18/09) curve
   // and no reference.
-  if (store.getBytesLength("ventCurve") == sizeof(FMTData.ventCurve))
-    store.getBytes("ventCurve", &FMTData.ventCurve, sizeof(FMTData.ventCurve));
+  // Valve + outlet curve (k, beta, no t0): new keys; the cubic curve of the first versions stays in
+  // "ventCurve" / "ventRefCurve" for the fallback firmware, and the (k, beta, t0) one of the test versions in
+  // "ventFlow" / "ventFlowRef" (32 bytes of the old layout are not read).
+  if (store.getBytesLength("ventFlow2") == sizeof(FMTData.ventCurve))
+    store.getBytes("ventFlow2", &FMTData.ventCurve, sizeof(FMTData.ventCurve));
   if (!VentModel::validCurve(FMTData.ventCurve)) FMTData.ventCurve = defaultFMTData.ventCurve;
-  if (store.getBytesLength("ventRefCurve") == sizeof(FMTData.ventReferenceCurve))
-    store.getBytes("ventRefCurve", &FMTData.ventReferenceCurve, sizeof(FMTData.ventReferenceCurve));
+  if (store.getBytesLength("ventFlowRef2") == sizeof(FMTData.ventReferenceCurve))
+    store.getBytes("ventFlowRef2", &FMTData.ventReferenceCurve, sizeof(FMTData.ventReferenceCurve));
   if (!VentModel::validCurve(FMTData.ventReferenceCurve)) FMTData.ventReferenceCurve = defaultFMTData.ventReferenceCurve;
   if (store.getBytesLength("cooling") == sizeof(FMTData.coolingCycle))
     store.getBytes("cooling", &FMTData.coolingCycle, sizeof(FMTData.coolingCycle));
@@ -210,8 +213,8 @@ bool writeFMTDataToNIV() {
   bool saved = true;
   saved = (store.putFloat("ventDrop", FMTData.ventTargetDropPercent) == sizeof(float)) && saved;
   saved = (store.putFloat("flowLevel", FMTData.flowLevelFactor) == sizeof(float)) && saved;
-  saved = (store.putBytes("ventCurve", &FMTData.ventCurve, sizeof(FMTData.ventCurve)) == sizeof(FMTData.ventCurve)) && saved;
-  saved = (store.putBytes("ventRefCurve", &FMTData.ventReferenceCurve, sizeof(FMTData.ventReferenceCurve)) ==
+  saved = (store.putBytes("ventFlow2", &FMTData.ventCurve, sizeof(FMTData.ventCurve)) == sizeof(FMTData.ventCurve)) && saved;
+  saved = (store.putBytes("ventFlowRef2", &FMTData.ventReferenceCurve, sizeof(FMTData.ventReferenceCurve)) ==
            sizeof(FMTData.ventReferenceCurve)) && saved;
   saved = (store.putUChar("number", FMTData.PovotoNum) == sizeof(FMTData.PovotoNum)) && saved;
   saved = (store.putBool("gLogOn", FMTData.googleLogEnabled) == sizeof(uint8_t)) && saved;

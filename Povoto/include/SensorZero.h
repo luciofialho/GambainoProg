@@ -11,8 +11,7 @@
 struct SensorZeroResult {
   bool available;        // a measurement finished
   bool stable;           // within the stability limits
-  bool warmedUp;         // started with the board on for >= 30 min
-  bool canSave;          // available && stable && warmedUp && not saved yet (point B: and a valid reference)
+  bool canSave;          // available && stable && not saved yet (point B: and a valid reference)
   bool saved;
   uint16_t samples;
   float minutes;         // duration of the measurement
@@ -29,7 +28,6 @@ struct SensorZeroResult {
 
 constexpr float SENSOR_ZERO_DEFAULT_MINUTES = 5.0f;
 constexpr float SENSOR_POINT_B_MINUTES = 2.0f;
-constexpr unsigned long SENSOR_ZERO_WARMUP_MS = 30UL * 60UL * 1000UL;
 
 bool startSensorZero(char *reason, size_t reasonSize);  // always SENSOR_ZERO_DEFAULT_MINUTES
 // Point B: referenceBar is read on the manometer, above 0.5 bar and below the security pressure.

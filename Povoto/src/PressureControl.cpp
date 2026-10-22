@@ -20,6 +20,7 @@
 #include "VentingTest.h"
 #include "ValveCleaning.h"
 #include "ExpansionTank.h"
+#include "LeakHold.h"
 #include <esp_timer.h>
 #include <math.h>
 #include <algorithm>
@@ -2449,7 +2450,7 @@ void processPressure(bool afterRelief) {
     const double fermenterSide = fermenterSideMoles(ventGasK);
     ventResult.fermenterSideMoles = fermenterSide;
     ventResult.ratio = (isfinite(fermenterSide) && count.moles > 0.0) ? float(fermenterSide / count.moles) : NAN;
-    // Outside the pressure range of the curve the end value was used (docs/vent.md).
+    // Outside the pressure range measured by the test the (physical) curve is extrapolated (docs/vent.md).
     const VentModel::Curve &curve = FMTData.ventCurve;
     ventResult.outOfRange = pressureOnReliefMeas > curve.pMax + 0.005f ? "above"
                           : pressureAfterRelief < curve.pMin - 0.005f ? "below" : "";
@@ -2578,7 +2579,6 @@ void processPressure(bool afterRelief) {
     reliefLog.ventLimit = ventPlan.limit;
     reliefLog.ventHeadspaceForTime = ventPlan.headspace;
     reliefLog.ventRealSeconds = ventRealSeconds;
-    reliefLog.ventT0Seconds = FMTData.ventCurve.t0;
     reliefLog.ventMeanPressure = ventResult.pMeanGauge;
     reliefLog.ventCoolingFactor = ventResult.cooling;
     reliefLog.ventFlowConstant = ventResult.flowConstant;
@@ -2732,12 +2732,12 @@ void pressureRelief() {
 }
 
 bool calibrationRoutineActive() {
-  return sensorZeroActive() || ventingTestActive() || valveCleaningActive() || expansionTankActive();
+  return sensorZeroActive() || ventingTestActive() || valveCleaningActive() || expansionTankActive() || leakHoldActive();
 }
 
 // Routines that drive the valve themselves: no automatic vent meanwhile.
 static bool valveRoutineActive() {
-  return ventingTestActive() || valveCleaningActive() || expansionTankActive();
+  return ventingTestActive() || valveCleaningActive() || expansionTankActive() || leakHoldActive();
 }
 
 int64_t routineValve(bool open) {
@@ -2893,6 +2893,7 @@ void pressureControl() {
     processVentingTest();
     processValveCleaning();
     processExpansionTank();
+    processLeakHold();
     return;
   }
   applyValveOverride();
@@ -3070,9 +3071,8 @@ String getVentStatusHtml() {
     if (!VentModel::validCurve(c)) return String("none");
     char when[20];
     formatLocalEpochISO(c.epoch, when, sizeof(when));
-    return "a " + num(c.a[0], 4) + " " + num(c.a[1], 4) + " " + num(c.a[2], 4) + " " + num(c.a[3], 5) + ", t0 " +
-           num(1000.0 * c.t0, 1) + " ms, " + num(c.pMin, 3) + "-" + num(c.pMax, 3) + " bar, " +
-           (when[0] ? String(when) : String("default (18/09)"));
+    return "k " + num(c.k, 3) + " s, beta " + num(c.beta, 4) + ", " + num(c.pMin, 3) + "-" + num(c.pMax, 3) + " bar, " +
+           (when[0] ? String(when) : String("default (tests of 20-21/10/2026)"));
   };
   const unsigned long now = millis();
   String html;

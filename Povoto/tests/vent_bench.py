@@ -26,19 +26,20 @@ PATM = 0.928573            # main site (batch 160)
 T0 = 293.15
 EXPONENT = 1.29
 TAU_THERMAL = 30.0         # s, recovery after closing (docs: 1.29 vs 24-h recovery)
-CURVE = vm.make_curve([318.6846, -296.7812, 218.9469, -55.9985], 0.020, 0.36, 1.98)  # 18/09 fit, t0 20 ms
+CURVE = vm.make_curve(81.6, 0.88, 0.14, 2.08)  # fit of the 3 tests with the silencer of 20-21/10/2026 (no t0)
+T0_TRUTH = 0.0   # opening delay minus closing delay of the real valve; the firmware assumes 0
 TARGET_DROP = 0.06
 SAFETY_DROP = 0.12
 MIN_SECONDS = 1.5
 # Firmware vs truth, any scenario. With a flat curve the formula is exact
-# (checked below); with the 18/09 cubic, C changes ~8% inside one vent near
-# 1.9 bar and C(P_mean) misses the trajectory mean by ~0.1%.
+# (checked below: the valve alone is choked above ~0.83 bar); with the valve + silencer curve,
+# C changes with the pressure inside one vent and C(P_mean) misses the trajectory mean slightly.
 LIMIT_MOLES_PCT = 0.15
 LIMIT_VH_PCT = 0.25
 LIMIT_FLAT_PCT = 0.01
 
 
-def true_vent(headspace, p_on_gauge, open_seconds, t0=CURVE["t0"], level=1.0, read_after=0.0,
+def true_vent(headspace, p_on_gauge, open_seconds, t0=T0_TRUTH, level=1.0, read_after=0.0,
               t_gas=T0, exponent=EXPONENT, dt=2e-4):
     """Returns (moles out, pressure read after closing, settled pressure), gauge bar.
 
@@ -63,7 +64,7 @@ def true_vent(headspace, p_on_gauge, open_seconds, t0=CURVE["t0"], level=1.0, re
 
     def rate(n):
         p, t_k = state(n)
-        return (vm.flow_constant_air(CURVE, p - PATM, PATM) * vm.co2_air_ratio(p - PATM, PATM)
+        return (vm.flow_constant_air(CURVE, p - PATM, PATM) * vm.co2_air_ratio(CURVE["beta"], p - PATM, PATM)
                 / math.sqrt(vm.co2_z(p, t_k)) * level * p / math.sqrt(t_k))
 
     n_on = p_on * headspace / (vm.co2_z(p_on, t_gas) * vm.R * t_gas)
@@ -130,32 +131,26 @@ def vapor_checks():
 
 
 def extrapolation_checks():
-    """tau outside the range of the test: the end value above p_max (choked flow), the
-    ideal nozzle scaling below p_min, and the count of a vent below the range."""
-    print("\nCurve outside the range of the test (p_min %.2f, p_max %.2f bar):" % (CURVE["p_min"], CURVE["p_max"]))
+    """tau over the whole pressure range (a physical curve, no extrapolation rule): continuous, rising
+    towards low pressure (subsonic), the CO2/air ratio between the two limits, and the count of a vent
+    below the range of the test."""
+    print("\nCurve over the pressure range (measured %.2f-%.2f bar, physical outside it):" % (CURVE["p_min"], CURVE["p_max"]))
     ok = True
-    end_low = vm.tau_ref(CURVE, CURVE["p_min"], PATM)
-    good = abs(vm.tau_ref(CURVE, CURVE["p_min"] - 1e-9, PATM) / end_low - 1) < 1e-6
-    ok = ok and good
-    print(f"  continuous at p_min: {'ok' if good else 'FAIL'}")
-    end_high = vm.tau_ref(CURVE, CURVE["p_max"], PATM)
-    good = vm.tau_ref(CURVE, CURVE["p_max"] + 0.4, PATM) == end_high
-    ok = ok and good
-    print(f"  above p_max the end value ({end_high:.1f} s): {'ok' if good else 'FAIL'}")
-    previous = end_low
-    for p in (0.30, 0.25, 0.15, 0.05):
+    previous = vm.tau_ref(CURVE, 2.5, PATM)
+    for p in (2.0, 1.5, 1.0, 0.8, 0.5, 0.3, 0.25, 0.15, 0.05):
         tau = vm.tau_ref(CURVE, p, PATM)
-        psi_ratio = (vm.nozzle_psi(vm.GAMMA_AIR, PATM / (CURVE["p_min"] + PATM))
-                     / vm.nozzle_psi(vm.GAMMA_AIR, PATM / (p + PATM)))
-        good = tau > previous and abs(tau / end_low - psi_ratio) < 1e-9
+        ratio = vm.co2_air_ratio(CURVE["beta"], p, PATM)
+        good = math.isfinite(tau) and tau >= previous - 1e-9 and 0.78 < ratio < 0.83
         ok = ok and good
-        print(f"  {p:.2f} bar: tau {tau:7.1f} s = end value x {tau / end_low:.4f} (flow of the end value "
-              f"{100 * (tau / end_low - 1):+.1f}% too high) {'ok' if good else 'FAIL'}")
+        print(f"  {p:.2f} bar: tau {tau:7.1f} s, CO2/air {ratio:.4f} {'ok' if good else 'FAIL'}")
         previous = tau
+    good = abs(vm.tau_ref(CURVE, 1.0 + 1e-9, PATM) / vm.tau_ref(CURVE, 1.0, PATM) - 1) < 1e-6
+    ok = ok and good
+    print(f"  continuous: {'ok' if good else 'FAIL'}")
     row = run_case(0.25, 30, quiet=True)
     good = abs(row["err_n"]) <= 0.5 and abs(row["err_vh"]) <= 0.5
     ok = ok and good
-    print(f"  vent at 0.25 bar, 30 L (below p_min): t {row['t']:.2f} s, count {row['err_n']:+.3f}%, "
+    print(f"  vent at 0.25 bar, 30 L (below the measured range): t {row['t']:.2f} s, count {row['err_n']:+.3f}%, "
           f"Vh {row['err_vh']:+.3f}% (limit 0.5%) {'ok' if good else 'FAIL'}")
     return ok
 
@@ -164,25 +159,26 @@ def main():
     global CURVE
     ok = True
     print("Vents with the firmware rule t = max(min(t_6%, t_12%), 1.5 s); truth with the same valve curve,")
-    print("Patm %.4f bar, gas %.2f K, t0 %.0f ms" % (PATM, T0, 1000 * CURVE["t0"]))
+    print("Patm %.4f bar, gas %.2f K, t0 %.0f ms" % (PATM, T0, 1000 * T0_TRUTH))
     rows = [run_case(sp, vh) for sp in (0.5, 1.0, 1.9) for vh in (20, 30, 50)]
     worst_n = max(abs(r["err_n"]) for r in rows)
     worst_vh = max(abs(r["err_vh"]) for r in rows)
     print(f"worst: count {worst_n:.3f}% (limit {LIMIT_MOLES_PCT}%), Vh {worst_vh:.3f}% (limit {LIMIT_VH_PCT}%)")
     ok = worst_n <= LIMIT_MOLES_PCT and worst_vh <= LIMIT_VH_PCT
 
-    curve, CURVE = CURVE, vm.make_curve([180.0, 0.0, 0.0, 0.0], CURVE["t0"], CURVE["p_min"], CURVE["p_max"])
-    flat = [run_case(sp, 30, quiet=True) for sp in (0.5, 1.0, 1.9)]
+    curve, CURVE = CURVE, vm.make_curve(120.0, 1e-3, CURVE["p_min"], CURVE["p_max"])
+    flat = [run_case(sp, 30, quiet=True) for sp in (1.0, 1.9)]  # nearly no outlet: choked, tau constant above ~0.83 bar
     CURVE = curve
     worst_flat = max(abs(r["err_n"]) for r in flat)
-    print(f"flat curve (tau 180 s): worst count {worst_flat:.4f}% (limit {LIMIT_FLAT_PCT}%): "
+    print(f"flat curve (valve alone, choked, 1.0 and 1.9 bar): worst count {worst_flat:.4f}% (limit {LIMIT_FLAT_PCT}%): "
           "Z, CO2/air ratio, cooling and t0 are exact")
     ok = ok and worst_flat <= LIMIT_FLAT_PCT
 
     print("\nSensitivity (1.9 bar, 30 L; the count is the moles, the error is firmware vs truth):")
     for label, kw in [("reading 0.4 s after closing", dict(read_after=0.4)),
                       ("reading 0.8 s after closing", dict(read_after=0.8)),
-                      ("real t0 30 ms (calibrated 20 ms)", dict(t0=0.030)),
+                      ("real t0 +20 ms (assumed 0)", dict(t0=0.020)),
+                      ("real t0 -20 ms (assumed 0)", dict(t0=-0.020)),
                       ("valve 3% slower than the curve", dict(level=0.97)),
                       ("gas 2 K warmer than assumed", dict(t_gas=T0 + 2)),
                       ("real exponent 1.20", dict(exponent=1.20)),

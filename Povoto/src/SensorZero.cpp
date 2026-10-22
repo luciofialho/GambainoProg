@@ -11,8 +11,8 @@ static constexpr unsigned long SENSOR_ZERO_SAMPLE_MS = 1000UL;
 static constexpr unsigned long SENSOR_ZERO_BLOCK_MS = 10000UL;
 // Stability limits, as pressure (the same for the zero and for point B).
 static constexpr float SENSOR_ZERO_MAX_SD_MBAR = 1.0f;
-static constexpr float SENSOR_ZERO_MAX_BLOCK_RANGE_MBAR = 1.0f;
-static constexpr float SENSOR_ZERO_MAX_TREND_MBAR = 0.5f;
+static constexpr float SENSOR_ZERO_MAX_BLOCK_RANGE_MBAR = 3.0f;
+static constexpr float SENSOR_ZERO_MAX_TREND_MBAR = 2.0f;
 
 enum RoutineKind : uint8_t { KIND_ZERO, KIND_POINT_B };
 
@@ -22,7 +22,6 @@ static float referenceBar = NAN;       // point B: the reference manometer
 // Set by the web handler; the loop aborts (the samples are freed in the loop only).
 static volatile bool abortRequested = false;
 static unsigned long startMillis = 0, durationMs = 0, lastSampleMillis = 0, lastAcquisition = 0;
-static bool startedWarm = false;
 static float *sampleCurrent = nullptr;
 static uint32_t *sampleMillis = nullptr; // since the start
 static uint16_t sampleCapacity = 0, sampleCount = 0, rejectedSamples = 0;
@@ -101,7 +100,6 @@ static bool startRoutine(RoutineKind routine, float minutes, float reference, ch
   durationMs = (unsigned long)(minutes * 60000.0f);
   lastSampleMillis = 0;
   lastAcquisition = pressureAcquisitionMillis();
-  startedWarm = startMillis >= SENSOR_ZERO_WARMUP_MS;
   sampleCount = rejectedSamples = 0;
   (routine == KIND_POINT_B ? resultB : resultZero) = {};
   abortRequested = false;
@@ -209,14 +207,12 @@ static void finishSensorZero() {
         result.sdCurrent * mbar <= SENSOR_ZERO_MAX_SD_MBAR &&
         result.blockAmplitude * mbar <= SENSOR_ZERO_MAX_BLOCK_RANGE_MBAR &&
         fabsf(result.trend) * mbar <= SENSOR_ZERO_MAX_TREND_MBAR;
-    result.warmedUp = startedWarm;
     result.available = true;
-    result.canSave = result.stable && result.warmedUp;
+    result.canSave = result.stable;
     Serial.printf("[%s] mean %.4f mA (sd %.4f, blocks %.4f, trend %+.4f), stored %.4f, difference %+.4f mA "
-                  "= %+.2f mbar, %s%s\n", kind == KIND_POINT_B ? "POINT B" : "SENSOR ZERO", result.meanCurrent,
+                  "= %+.2f mbar, %s\n", kind == KIND_POINT_B ? "POINT B" : "SENSOR ZERO", result.meanCurrent,
                   result.sdCurrent, result.blockAmplitude, result.trend, result.storedCurrent, result.difference,
-                  result.difference * mbar, result.stable ? "stable" : "UNSTABLE",
-                  result.warmedUp ? "" : ", board on < 30 min");
+                  result.difference * mbar, result.stable ? "stable" : "UNSTABLE");
   }
   (kind == KIND_POINT_B ? resultB : resultZero) = result;
   releaseSamples();

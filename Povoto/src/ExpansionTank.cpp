@@ -9,6 +9,7 @@
 #include "PovotoTasks.h"
 #include "VentModel.h"
 #include "CalibrationEvents.h"
+#include "BuildId.h"
 #include "datalog.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/portmacro.h>
@@ -19,10 +20,18 @@ unsigned long int NTPEpoch(); // IOTK_NTP (not #included: see AtmosphericPressur
 static constexpr uint8_t TANK_MAX_RELIEFS = 12;
 static constexpr float TANK_END_PRESSURE = 0.5f; // the plan goes down to this gauge pressure
 static constexpr float TANK_MIN_START_PRESSURE = 0.3f;
-static constexpr float TANK_STABLE_SLOPE_BAR_PER_MIN = 0.0001f; // 0.1 mbar/min
+static constexpr float TANK_STABLE_SLOPE_BAR_PER_MIN = 0.0003f; // 0.3 mbar/min
 static constexpr unsigned long TANK_SLOPE_WINDOW_MS = 120000UL;
 static constexpr unsigned long TANK_AVERAGE_MS = 10000UL;
+// P2 is logged at these times after the valve opens (pressure, fermenter and ambient temperature)
+static constexpr uint8_t TANK_CHECKPOINTS = 5;
+static constexpr unsigned long TANK_CHECKPOINT_S[TANK_CHECKPOINTS] = {30, 60, 120, 180, 300};
 static unsigned long tankWaitMinMs() { return debugging ? 10000UL : 120000UL; }
+// P2 is read at a fixed time after the valve opens (the thermal recovery has a time constant of
+// ~45 s, so 5 min is ~6 of them); longer waits only accumulate drift. Not stable if the pressure
+// still moved by more than TANK_OPEN_DRIFT_BAR between the 180 s and 300 s checkpoints.
+static constexpr unsigned long TANK_OPEN_WAIT_MS = 300000UL;
+static constexpr float TANK_OPEN_DRIFT_BAR = 0.001f;
 static unsigned long tankWaitMaxMs() { return debugging ? 30000UL : 900000UL; }
 static unsigned long tankVentMinMs() { return debugging ? 10000UL : 180000UL; }
 static constexpr unsigned long TANK_VENT_MAX_MS = 900000UL;
@@ -37,18 +46,28 @@ struct TankRelief {
   bool settled1, settled2;       // false: the wait hit its maximum
   float volume;                  // full mole balance
   float simpleVolume;            // V_E (T_F/T_E) P2 / (P1 - P2)
+  float cpP[TANK_CHECKPOINTS];   // checkpoints of the P2 wait: 10-s mean pressure (gauge), NAN if not reached
+  float cpTf[TANK_CHECKPOINTS], cpTe[TANK_CHECKPOINTS]; // fermenter and ambient temperature, K
+  // Lowest reading while the valve is open (each new acquisition, median-filtered, after the
+  // solenoid noise window), when it happened (s after opening) and how many were seen.
+  float pMin, tMin;
+  uint16_t openSamples;
 };
+static void clearCheckpoints(TankRelief &k) {
+  for (uint8_t i = 0; i < TANK_CHECKPOINTS; ++i) k.cpP[i] = k.cpTf[i] = k.cpTe[i] = NAN;
+}
 
 enum TankStage : uint8_t { TANK_IDLE, TANK_WAIT_P1, TANK_OPEN, TANK_VENTING };
 static TankStage stage = TANK_IDLE;
 static PressureWait *wait = nullptr;
 static TankRelief reliefs[TANK_MAX_RELIEFS];
-static uint8_t reliefCount = 0, reliefTarget = 0;
+static uint8_t reliefCount = 0, reliefTarget = 0; // reliefCount: completed (vented); the next one is being filled
+static uint8_t reliefShown = 0;  // reliefs with P1, P2 and volume: one more than reliefCount while the tank vents
 static float expansionTankVolume = 0.0f;
 static uint32_t runEpoch = 0;   // start of the run (CSV name)
-// The page (web task) copies the finished reliefs while the loop works: the
-// count and the start of a run change under this lock. Nothing is written to
-// flash for the copy.
+// The page (web task) copies the measured reliefs (reliefShown) while the loop works: the
+// counts, the start of a run and the vent time of the last relief change under this lock.
+// Nothing is written to flash for the copy.
 static portMUX_TYPE reliefLock = portMUX_INITIALIZER_UNLOCKED;
 struct TankSnapshot {
   TankRelief r[TANK_MAX_RELIEFS];
@@ -58,11 +77,11 @@ struct TankSnapshot {
 };
 static void takeSnapshot(TankSnapshot &out) {
   portENTER_CRITICAL(&reliefLock);
-  out.count = reliefCount;
+  out.count = reliefShown;
   out.target = reliefTarget;
   out.tank = expansionTankVolume;
   out.epoch = runEpoch;
-  memcpy(out.r, reliefs, sizeof(TankRelief) * reliefCount);
+  memcpy(out.r, reliefs, sizeof(TankRelief) * reliefShown);
   portEXIT_CRITICAL(&reliefLock);
 }
 static bool reliefStable(const TankRelief &k) { return k.settled1 && k.settled2 && isfinite(k.volume); }
@@ -71,6 +90,7 @@ static float simulated = NAN;
 static char statusText[96] = "Not run";
 // Set by the web handler; the loop aborts (the wait buffer is freed in the loop only).
 static volatile bool abortRequested = false;
+static volatile float waitSlope = NAN; // bar/min of the last 2 min of the wait, NAN until 5 samples
 
 bool expansionTankActive() { return stage != TANK_IDLE; }
 
@@ -101,11 +121,24 @@ static void showProgress(bool force) {
 
 String expansionTankStatusText() {
   if (stage == TANK_IDLE) return String(statusText);
-  char text[160];
-  snprintf(text, sizeof(text), "Running: step %u of %u (planned), %s for %lu s, pressure %.4f bar", reliefCount + 1, reliefTarget,
-           stage == TANK_WAIT_P1 ? "waiting for a stable P1" : stage == TANK_OPEN ? "valve open, waiting for a stable P2"
-                                                                               : "venting the tank",
-           (millis() - stageMillis) / 1000UL, ControlData.pressure);
+  char text[200];
+  const unsigned long elapsed = (millis() - stageMillis) / 1000UL;
+  char duration[40]; // the vent has a planned duration; the waits end when the pressure is stable
+  if (stage == TANK_VENTING) snprintf(duration, sizeof(duration), "for %lu s (elapsed: %lu s)", ventWaitMs / 1000UL, elapsed);
+  else if (stage == TANK_OPEN && !debugging)
+    snprintf(duration, sizeof(duration), "for %lu s (P2 read at %lu s)", elapsed, TANK_OPEN_WAIT_MS / 1000UL);
+  else snprintf(duration, sizeof(duration), "for %lu s", elapsed);
+  int n = snprintf(text, sizeof(text), "Running: step %u of %u (planned), %s %s, pressure %.4f bar", reliefCount + 1,
+                   reliefTarget,
+                   stage == TANK_WAIT_P1 ? "waiting for a stable P1" : stage == TANK_OPEN ? "valve open, waiting for P2"
+                                                                                       : "venting the tank",
+                   duration, ControlData.pressure);
+  if (stage != TANK_VENTING && (stage != TANK_OPEN || debugging) && n > 0 && n < (int)sizeof(text)) {
+    const float slope = waitSlope; // bar/min, the last 2 min
+    if (isfinite(slope))
+      snprintf(text + n, sizeof(text) - n, ", slope %+.2f mbar/min (limit %.2f)", slope * 1000.0f,
+               TANK_STABLE_SLOPE_BAR_PER_MIN * 1000.0f);
+  }
   return String(text);
 }
 
@@ -161,6 +194,7 @@ bool startExpansionTank(float volume, char *reason, size_t reasonSize) {
   expansionTankVolume = volume;
   reliefTarget = expansionTankPlannedReliefs(ControlData.pressure, volume);
   reliefCount = 0;
+  reliefShown = 0;
   runEpoch = NTPEpoch();
   portEXIT_CRITICAL(&reliefLock);
   if (FMTData.lastExpTankVolume != volume) { // the next run starts with it
@@ -168,6 +202,7 @@ bool startExpansionTank(float volume, char *reason, size_t reasonSize) {
     writeFMTDataToNIV();
   }
   routineValve(false); // de-energized: the tank vents through R
+  waitSlope = NAN;
   simulated = ControlData.pressure;
   wait->reset(millis());
   stageMillis = millis();
@@ -178,8 +213,8 @@ bool startExpansionTank(float volume, char *reason, size_t reasonSize) {
   return true;
 }
 
-// Stable: at least the minimum wait and |slope of the last 2 min| < 0.1 mbar/min;
-// at the maximum the wait ends anyway (settled = false).
+// P1: stable when at least the minimum wait (2 min) has passed and |slope of the last 2 min| is below the
+// limit (0.3 mbar/min); at the maximum the wait ends anyway (settled = false).
 static bool waitDone(bool &settled) {
   const uint32_t last = wait->lastSampleElapsed();
   settled = false;
@@ -190,6 +225,15 @@ static bool waitDone(bool &settled) {
   // pressure has settled by its end (tau 3 s), so it counts as stable.
   if (debugging && last >= tankWaitMaxMs()) settled = true;
   return settled || last >= tankWaitMaxMs();
+}
+
+// P2: fixed wait (bench boards keep the short slope wait of the simulation).
+static bool openWaitDone(const TankRelief &k, bool &settled) {
+  if (debugging) return waitDone(settled);
+  settled = false;
+  if (wait->count == 0 || wait->lastSampleElapsed() < TANK_OPEN_WAIT_MS) return false;
+  settled = isfinite(k.cpP[3]) && isfinite(k.cpP[4]) && fabsf(k.cpP[4] - k.cpP[3]) < TANK_OPEN_DRIFT_BAR;
+  return true;
 }
 
 // Full mole balance (ideal air): the fermenter loses what the tank gains.
@@ -232,9 +276,32 @@ void processExpansionTank() {
     ControlData.pressure = simulated + random(-2, 3) * 0.00005f;
   }
   wait->sample(now, ControlData.pressure, debugging ? 0 : pressureAcquisitionMillis(), 1000);
+  waitSlope = wait->slopePerMinute(TANK_SLOPE_WINDOW_MS); // for the status text (the web task never touches `wait`)
+  if (stage == TANK_OPEN) { // k is not shown to the web task until its P2 is final
+    static unsigned long lastOpenAcquisition = 0;
+    if (k.openSamples == 0) lastOpenAcquisition = 0;
+    const unsigned long acquired = debugging ? now : pressureAcquisitionMillis();
+    if (acquired != lastOpenAcquisition && (long)(acquired - stageMillis) >= 0) {
+      lastOpenAcquisition = acquired;
+      if (k.openSamples < UINT16_MAX) ++k.openSamples;
+      if (!isfinite(k.pMin) || ControlData.pressure < k.pMin) {
+        k.pMin = ControlData.pressure;
+        k.tMin = (acquired - stageMillis) / 1000.0f;
+      }
+    }
+    const uint32_t elapsed = wait->lastSampleElapsed();
+    for (uint8_t i = 0; i < TANK_CHECKPOINTS; ++i)
+      if (!isfinite(k.cpP[i]) && elapsed >= TANK_CHECKPOINT_S[i] * 1000UL) {
+        k.cpP[i] = wait->mean(TANK_AVERAGE_MS);
+        k.cpTf[i] = ControlData.temperature + 273.15f;
+        k.cpTe[i] = environmentKelvin();
+      }
+  }
   bool settled = false;
   if (stage == TANK_WAIT_P1 && waitDone(settled)) {
     k = {};
+    clearCheckpoints(k);
+    k.pMin = k.tMin = NAN;
     k.epoch = NTPEpoch();
     k.p1 = wait->mean(TANK_AVERAGE_MS);
     k.fermenterK1 = ControlData.temperature + 273.15f;
@@ -247,7 +314,7 @@ void processExpansionTank() {
     stageMillis = now;
     stage = TANK_OPEN;
     showProgress(true);
-  } else if (stage == TANK_OPEN && waitDone(settled)) {
+  } else if (stage == TANK_OPEN && openWaitDone(k, settled)) {
     k.p2 = wait->mean(TANK_AVERAGE_MS);
     k.fermenterK2 = ControlData.temperature + 273.15f;
     k.tankK2 = environmentKelvin();
@@ -255,6 +322,10 @@ void processExpansionTank() {
     k.settled2 = settled;
     k.waitP2 = wait->lastSampleElapsed() / 1000.0f;
     computeRelief(k);
+    portENTER_CRITICAL(&reliefLock);
+    k.ventSeconds = NAN; // filled when the vent ends; the relief is already usable
+    reliefShown = reliefCount + 1;
+    portEXIT_CRITICAL(&reliefLock);
     Serial.printf("[EXPTANK] relief %u: P1 %.5f P2 %.5f bar, V_F %.3f L (simple %.3f)\n", reliefCount + 1, k.p1, k.p2,
                   k.volume, k.simpleVolume);
     routineValve(false); // the tank vents through R
@@ -268,8 +339,8 @@ void processExpansionTank() {
     stage = TANK_VENTING;
     showProgress(true);
   } else if (stage == TANK_VENTING && now - stageMillis >= ventWaitMs) {
-    k.ventSeconds = (now - stageMillis) / 1000.0f;
     portENTER_CRITICAL(&reliefLock);
+    k.ventSeconds = (now - stageMillis) / 1000.0f;
     ++reliefCount;
     portEXIT_CRITICAL(&reliefLock);
     if (reliefCount >= reliefTarget || ControlData.pressure < TANK_MIN_START_PRESSURE * 0.5f) {
@@ -364,7 +435,12 @@ void handleExpansionTankCSV(AsyncWebServerRequest *request) {
   TankSnapshot snap;
   takeSnapshot(snap);
   String csv = "relief;date_time;tank_L;P1_bar;P2_bar;T_ferm1_C;T_ferm2_C;T_tank1_C;T_tank2_C;patm1_bar;patm2_bar;"
-               "wait_P1_s;wait_P2_s;vent_s;settled_P1;settled_P2;V_fermenter_L;V_simple_L\n";
+               "wait_P1_s;wait_P2_s;vent_s;settled_P1;settled_P2;V_fermenter_L;V_simple_L";
+  // P2 wait checkpoints: pressure, fermenter and ambient temperature at 30, 60, 120, 180 and 300 s after opening
+  for (uint8_t c = 0; c < TANK_CHECKPOINTS; ++c) csv += ";P2_" + String(TANK_CHECKPOINT_S[c]) + "s_bar";
+  for (uint8_t c = 0; c < TANK_CHECKPOINTS; ++c) csv += ";Tferm_" + String(TANK_CHECKPOINT_S[c]) + "s_C";
+  for (uint8_t c = 0; c < TANK_CHECKPOINTS; ++c) csv += ";Tenv_" + String(TANK_CHECKPOINT_S[c]) + "s_C";
+  csv += ";Pmin_open_bar;t_Pmin_s;open_samples;build\n";
   auto add = [&csv](float v, int d) {
     if (isfinite(v)) {
       String t(v, (unsigned int)d);
@@ -386,7 +462,11 @@ void handleExpansionTankCSV(AsyncWebServerRequest *request) {
     csv += String(k.settled1 ? "yes" : "no") + ';' + (k.settled2 ? "yes" : "no") + ';';
     add(k.volume, 4);
     add(k.simpleVolume, 4);
-    csv.remove(csv.length() - 1);
+    for (uint8_t c = 0; c < TANK_CHECKPOINTS; ++c) add(k.cpP[c], 6);
+    for (uint8_t c = 0; c < TANK_CHECKPOINTS; ++c) add(k.cpTf[c] - 273.15f, 2);
+    for (uint8_t c = 0; c < TANK_CHECKPOINTS; ++c) add(k.cpTe[c] - 273.15f, 2);
+    add(k.pMin, 6); add(k.tMin, 2); add((float)k.openSamples, 0);
+    csv += BUILD_ID;
     csv += '\n';
   }
   AsyncWebServerResponse *response = request->beginResponse(200, "text/csv", csv);

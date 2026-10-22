@@ -4,9 +4,9 @@
 
 // Waits of the calibration routines (venting test, expansion tank volume): one fermenter
 // pressure per second, only fresh acquisitions, in a ring of the last
-// PRESSURE_WAIT_SAMPLES seconds. The first sample of the wait is kept apart
+// PRESSURE_WAIT_SAMPLES seconds (320: the longest wait of the venting test, 300 s, is kept whole). The first sample of the wait is kept apart
 // (the pressure right after closing a valve).
-constexpr uint16_t PRESSURE_WAIT_SAMPLES = 128;
+constexpr uint16_t PRESSURE_WAIT_SAMPLES = 320;
 
 struct PressureWait {
   unsigned long startMillis = 0;
@@ -87,6 +87,48 @@ struct PressureWait {
     for (uint16_t i = 0; i < count; ++i)
       if (lastElapsed - newestElapsed(i) >= windowMs) return newest(0) - newest(i);
     return NAN;
+  }
+
+  // Exponential recovery of the wait, P(t) = pInf - amp exp(-t / tau): the pressure rises after closing a
+  // valve while the gas warms up (tau 35-65 s in the 130 L fermenter). Fitted to all the samples kept: for a
+  // tau, pInf and amp are linear least squares; tau by golden-section search on ln(tau). pInf in the unit of
+  // the samples, tau in s. False with fewer than 20 samples, less than 40 s of wait, or a failed fit; tau at the
+  // edge of its range (8-400 s) is a failed fit (the time constant is not determined). tests/vent_model.py mirrors it.
+  bool fitRecovery(float &pInf, float &tauSeconds, float &amp) const {
+    if (count < 20 || lastElapsed < 40000UL) return false;
+    const double lo0 = log(8.0), hi0 = log(400.0);
+    auto sse = [&](double tau, double &a, double &m) -> double {
+      double su = 0, sp = 0, suu = 0, sup = 0;
+      for (uint16_t i = 0; i < count; ++i) {
+        const double u = exp(-((double)newestElapsed(i) / 1000.0) / tau), y = newest(i);
+        su += u; sp += y; suu += u * u; sup += u * y;
+      }
+      const double det = count * suu - su * su;
+      if (!(det > 1e-12)) { a = m = NAN; return (double)INFINITY; }
+      m = (count * sup - su * sp) / det;      // = -amp
+      a = (sp - m * su) / count;               // = pInf
+      double e = 0;
+      for (uint16_t i = 0; i < count; ++i) {
+        const double r = newest(i) - (a + m * exp(-((double)newestElapsed(i) / 1000.0) / tau));
+        e += r * r;
+      }
+      return e;
+    };
+    const double golden = (sqrt(5.0) - 1.0) / 2.0;
+    double lo = lo0, hi = hi0, x1 = hi - golden * (hi - lo), x2 = lo + golden * (hi - lo), a1, m1, a2, m2;
+    double f1 = sse(exp(x1), a1, m1), f2 = sse(exp(x2), a2, m2);
+    for (int it = 0; it < 24; ++it) {
+      if (f1 < f2) { hi = x2; x2 = x1; f2 = f1; x1 = hi - golden * (hi - lo); f1 = sse(exp(x1), a1, m1); }
+      else { lo = x1; x1 = x2; f1 = f2; x2 = lo + golden * (hi - lo); f2 = sse(exp(x2), a2, m2); }
+    }
+    const double lnTau = 0.5 * (lo + hi);
+    double a, m;
+    if (!isfinite(sse(exp(lnTau), a, m))) return false;
+    if (lnTau - lo0 < 0.02 || hi0 - lnTau < 0.02) return false;
+    pInf = (float)a;
+    amp = (float)(-m);
+    tauSeconds = (float)exp(lnTau);
+    return isfinite(pInf) && isfinite(amp);
   }
 
   // Least-squares slope (bar/min) of the last windowMs.

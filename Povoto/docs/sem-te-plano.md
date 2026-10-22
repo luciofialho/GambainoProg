@@ -175,8 +175,12 @@ Regras:
 
 ### 4.3 Modelo de vazão
 
-- Curva τ(P) (ou taxa = 1/τ) **cúbica** na pressão manométrica, ajustada
-  integrando cada liberação do ensaio (não pela taxa no ponto médio).
+- Curva τ(P) (ou taxa = 1/τ) ajustada integrando cada liberação do ensaio (não pela taxa no ponto
+  médio). **Atualização de 21/10/2026:** no lugar da cúbica (empírica, sem sentido fora da faixa) vale um
+  modelo físico, **válvula (bocal ideal) + saída quadrática (silenciador) em série**, τ(P) = k/ψ_ef(P),
+  com k e β (docs/vent.md, seção 3). A cúbica fica na tag `te-final`. **Sem t0** (21/10/2026): o atraso
+  de abertura é tomado igual ao de fechamento; onde este plano fala em t0 (seções 2, 4.2, 4.4 e 7), vale
+  zero, com ±1% de incerteza nos mols (±20 ms em 2 s de abertura).
 - Conversão ar → CO2 pela razão do bocal ideal em função da pressão.
 - Z do CO2 na vazão (1/√Z: vazão molar ∝ P/√(Z·T)) e nos mols do headspace
   (1/Z inteiro: n = P·V/(Z·R·T)). Corrigido em 12/10/2026.

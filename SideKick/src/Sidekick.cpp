@@ -12,6 +12,7 @@
 #include "IOTK.h"
 #include <RCSwitch.h>
 #include <esp_now.h>
+#include <Preferences.h>
 #include <atomic>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -194,8 +195,46 @@ void logSendTask(void *pvParameters) {
   }
 }
 
+// Operational or debug mode: configured on the Connection settings page and kept in NVS (not IP based),
+// like the Povoto. Devices only pair (ESP-NOW auto-detect) with peers in the same mode. Default: operational.
+#define DEBUG_MODE_NVS_NAMESPACE "sidekick"
+#define DEBUG_MODE_NVS_KEY       "debug"
+static volatile bool configuredDebugMode = false;
+
+static bool loadDebugModeSetting() {
+  Preferences store;
+  if (!store.begin(DEBUG_MODE_NVS_NAMESPACE, true)) return false;  // namespace absent: operational
+  const bool debug = store.isKey(DEBUG_MODE_NVS_KEY) && store.getBool(DEBUG_MODE_NVS_KEY, false);
+  store.end();
+  return debug;
+}
+
+static void getDebugModeSetting(char *buf, size_t size) {
+  strlcpy(buf, configuredDebugMode ? "debug" : "operational", size);
+}
+
+static bool setDebugModeSetting(const char *value) {
+  String text(value);
+  text.trim();
+  text.toLowerCase();
+  bool debug;
+  if (text == "debug") debug = true;
+  else if (text == "operational") debug = false;
+  else return false;
+  if (debug == configuredDebugMode) return true;
+  Preferences store;
+  const bool saved = store.begin(DEBUG_MODE_NVS_NAMESPACE, false) && store.putBool(DEBUG_MODE_NVS_KEY, debug) == sizeof(uint8_t);
+  store.end();
+  if (!saved) return false;
+  configuredDebugMode = debug;
+  applyDebugMode(debug);
+  Serial.printf("[MODE] %s mode\n", debug ? "Debug" : "Operational");
+  if (WiFi.status() == WL_CONNECTED) peerAutoDetect();  // the peers answer the ones in the same mode
+  return true;
+}
+
 char *getSideKickStatus(char *st) {
-  // Same text as the BrewCore status (debugging comes from the IP).
+  // Same text as the BrewCore status (the SideKick mode is configured, see the Connection settings).
   strcat(st, debugging ? "DEBUG mode<BR>" : "Operational mode<BR>");
   char buf1[2048];
   strcat(st, getLogStatus(buf1));
@@ -276,8 +315,12 @@ void setup() {
   if (!initCloudLog()) Serial.println("[CLOUD] Cloud log unavailable");
 
   // WiFi Setup (never restarts on Wi-Fi failure: keeps the in-RAM log cache)
+  configuredDebugMode = loadDebugModeSetting();
+  debugModeProvider = []() { return (bool)configuredDebugMode; };
+  applyDebugMode(configuredDebugMode);
   gambainoWiFiBegin("SideKick", nullptr);   // open AP
   loadLogSettings();
+  gambainoWiFiAddSettingsField({"mode", "Mode (operational or debug)", 12, getDebugModeSetting, setDebugModeSetting});
   gambainoWiFiAddSettingsField({"gsurl", "Google Sheets script URL (blank disables)", SHEETS_URL_MAXLEN,
                                 getSheetsScriptURL, setSheetsScriptURL});
   gambainoWiFiAddSettingsField({"bfurl", "Brewfather stream URL (blank disables)", BREWFATHER_URL_MAXLEN,

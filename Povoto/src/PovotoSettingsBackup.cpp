@@ -26,15 +26,15 @@ static void appendBool(String &json, const char *name, bool value) {
 static const char *const DALLAS_BACKUP_KEYS[DALLAS_ROLE_COUNT] = {
   "dallasFermenter", "dallasEnvironment", "dallasHeadspace"};
 
-// Flow curve (docs/vent.md): coefficients, t0, pressure range and test time.
+// Flow curve (docs/vent.md): k, beta, pressure range and test time. The backups of the cubic
+// curve (keys ...A0..A3) have no ...K: the curve is then left as it is. The ...T0 key of the (k, beta, t0)
+// backups is ignored.
 static void appendCurve(String &json, const char *prefix, const VentModel::Curve &curve) {
   char key[32];
-  for (uint8_t k = 0; k < 4; ++k) {
-    snprintf(key, sizeof(key), "%sA%u", prefix, k);
-    appendNumber(json, key, curve.a[k], 6);
-  }
-  snprintf(key, sizeof(key), "%sT0", prefix);
-  appendNumber(json, key, curve.t0, 6);
+  snprintf(key, sizeof(key), "%sK", prefix);
+  appendNumber(json, key, curve.k, 6);
+  snprintf(key, sizeof(key), "%sBeta", prefix);
+  appendNumber(json, key, curve.beta, 6);
   snprintf(key, sizeof(key), "%sPMin", prefix);
   appendNumber(json, key, curve.pMin, 6);
   snprintf(key, sizeof(key), "%sPMax", prefix);
@@ -167,19 +167,16 @@ static bool readBool(const char *json, const char *name, bool &value) {
 // Optional curve: absent keeps the current one; present must be complete and valid.
 static bool readCurve(const char *json, const char *prefix, VentModel::Curve &curve, bool allowEmpty) {
   char key[32];
-  snprintf(key, sizeof(key), "%sA0", prefix);
+  snprintf(key, sizeof(key), "%sK", prefix);
   if (!hasKey(json, key)) return true;
   VentModel::Curve loaded = {};
   float value = 0.0f; // the curve is packed: no references to its fields
-  for (uint8_t k = 0; k < 4; ++k) {
-    snprintf(key, sizeof(key), "%sA%u", prefix, k);
-    if (!readFloat(json, key, value)) return false;
-    loaded.a[k] = value;
-  }
-  double epoch = 0.0;
-  snprintf(key, sizeof(key), "%sT0", prefix);
   if (!readFloat(json, key, value)) return false;
-  loaded.t0 = value;
+  loaded.k = value;
+  snprintf(key, sizeof(key), "%sBeta", prefix);
+  if (!readFloat(json, key, value)) return false;
+  loaded.beta = value;
+  double epoch = 0.0;
   snprintf(key, sizeof(key), "%sPMin", prefix);
   if (!readFloat(json, key, value)) return false;
   loaded.pMin = value;
@@ -189,7 +186,7 @@ static bool readCurve(const char *json, const char *prefix, VentModel::Curve &cu
   snprintf(key, sizeof(key), "%sEpoch", prefix);
   if (!readNumber(json, key, epoch) || epoch < 0.0 || epoch > 4294967295.0) return false;
   loaded.epoch = (uint32_t)epoch;
-  const bool empty = loaded.pMin == 0.0f && loaded.pMax == 0.0f && loaded.a[0] == 0.0f;
+  const bool empty = loaded.pMin == 0.0f && loaded.pMax == 0.0f && loaded.k == 0.0f;
   if (!(allowEmpty && empty) && !VentModel::validCurve(loaded)) return false;
   curve = loaded;
   return true;

@@ -57,7 +57,7 @@ struct FMTData_t {
   // Level of the flow curve converted to CO2, adjusted between batches by the
   // degassed SG (manual P7).
   float flowLevelFactor;
-  // Valve flow curve and t0 saved from a venting test (air), and the fixed
+  // Valve flow curve (k, beta) saved from a venting test (air), and the fixed
   // reference curve the tests are compared with (all zero = none).
   VentModel::Curve ventCurve;
   VentModel::Curve ventReferenceCurve;

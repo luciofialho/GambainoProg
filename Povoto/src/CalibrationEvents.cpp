@@ -3,6 +3,7 @@
 #include "PovotoFilesystem.h"
 #include "datalog.h"
 #include "PovotoData.h"
+#include "BuildId.h"
 
 unsigned long int NTPEpoch(); // IOTK_NTP (not #included: see AtmosphericPressure.cpp)
 
@@ -45,7 +46,7 @@ void calibrationEventAppend(const char *type, const char *details) {
   formatLocalEpochISO(NTPEpoch(), when, sizeof(when));
   File f = povotoDataFS().open(EVENTS_FILE, "a");
   if (!f) return;
-  f.printf("%s;%s;%s\n", when[0] ? when : "no-time", type, details ? details : "");
+  f.printf("%s;%s;%s [build %s]\n", when[0] ? when : "no-time", type, details ? details : "", BUILD_ID);
   f.close();
   Serial.printf("[CALIBRATION EVENT] %s %s\n", type, details ? details : "");
   trimEvents();

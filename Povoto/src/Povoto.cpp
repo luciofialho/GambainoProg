@@ -37,7 +37,10 @@
 #include "AtmosphericPressure.h"
 #include "CalibrationEvents.h"
 #include "VentingTest.h"
+#include "SettleTest.h"
 #include "ExpansionTank.h"
+#include "LeakHold.h"
+#include "BuildId.h"
 #include <esp_system.h>
 #include <esp_heap_caps.h>
 
@@ -218,6 +221,7 @@ static void handlePovotoEspNow(char type, const char *payload) {
 void setup() {
   Serial.begin(115200);
   delay(50);
+  Serial.printf("[BUILD] %s (%s)\n", BUILD_ID, BUILD_INFO);
   NTPBegin(-3);   // antes de WiFi/servidor: nenhum sync NTP pode ocorrer com fuso 0
 
 
@@ -280,12 +284,20 @@ void setup() {
   server.on("/calibration/venting/abort", HTTP_POST, handleVentingTestAbort);
   server.on("/calibration/venting/save", HTTP_POST, handleVentingTestSave);
   server.on("/calibration/venting.csv", HTTP_GET, handleVentingTestCSV);
+  // One-off settle validation test, by URL only (docs/venting-test.md, section 5).
+  server.on("/settle/start", HTTP_GET, handleSettleStart);
+  server.on("/settle/status", HTTP_GET, handleSettleStatus);
+  server.on("/settle/abort", HTTP_GET, handleSettleAbort);
+  server.on("/settle/file", HTTP_GET, handleSettleFile);
   server.on("/calibration/cleaning/start", HTTP_POST, handleValveCleaningStart);
   server.on("/calibration/cleaning/abort", HTTP_POST, handleValveCleaningAbort);
   server.on("/calibration/expansion/start", HTTP_POST, handleExpansionTankStart);
   server.on("/calibration/expansion/abort", HTTP_POST, handleExpansionTankAbort);
   server.on("/calibration/expansion/save", HTTP_POST, handleExpansionTankSave);
   server.on("/calibration/expansion.csv", HTTP_GET, handleExpansionTankCSV);
+  server.on("/calibration/leak/start", HTTP_POST, handleLeakHoldStart);
+  server.on("/calibration/leak/abort", HTTP_POST, handleLeakHoldAbort);
+  server.on("/calibration/leak.csv", HTTP_GET, handleLeakHoldCSV);
   server.on("/calibration", HTTP_GET, handleCalibrationDataPage);
   server.on("/calibration/refresh-current", HTTP_GET, handleCalibrationCurrentRefresh);
   server.on("/calibration/update", HTTP_POST, handleCalibrationDataUpdate);

@@ -7,6 +7,9 @@
 **/.vscode/launch.json
 **/.vscode/ipch
 
+# Generated build id (Povoto/scripts/build_id.py)
+Povoto/src/BuildId.cpp
+
 # Windows
 desktop.ini
 Thumbs.db

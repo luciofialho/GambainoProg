@@ -19,14 +19,14 @@ Regras gerais:
   aparecem aqui como na tela.
 - Navegação: `http://<ip>/menu` é o menu (o antigo `/config` redireciona para ele; o ícone de menu do
   dashboard e o QR da TFT abrem o menu). Toda página aberta do menu volta para o menu em Save e em Cancel;
-  as ações de rotina da Calibration (Start, Abort, Save zero, Save curve and t0, Save as new FMT volume)
+  as ações de rotina da Calibration (Start, Abort, Save zero, Save curve, Save as new FMT volume)
   voltam para `/calibration`.
 - Onde ficam os campos: **Fermenter settings** (botão "Fermenter Settings" do menu) — FMT volume, Povoto Number (0–99), Maximum security pressure (acima de 2,0 e até 2,3 bar; o sensor lê bem até esse
   limite), Maximum pressure setpoint (até 2,0 bar e abaixo da pressão de segurança; nenhum setpoint de
   pressão, nem de regra ou da nuvem, passa dele), Target drop of the gauge pressure per vent (1–15%), altitude, Cooling cycle, Heating cycle,
   Thermometers, Backup settings / Restore settings from backups. **User Configuration** — screensaver,
   PIN, brilho, Log interval e "Accept new setpoints and triggered actions from cloud". **Calibration**, em ordem: Pressure sensor (pontos A e B, reta; Point B reading, Sensor
-  zero), Fermenter volume, Venting test, Vent (Flow level factor, Effective Venting Exponent, a curva τ(P) com a faixa de validade e o T0, todos editáveis e com os botões "Use last test curve" / "Use last test t0", que só preenchem os campos; vale com Save, entre lotes; a abertura
+  zero), Fermenter volume, Venting test, Vent (Flow level factor, Effective Venting Exponent, a curva τ(P) (k e β) com a faixa medida, editáveis e com o botão "Use last test curve", que só preenche os campos; vale com Save, entre lotes; a abertura
   mínima de 1,5 s e a queda de segurança de 2× a alvo são fixas), Dissolved CO2 dynamics (Nucleation
   window); um único Save/Cancel no fim grava os campos editáveis, e os eventos de
   calibração ficam no final da página. O **Valve cleaning** fica na página **Control**, junto com o **Valve** (Auto / Open / Closed:
@@ -56,10 +56,10 @@ flowchart TD
     E -- sim --> K
     G --> K
     H --> K
-    K[P5 Ensaio de ventilação<br/>ar, fermentador vazio] --> L{Curva, t0 e dispersão<br/>dentro do esperado?}
+    K[P5 Ensaio de ventilação<br/>ar, fermentador vazio] --> L{Curva (k, β) e dispersão<br/>dentro do esperado?}
     L -- não --> M[Ver seção 5 e repetir]
     M --> K
-    L -- sim --> N[Gravar curva e t0<br/>conversão para CO2 é automática]
+    L -- sim --> N[Gravar a curva<br/>conversão para CO2 é automática]
     N --> O([Fermentar])
     O --> P[P6 SG desgaseificada<br/>no fim do lote]
     P --> Q[P7 Ajuste do fator de nível]
@@ -118,8 +118,8 @@ rotina usa a corrente bruta do sensor.
    uma abertura em cima e outra embaixo (sem gradiente de pressão). Espere
    alguns minutos.
 3. Calibration → marque que o fermentador está aberto e aperte "Run sensor zero test:". A
-   rotina mede a corrente por 5 min (ela não abre válvula nenhuma, e o tempo não é ajustável) e exige a
-   placa ligada há pelo menos 30 min para poder gravar.
+   rotina mede a corrente por 5 min (ela não abre válvula nenhuma, e o tempo não é ajustável). A placa deve estar
+   ligada há pelo menos 30 min (a página lembra; o firmware não impede a gravação).
 4. Se aparecer "Unstable reading", a corrente variou demais durante a medição:
    confira as aberturas, se não há gás saindo da cerveja ou do compressor, e
    repita. O botão de gravar não aparece nesse caso.
@@ -140,10 +140,10 @@ divergir do manômetro digital. O Save zero desloca os dois pontos pela mesma di
 2. Espere **5 min** com a pressão estável, para a temperatura do gás assentar.
 3. Calibration → "Point B reading": digite a pressão do manômetro digital (3 casas), marque que a
    pressão está estável há 5 min e aperte "Run point B reading". A rotina mede a corrente por 2 min
-   (não abre válvula nenhuma, o tempo não é ajustável) e exige a placa ligada há pelo menos 30 min
-   para poder gravar.
+   (não abre válvula nenhuma, o tempo não é ajustável). A placa deve estar ligada há pelo menos
+   30 min (a página lembra; o firmware não impede a gravação).
 4. Resultado: corrente média, desvio padrão, amplitude das médias de 10 s e tendência (os mesmos
-   critérios do zero: 1, 1 e 0,5 mbar), a pressão que a reta gravada lê nessa corrente contra a
+   critérios do zero: 1, 3 e 2 mbar), a pressão que a reta gravada lê nessa corrente contra a
    referência (em mbar) e a diferença da corrente em relação ao ponto B gravado.
 5. "Unstable reading": a pressão não estava estável (vazamento, regulador oscilando, temperatura ainda
    assentando) ou saiu gás. Corrija e repita; o botão de gravar não aparece.
@@ -222,12 +222,12 @@ mudança na saída (garrafa, silenciador); qualquer suspeita sobre a válvula.
    de cada abertura e grava cada liberação no histórico (~55–65 min). Não mexa
    no equipamento. Durante o ensaio, "Current test CSV" baixa as liberações já concluídas
    (arquivo `Incomplete-...`).
-6. Resultado: curva τ(P) cúbica, t0 ± erro padrão, resíduo de forma, deriva
+6. Resultado: curva τ(P) = k/ψ_ef(P) (válvula + saída), resíduo de forma, deriva
    (por patamar) ± erro padrão, e a diferença contra a curva de referência e a
    gravada em 1,8 / 1,2 / 0,8 bar. `python tests/venting_fit.py arquivo.csv`
    refaz o ajuste fora da placa.
-7. Calibração: baixe o CSV, mande para análise e só então grave a curva e o t0
-   ("Save curve and t0"); na primeira calibração, grave também a curva de
+7. Calibração: baixe o CSV, mande para análise e só então grave a curva
+   ("Save curve"); na primeira calibração, grave também a curva de
    referência ("Save as reference curve"). Manutenção: não grave nada; o
    histórico é o resultado.
 
@@ -345,7 +345,7 @@ Não use soda nem Vanish em pó (corpo de alumínio). Não molhe a bobina.
 | Headspace (FMT1): leitura muda muito ao puxar a sonda 3–4 cm | condução pela haste/poço | isolar melhor a conexão por fora; registrar e avaliar se vale manter atribuído |
 | P4b: volume muda com a pressão inicial | offset do sensor ou pressão residual no tanque | repetir P1; ventilar o tanque por mais tempo; conferir retenção na saída |
 | P4b: dispersão entre reliefs > 0,5% | pressão não estabilizada | esperar mais antes de P1/P2 |
-| P5: erro padrão do t0 > 5 ms, ou deriva maior que 2× o seu erro padrão | solenoide ou fonte da bobina instável | conferir a tensão; trocar a válvula |
+| P5: deriva maior que 2× o seu erro padrão | solenoide ou fonte da bobina instável | conferir a tensão; trocar a válvula |
 | P5: resíduo de forma > 1% | leituras sem estabilizar, ou forma diferente | repetir com espera maior; mandar para análise (com ruído de leitura normal, ~0,15 mbar, ele fica em ~0,5%) |
 | Vents marcados fora da faixa calibrada no log | fermentação acima ou abaixo das pressões do último P5 | refazer o P5 cobrindo a faixa (topo ≥ setpoint máximo + 3%; base abaixo do menor setpoint) |
 | P5: curva > 3% abaixo da referência | sujeira na válvula ou no silenciador | P9 e P10 e repetir; se não voltar, trocar a válvula e registrar `new-valve` |
@@ -413,12 +413,12 @@ rodando sozinho).
 6. [ ] P1 Zero do sensor e P1b ponto B com o manômetro digital.
 7. [ ] P3 Conferir fonte da Patm e altitude.
 8. [ ] P5 Ensaio de ventilação com ar, etiqueta `new-valve` ou `as-is`.
-9. [ ] Baixar o CSV e mandar para análise. **Não gravar curva nem t0 ainda.**
+9. [ ] Baixar o CSV e mandar para análise. **Não gravar a curva ainda.**
 10. [ ] Anotar tudo na folha de registro.
 
 **Depois da visita, antes do próximo lote**
-- [ ] Análise do ensaio (à distância): curva cúbica, t0, dispersão, deriva.
-- [ ] Gravar curva e t0 (botão), fator de nível = 1.
+- [ ] Análise do ensaio (à distância): k, β, dispersão, deriva.
+- [ ] Gravar a curva (botão), fator de nível = 1.
 - [ ] Iniciar o lote; programar leituras de SG desgaseificada no fim.
 
 **Fallback (se necessário, entre lotes)**
@@ -457,9 +457,8 @@ que define o valor.
 | Parâmetro | O que representa | Origem |
 |---|---|---|
 | Target drop per vent (%) (Settings) | Queda alvo da pressão manométrica em cada relief; define o dente de serra em torno do setpoint (relief em setpoint/√(1 − queda)) | Decisão de projeto, padrão 6% |
-| Flow curve: a0, a1, a2, a3 | Coeficientes da cúbica τ(P) = a0 + a1·P + a2·P² + a3·P³ (s): constante de tempo da pressão absoluta de 100 L de ar a 20 °C, com P manométrica em bar. O firmware a escala para o volume de headspace e a temperatura do gás | Ajuste de mínimos quadrados (pesos P_abs²) das liberações do ensaio de ventilação, com ar e o fermentador vazio (P5); "Save curve and t0", "Use last test curve" ou digitados |
-| Flow curve: valid from / to (bar) | Faixa de pressão coberta pelo ensaio; fora dela vale o valor da ponta (acima) ou a escala do bocal (abaixo) | Ensaio de ventilação (pressão mais alta e mais baixa medidas) |
-| T0 (ms) | Atraso mecânico da válvula entre o comando e o gás sair; é descontado do tempo aberto | Intercepto do ajuste do ensaio de ventilação (P5), "Use last test t0" |
+| Flow curve: k, beta | Curva τ(P) = k/ψ_ef(P) (s) da válvula e da sua saída em série: k é a capacidade do bocal da válvula e β a resistência a jusante dele (válvula, conexões; o silenciador pesa ≤ ~3–4%, ensaio sem silenciador de 21/10/2026; docs/vent.md). τ é a constante de tempo da pressão absoluta de 100 L de ar a 20 °C, P manométrica; o firmware escala ao volume do headspace e à temperatura do gás. A faixa "measured" só diz onde o ensaio mediu | Ensaio de ventilação (botão "Use last test curve" só preenche os campos; vale com Save, entre lotes) |
+| Flow curve: measured from / to (bar) | Faixa de pressão coberta pelo ensaio; só informativa: o modelo é físico e vale fora dela (vents fora da faixa continuam marcados) | Ensaio de ventilação (pressão mais alta e mais baixa medidas) |
 | Reference curve | Curva fixa de comparação, para medir a perda de vazão (sujeira) em 1,8 / 1,2 / 0,8 bar | Primeiro ensaio de calibração, "Save as reference curve" |
 | Flow level factor | Multiplicador (1,0 = teoria) da vazão molar de CO2 calculada. Representa o desvio entre a vazão real de CO2 e a teórica (conversão ar → CO2 do bocal ideal, Z do CO2 e curva medida com ar) | Ajustado entre lotes pela SG desgaseificada medida (P6 e P7) |
 | Effective Venting Exponent | Expoente politrópico n da expansão do gás durante a abertura (1 = isotérmico, 1,29 ≈ adiabático do CO2); entra no resfriamento durante o vent e na pressão assentada logo após o fechamento | Ajustado nos dados do lote 160 (recuperação medida na média diária, τ ≈ 30 s); padrão 1,29, não mudar sem dados novos |
@@ -581,7 +580,6 @@ O nome ficou "Relief" por compatibilidade. Detalhes do ciclo e do modelo: docs/v
 | VentLimit | O que decidiu o tempo: `estimate`, `minimum` ou `safety` |
 | VentHeadspaceForTime | Headspace usado para calcular o tempo (L) |
 | VentRealSeconds | Tempo real de abertura, medido nas linhas do `digitalWrite` |
-| VentT0Seconds | t0 da válvula em uso (s) |
 | VentMeanPressure | Média logarítmica das pressões absolutas de abertura e de fechamento, em manométrica |
 | VentCoolingFactor | Fator de resfriamento do gás durante a abertura (√(T0/T) em P̄) |
 | VentFlowConstant | Constante de vazão do CO2 (curva, razão ar → CO2, Z e nível incluídos) |
@@ -633,7 +631,7 @@ O nome ficou "Relief" por compatibilidade. Detalhes do ciclo e do modelo: docs/v
 
 Calibration → "Last test CSV" (ou "All tests CSV", `VentingHistory`, do mais antigo ao mais novo; "Current
 test CSV" durante o ensaio, com `Incomplete-` na frente e as colunas do ajuste vazias). **Uma linha por
-liberação**. As colunas de `test` a `temp_ferm_C` e as do ajuste (`fit_a0` em diante) se repetem em todas
+liberação**. As colunas de `test` a `firmware` e as do ajuste (`fit_K_s` em diante) se repetem em todas
 as linhas do mesmo ensaio. `python tests/venting_fit.py arquivo.csv` refaz o ajuste.
 
 | Coluna | Significado |
@@ -645,7 +643,6 @@ as linhas do mesmo ensaio. `python tests/venting_fit.py arquivo.csv` refaz o aju
 | gas | `air` (o ensaio de calibração é sempre com ar) |
 | volume_L | Volume do fermentador usado nas contas (FMT volume) |
 | patm_bar / patm_source | Pressão atmosférica e a fonte (`sidekick` ou `altitude`) |
-| temp_amb_C / temp_ferm_C | Temperaturas ambiente e do fermentador no início |
 | firmware | Data de compilação do firmware |
 | release | Número da liberação no ensaio |
 | level | Patamar de pressão (1 é a pressão de partida; depois 1,9 / 1,5 / 1,1 / 0,8 / 0,5 / 0,25 bar) |
@@ -655,14 +652,19 @@ as linhas do mesmo ensaio. `python tests/venting_fit.py arquivo.csv` refaz o aju
 | P1_bar | Pressão assentada antes da liberação (média de amostras, estável) |
 | P_close_bar | Pressão lida logo depois de fechar (gás ainda frio); dá o expoente da liberação |
 | P2_bar | Pressão assentada depois da liberação (é o P1 da seguinte) |
+| Pinf_bar | Pressão assentada extrapolada pela recuperação exponencial da espera (só registro; o ajuste usa o P2) |
+| Pinf_tau_s | Constante de tempo da recuperação (s) |
+| Pinf_amp_mbar | Amplitude da recuperação (mbar): quanto o P2 ainda tinha por subir |
+| end_slope_mbar_min | Inclinação da pressão nos últimos 60 s da espera (mbar/min); negativa = ainda caindo (vazamento ou o gás esfriando) |
+| temp_end_K | Temperatura do fermentador ao fim da espera (K), para separar o vazamento da temperatura (~10 mbar/K a 2 bar) |
 | temp_ferm_K | Temperatura do fermentador em P1 (K) |
-| wait_s | Tempo de espera pela estabilização depois da liberação |
+| temp_amb_C | Temperatura ambiente (SideKick ou Dallas ambiente) quando a válvula abriu; vazia se não havia valor válido (o SideKick envia a cada 60 s). Só para correlações: não entra no ajuste |
+| wait_s | Tempo de espera pela estabilização depois da liberação (máximo 300 s) |
+| settled | `yes` se a pressão estabilizou (< 0,3 mbar em 30 s; < 0,15 mbar ao redor das liberações de 1 s ou menos); `no` se a espera terminou no máximo, e o P2 pode ainda estar subindo |
 | P1_noise_mbar / P2_noise_mbar | Erro padrão da média de cada pressão assentada, em mbar |
-| fit_a0 a fit_a3 | Coeficientes da cúbica τ(P) ajustada (s; 100 L de ar a 20 °C) |
-| fit_t0_s | t0 ajustado (s) |
-| t0_se_ms | Erro padrão do t0 (ms) |
+| fit_K_s, fit_beta | k (s; 100 L de ar a 20 °C) e β da curva τ(P) = k/ψ_ef(P) ajustada |
 | shape_rms_pct | Resíduo rms de forma das aberturas ≥ 4 s (%), só informação |
-| chi2_reduced | Qui-quadrado reduzido do ajuste (~1 bom; > 3 a cúbica não acompanha) |
+| chi2_reduced | Qui-quadrado reduzido do ajuste (~1 bom; > 3 o modelo não acompanha) |
 | drift_pct / drift_se_pct | Deriva de vazão entre a primeira e a última abertura de 2 s de cada patamar (%) e seu erro padrão |
 | vs_ref_1_8_pct, vs_ref_1_2_pct, vs_ref_0_8_pct | Vazão do ensaio contra a da curva de referência a 1,8, 1,2 e 0,8 bar (%); em branco sem curva de referência |
 
@@ -682,9 +684,23 @@ de estabilidade). O resultado é a média dos reliefs estáveis.
 | patm1_bar / patm2_bar | Pressão atmosférica em P1 e em P2 |
 | wait_P1_s / wait_P2_s | Espera até a pressão estabilizar antes de P1 e de P2 |
 | vent_s | Tempo ventilando o tanque depois do relief |
-| settled_P1 / settled_P2 | `yes` se a pressão estava estável (inclinação < 0,1 mbar/min); `no` exclui o relief da média |
+| settled_P1 / settled_P2 | `yes` se a pressão estava estável: em P1, inclinação < 0,3 mbar/min (mínimo de 2 min); em P2, leitura aos 300 s depois de abrir a válvula, com diferença < 1 mbar em relação à de 180 s. `no` exclui o relief da média |
 | V_fermenter_L | Volume do fermentador pelo balanço completo de mols |
 | V_simple_L | Pela fórmula simples V = V_tanque · P2/(P1 − P2), com a razão de temperaturas |
+| P2_30s_bar … P2_300s_bar | Pressão (média de 10 s) aos 30, 60, 120, 180 e 300 s depois de abrir a válvula |
+| Tferm_*s_C / Tenv_*s_C | Temperatura do fermentador e ambiente nos mesmos instantes |
+| Pmin_open_bar | Menor pressão lida com a válvula aberta (cada leitura nova, já filtrada pela mediana e depois dos 400 ms de ruído da solenoide) |
+| t_Pmin_s | Instante dessa menor leitura, em segundos depois de abrir |
+| open_samples | Quantas leituras novas entraram nessa conta |
+| build | Identificação do firmware que gerou a linha: `aammdd-hhmm-xxxxxxxx` (data e hora da última alteração dos fontes e hash dos fontes). Dois arquivos com o mesmo valor vêm do mesmo código. Aparece também nos CSVs do teste de perda e do teste de ventilação, nos eventos de calibração (`[build ...]`), na página Calibration (rodapé, com o commit do git) e na serial ao ligar (`[BUILD]`) |
+
+Como ler `Pmin_open_bar`: com a válvula aberta a pressão do fermentador cai de forma
+monótona e, depois, sobe um pouco quando o gás reaquece. O mínimo vem então do resfriamento do
+gás (`t_Pmin_s` de dezenas de segundos) e fica um pouco abaixo de P2. Uma zona de baixa pressão
+local, causada pela liberação turbulenta, apareceria como um mínimo **cedo** (`t_Pmin_s` de
+poucos segundos), bem abaixo da tendência, com recuperação em seguida. O sensor não lê nos
+primeiros 400 ms depois de abrir e a mediana atenua vales de poucas dezenas de ms, então o valor
+é um limite superior da profundidade real.
 
 ### 10.4 Eventos de calibração (`PovotoCalibration-Events-FMT<n>-<hora>.txt`)
 

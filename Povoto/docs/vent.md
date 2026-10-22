@@ -30,7 +30,7 @@ atmosfera: porta P no fermentador, porta A na garrafa testemunha.
 ## 2. Tempo de abertura
 
 ```
-t_estimado = mols(P_on → P_on·(1 − alvo)) / vazão(P̄) + t0     (VentModel::ventSeconds)
+t_estimado = mols(P_on → P_on·(1 − alvo)) / vazão(P̄)     (VentModel::ventSeconds)
 t_seg      = o mesmo para a queda de segurança (2 × a queda alvo) com o menor Vh plausível
 t          = máx(mín(t_estimado, t_seg), 1,5 s)
 ```
@@ -47,41 +47,69 @@ t          = máx(mín(t_estimado, t_seg), 1,5 s)
 
 ## 3. Modelo de vazão
 
-- **Curva**: τ(P) = a0 + a1·P + a2·P² + a3·P³ (s, P manométrica), a constante de
-  tempo da pressão absoluta de **100 L de ar a 20 °C**, medida pelo ensaio de
-  ventilação (fermentador vazio, ar). Fora da faixa de pressão do ensaio
-  (`pMin`–`pMax`) a cúbica não é extrapolada (a de 18/09 cai de 161 s a 1,9 bar para
-  113 s a 2,3 bar):
-  - **acima de `pMax`** vale o valor da ponta: o escoamento é sônico (≥ ~0,85 bar) e o τ quase
-    não muda;
-  - **abaixo de `pMin`** (subsônico) o valor da ponta é escalado pelo bocal ideal,
-    τ(P) = τ(pMin)·ψ(r(pMin))/ψ(r(P)), com r = Patm/(P + Patm) e ψ a função de vazão do bocal
-    para o ar (`VentModel::nozzlePsi`, γ 1,40). A vazão do bocal cai ao se afastar do regime
-    sônico, então o valor da ponta superestimaria a vazão (cerca de +9% a 0,25 bar com
-    `pMin` 0,36 bar). A escala vale até 5 mbar manométricos (`TAU_MIN_GAUGE`).
-    Continua marcado como fora da faixa (abaixo); o ensaio cobrindo a faixa segue sendo o
-    caminho melhor.
+- **Curva**: τ(P) = k / ψ_ef(P) (s, P manométrica), a constante de tempo da pressão absoluta de
+  **100 L de ar a 20 °C**, medida pelo ensaio de ventilação (fermentador vazio, ar). É um modelo
+  **físico de dois elementos em série** ("modelo K–β": K do bocal, β da restrição a jusante), não um polinômio (decisão de 21/10/2026; a cúbica da
+  versão anterior era só empírica, sem sentido fora da faixa do ensaio e dependente da geometria):
+  - **válvula**: bocal ideal (`VentModel::nozzlePsi`, γ 1,40 no ar), vazão molar ∝ P_m ψ(r), com
+    r = P_i/P_m, P_i a pressão entre a válvula e a saída; sônica abaixo da razão crítica;
+  - **saída**: restrição dissipativa **quadrática, sem estrangulamento**,
+    (P_i² − Patm²)/Patm = β·n² (n: vazão em unidades de P_m·ψ);
+  - a mesma vazão atravessa os dois: P_m²·Patm·β·ψ(r)² = P_m²·r² − Patm² (uma raiz em
+    (Patm/P_m, 1), por Newton com bisecção, ~5 iterações: `VentModel::seriesPsi`). ψ_ef(P) = ψ(r).
+    **k** é a capacidade do bocal e **β** a resistência que segura a vazão depois dele. Na faixa
+    de uso o bocal nunca chega a ser sônico (r ≈ 0,55–0,95); por isso a curva é quase plana acima
+    de ~1 bar e sobe em pressão baixa.
+  - **sem faixa**: vale em qualquer pressão acima de 5 mbar manométricos (`TAU_MIN_GAUGE`);
+    `pMin`–`pMax` só dizem onde o ensaio mediu (informativos, e usados para marcar vents fora
+    da faixa medida).
+  - Escolha entre 10 famílias nos dois primeiros ensaios de 20–21/10/2026 (48 e 41 liberações, com o
+    silenciador): com um fator de escala livre por ensaio (o de 21/10 saiu 2,6% mais rápido), a
+    válvula + saída quadrática (2 parâmetros) ficou no mesmo resíduo (70 ms ponderados) do
+    modelo em série com orifício e Cd linear (3 parâmetros) e muito abaixo do cúbico (101 ms,
+    4 parâmetros). Em baixa pressão (treino ≥ 0,4 bar, previsão < 0,4 bar) o viés a 0,15–0,30 bar
+    foi +1,6% contra +12,8% da cúbica extrapolada. O Cd linear, quando liberado, vai a +0,8%: não é
+    necessário. Ressalvas: a seleção foi feita nos mesmos dois ensaios e k e β são correlacionados
+    (por ensaio, k = 77,7 e 84,6 s e β = 1,22 e 0,63, com curvas quase iguais).
+  - **Ensaio sem o silenciador (21/10/2026 15:58, 48 liberações)**: previa-se que β caísse e a
+    vazão subisse até ~27% a 0,2 bar. **Não foi o que se viu**: k = 80,4 s, β = 0,83, a mesma forma
+    dos ensaios com silenciador (a forma dos dois primeiros descreve o terceiro com 67,8 ms contra
+    67,6 ms do ajuste próprio), e só um fator uniforme de 4% mais rápido em todas as pressões
+    (0,960; o ensaio de 21/10 de manhã já tinha dado 0,974 contra o de 20/10). Portanto **o
+    silenciador não é a resistência que β representa**: β e k descrevem a válvula e suas
+    conexões; o silenciador pesa ≤ ~3–4%, da ordem da variação entre ensaios.
+  - k e β indicam o estado do conjunto válvula + conexões (e do silenciador, se pesar), não só um
+    elemento; os dois ficam no histórico dos ensaios.
 - Vazão molar do ar: `C_ar(P)·P_abs/√T`, `C_ar = 100 / (R·√293,15·τ(P))`.
-- **Ar → CO2**: razão do bocal ideal em função da pressão (γ 1,40 / 1,29, massa
-  molar): 0,788 no regime sônico (≥ ~0,85 bar), 0,790 a 0,8 bar, 0,796 a 0,5 bar.
+- **Ar → CO2**: √(M_ar/M_CO2) (o bocal e a saída vão com 1/√M) vezes a razão da função de
+  vazão do par (γ 1,29 / 1,40), `VentModel::co2AirRatio(β, P, Patm)`: **0,80–0,81 com a saída
+  quadrática** (0,798 a 2 bar, 0,803 a 1 bar, 0,806 a 0,5 bar); 0,788 (sônico) a 0,796 (0,5 bar)
+  só para o bocal sozinho (o valor da versão anterior, ~2% mais baixo; o fator de nível absorve).
+  **Não validada com CO2** (sem ensaio com CO2, decisão do usuário): o erro da conversão entra no
+  fator de nível, ajustado pela SG de fermentações reais.
 - **Z do CO2**: `Z = 1 + B·P/(R·T)`, B pela correlação de Tsonopoulos
   (−0,129 L/mol a 20 °C): 0,992 a 0,5 bar, 0,985 a 1,9 bar. Na vazão, a vazão
   molar de um gás real num bocal é ∝ P/√(Z·T): o fator é **1/√Z** (+0,4% a
   +0,8%). Nos mols do headspace, n = P·V/(Z·R·T).
 - **Fator de nível** `flowLevelFactor` (1,0): ajustado entre lotes pela SG
   desgaseificada (manual, P7).
-- **Curva padrão** (antes do primeiro ensaio): o ensaio de 18/09 (129,6 L, ar,
-  Patm 0,9286 bar, 10 liberações de 20 s de 1,98 a 0,36 bar, t0 não mensurável):
-  a0..a3 = 318,6846; −296,7812; 218,9469; −55,9985. Os tempos para 6% batem com a
-  tabela da seção 7 do plano (1,2 / 1,5 / 1,7 s com 20 L; 1,8 / 2,3 / 2,6 s com
-  30 L; 3,0 / 3,8 / 4,3 s com 50 L, a 0,5 / 1,0 / 1,9 bar).
+- **Sem t0** (decisão de 21/10/2026): o atraso de abertura da válvula é tomado igual ao de
+  fechamento (t0 = δ_abre − δ_fecha = 0), então o tempo aberto medido é o tempo de vazão. O t0
+  ajustado nos quatro ensaios foi +4,7, +9,5, +12,6 e −89 ms (erro padrão 12–18 ms cada), com uma
+  dispersão entre ensaios muito maior que o erro de cada um: o ajuste não o mede (o P assentado das
+  liberações curtas pesa demais). Um t0 real de ±20 ms erra os mols em ±1,0% a 2 s de abertura
+  (±1,3% a 1,5 s; ±0,7% a 3 s; `tests/vent_bench.py`). A suposição entra na incerteza (±1%).
+- **Curva padrão** (antes do primeiro ensaio): os três ensaios com o silenciador de 20–21/10/2026
+  (130,9 L, ar, Patm 0,9286 bar, 0,14–2,08 bar) ajustados juntos **sem t0 e sem a primeira
+  liberação**, cada ensaio com a sua escala (1,000, 0,975 e 0,975; desvio de 1,5%): k = 81,6 s (a
+  forma ajustada, 83,0 s, vezes a escala média 0,983) e β = 0,88. Ajuste: `python tests/venting_fit.py`.
 
 ## 4. Contagem
 
 ```
 P̄    = média logarítmica de P_on,abs e da pressão lida logo após o fechamento (abs)
 fator = (P_on/P̄)^((n−1)/(2n)),  n = 1,29        (resfriamento: √(T0/T) em P̄)
-mols  = C_ar(P̄)·razão(P̄)/√Z(P̄)·nível · P̄/√T_gás · fator · (t_real − t0)
+mols  = C_ar(P̄)·razão(P̄)/√Z(P̄)·nível · P̄/√T_gás · fator · t_real
 ```
 
 - Sem Vh e sem ler o sensor durante o transiente.
@@ -130,11 +158,11 @@ mols  = C_ar(P̄)·razão(P̄)/√Z(P̄)·nível · P̄/√T_gás · fator · (t
   (sônico); na baixa o erro cresce com a distância de `pMin` (a escala não inclui
   a variação do coeficiente de descarga): refazer o ensaio cobrindo a faixa (manual, P5).
 - **Bench** (`python tests/vent_bench.py`): contra uma simulação com o gás real
-  expandindo pelo politrópico que define o 1,29, a vazão instantânea e o t0, a
+  expandindo pelo politrópico que define o 1,29 e a vazão instantânea, a
   contagem erra ≤ 0,11% a 0,5 / 1,0 / 1,9 bar com Vh de 20 / 30 / 50 L. Com uma
   curva plana é exata (< 0,002%): o resto vem de avaliar C em P̄ quando a cúbica
   de 18/09 muda ~8% dentro de um vent perto de 1,9 bar. Sensibilidades (1,9 bar,
-  30 L): t0 10 ms errado +0,28%; válvula 3% mais lenta +3,0%; gás 2 K mais quente
+  30 L): t0 real de ±20 ms (suposto 0) ±1,0%; válvula 3% mais lenta +3,0%; gás 2 K mais quente
   +0,25%; gás 6 K mais quente com a T do líquido +1,0%; expoente real 1,20 ou
   1,40: < 0,25% na contagem (mas ±7% no Vh aparente). Abaixo de `pMin` o bench confere a
   continuidade em `pMin`, o τ de ponta acima de `pMax`, a escala do bocal e a contagem de um
@@ -194,8 +222,8 @@ alarmes do vent e a contagem de vents fora da faixa.
 | Queda alvo (%) — página Settings | `ventDrop` | 6 |
 | Fator de nível — Calibration | `flowLevel` | 1,0 |
 | Expoente efetivo de ventilação — Calibration | `ventExponent` | 1,29 |
-| Curva de vazão e t0 (blob; editável na página Calibration, entre lotes, ou pelo "Save curve and t0" do ensaio) | `ventCurve` | 18/09 |
-| Curva de referência (blob) | `ventRefCurve` | nenhuma |
+| Curva de vazão k, β (blob de 20 bytes; editável na página Calibration, entre lotes, ou pelo "Save curve" do ensaio) | `ventFlow2` | ensaios de 20–21/10 (k 81,6; β 0,88) |
+| Curva de referência (blob) | `ventFlowRef2` | nenhuma |
 
 A abertura mínima (1,5 s) e a queda de segurança (2 × a alvo) são fixas no código. As chaves antigas
 `ventMinSec`, `ventSafeDrop` e `liquidGasMass` ficam na NVS, sem uso (fallback).
@@ -205,7 +233,7 @@ A abertura mínima (1,5 s) e a queda de segurança (2 × a alvo) são fixas no c
 O nome da planilha continua **Relief**. Colunas novas: `GasTemperature`,
 `GasTemperatureSource`, `VentEstimatedSeconds`, `VentSafetySeconds`,
 `VentPlannedSeconds`, `VentLimit`, `VentHeadspaceForTime`, `VentRealSeconds`,
-`VentT0Seconds`, `VentMeanPressure`, `VentCoolingFactor`, `VentFlowConstant`,
+`VentMeanPressure`, `VentCoolingFactor`, `VentFlowConstant`,
 `FlowLevelFactor`, `VentFlowMols`, `VentFermenterSideMols`, `VentOutOfRange`,
 `VentCounted`, `VentDropPercent`, `VentVaporFraction` (no lugar de `LiquidMassInGasVentingPercent`),
 `VentTargetDropPercent`, `HeadSpaceApparent`. `EjectedMolsWithVaporAtLog` são os mols contados

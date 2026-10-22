@@ -8,7 +8,7 @@
 // Venting test (docs/venting-test.md): the empty fermenter, with air, vented
 // through the valve for alternating durations at pressure levels from ~1.9 to
 // ~0.5 bar; the real opening time of each release is measured. The fit gives
-// the cubic flow curve, t0, its dispersion and the drift. The last 50 tests
+// the flow curve of the valve and its outlet (k, beta), its dispersion and the drift. The last 50 tests
 // are kept in the data filesystem with their raw releases.
 
 constexpr uint8_t VENTING_LABEL_COUNT = 5;
@@ -29,7 +29,6 @@ struct VentingTestSummary {
   VentModel::Curve curve;
   float shapeRmsPercent; // relative residuals of the releases >= 4 s (information)
   float chiSquare;       // reduced chi-square: residuals / noise of each reading (~1; above 3: shape off)
-  float t0SeMs;          // standard error of the fitted t0
   float driftPercent;    // flow of the last minus the first 2-s release of each level, mean
   float driftSePercent;  // its standard error (reading noise of the short releases)
   float vsReference[3];  // flow / reference flow - 1 at 1.8, 1.2, 0.8 bar (NAN = no reference)

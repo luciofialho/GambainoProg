@@ -36,6 +36,8 @@ void handleValveCleaningAbort(AsyncWebServerRequest *request);
 void handleExpansionTankStart(AsyncWebServerRequest *request);
 void handleExpansionTankAbort(AsyncWebServerRequest *request);
 void handleExpansionTankSave(AsyncWebServerRequest *request);
+void handleLeakHoldStart(AsyncWebServerRequest *request);
+void handleLeakHoldAbort(AsyncWebServerRequest *request);
 
 void handleBatchDataPage(AsyncWebServerRequest *request);
 void handleBatchDataUpdate(AsyncWebServerRequest *request);

@@ -38,7 +38,6 @@ struct ReliefLogData {
   const char *ventLimit;           // "estimate", "minimum" or "safety"
   float ventHeadspaceForTime;      // L
   float ventRealSeconds;           // measured at the digitalWrite of the valve
-  float ventT0Seconds;
   float ventMeanPressure;          // log mean of the opening and closing pressures, gauge
   float ventCoolingFactor;
   float ventFlowConstant;          // CO2 (ratio, Z and level included)

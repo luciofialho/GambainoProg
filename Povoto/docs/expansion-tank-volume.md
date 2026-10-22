@@ -17,11 +17,21 @@ volume da época do TE com um tanque simples (sem pesagem), sem os tempos fixos
   Zero do sensor antes (P1 do manual). Pressurize a ~2,0 bar, espere 15 min e aperte Start.
 - Para cada relief:
   1. **P1**: espera a pressão estável — inclinação dos últimos 2 min abaixo de
-     **0,1 mbar/min**, mínimo 2 min, máximo 15 min (ao bater o máximo, segue e
+     **0,3 mbar/min** (era 0,1: abaixo da deriva do próprio sensor e do gás; a página
+     mostra a inclinação atual e o limite), mínimo 2 min, máximo 15 min (ao bater o máximo, segue e
      marca "stable: no"). P1 = média dos últimos 10 s; T_F1 (Dallas do
      fermentador), T_E1 (ambiente: o tanque acompanha o ambiente), Patm1.
-  2. **Abre a válvula** (fermentador → tanque) e espera a pressão estável de
-     novo (mesmo critério): P2, T_F2, T_E2, Patm2.
+  2. **Abre a válvula** (fermentador → tanque) e lê P2 num **tempo fixo de 5 min** (sem critério
+     de inclinação). Ensaio de 21/10: depois do mínimo de pressão (11–22 mbar abaixo do valor final,
+     a ~17–25 s) a pressão se recupera com constante de tempo de 36–61 s, e entre 180 e 300 s ela
+     varia ≤0,7 mbar; esperas mais longas (reliefs de 766 e 888 s) só acumularam uma queda
+     de 3–5 mbar, com a temperatura subindo. O relief fica "stable: no" (fora da média) se P2
+     aos 300 s diferir do de 180 s em 1 mbar ou mais. No ensaio de 20/10 a espera de ~2 min
+     (limite de 0,3 mbar/min) subestimava o volume em 1,3–2%. P2, T_F2, T_E2, Patm2. Durante a
+     espera registra, aos 30, 60, 120, 180 e 300 s, a pressão (média de 10 s), a temperatura do
+     fermentador e a ambiente (colunas `P2_*s_bar`, `Tferm_*s_C`, `Tenv_*s_C` do CSV). Registra também a menor pressão lida com a válvula aberta, o instante
+     dela e o número de leituras (`Pmin_open_bar`, `t_Pmin_s`, `open_samples`), para avaliar se a
+     liberação turbulenta cria uma zona de baixa pressão no sensor.
   3. **Fecha**: o tanque ventila pela porta R. Espera ~6 constantes de tempo do
      tanque pela válvula (curva atual, com ar), 3–15 min. O fermentador, fechado,
      continua a espera do P1 seguinte.
@@ -57,8 +67,11 @@ Erro por relief (±0,5 mbar), fermentador de 130 L: 2,5% com 2 L, 0,31% com
   `fermenter-volume`.
 - CSV `/calibration/expansion.csv`: `PovotoCalibration-FermenterVolume-FMT<n>-yyyymmddhhmm.csv`
   (hora local de início; `nodate` sem NTP; prefixo `Incomplete-` se baixado durante a rotina).
-  Com a rotina em andamento, o CSV é montado de uma cópia dos reliefs concluídos tirada sob
-  trava (a página roda na task web, a rotina no loop), sem escrita na flash.
+  Com a rotina em andamento, o CSV é montado de uma cópia dos reliefs medidos tirada sob
+  trava (a página roda na task web, a rotina no loop), sem escrita na flash. Um relief entra na
+  tabela, no CSV, na média e no resultado assim que o P2 e o volume são calculados, sem esperar a
+  ventilação do tanque; `vent_s` fica vazio até a ventilação terminar (e continua vazio se o
+  ensaio for abortado durante ela).
 
 Modo debug: a equalização é simulada com o FMT volume (τ 3 s) e esperas
 curtas (10–30 s); ao fim da espera máxima o relief é dado como estável (o critério

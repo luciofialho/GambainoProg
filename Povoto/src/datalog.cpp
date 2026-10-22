@@ -430,7 +430,6 @@ void doReliefDataLog(const ReliefLogData &data) {
     GLogAddData("VentLimit");             // estimate, minimum or safety
     GLogAddData("VentHeadspaceForTime");
     GLogAddData("VentRealSeconds");
-    GLogAddData("VentT0Seconds");
     GLogAddData("VentMeanPressure");
     GLogAddData("VentCoolingFactor");
     GLogAddData("VentFlowConstant");
@@ -497,7 +496,6 @@ void doReliefDataLog(const ReliefLogData &data) {
   GLogAddData(data.ventLimit ? data.ventLimit : "");
   GLogAddData(data.ventHeadspaceForTime, 3);
   GLogAddData(data.ventRealSeconds, 4);
-  GLogAddData(data.ventT0Seconds, 4);
   GLogAddData(data.ventMeanPressure, 6);
   GLogAddData(data.ventCoolingFactor, 6);
   GLogAddData(data.ventFlowConstant, 6);

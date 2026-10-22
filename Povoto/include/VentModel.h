@@ -1,5 +1,6 @@
 #pragma once
 #include <math.h>
+#include <new>
 #include <stdint.h>
 
 // Direct venting model (docs/vent.md). Pure functions; tests/vent_model.py is
@@ -16,16 +17,18 @@ constexpr double GAMMA_AIR = 1.40;
 constexpr double GAMMA_CO2 = 1.29;
 constexpr double M_AIR = 28.96;
 constexpr double M_CO2 = 44.01;
-constexpr int SIMPSON_INTERVALS = 16; // even
+constexpr int SIMPSON_INTERVALS = 8; // even; 16 changes the fit by < 1e-4 relative
 
-// Flow curve of the valve, measured with air on the empty fermenter by the
-// venting test: tau(P) = a0 + a1 P + a2 P^2 + a3 P^3 (s) is the time constant
-// of the absolute pressure of V_REF litres of air at T_REF, P in gauge bar;
-// t0 is the mechanical delay of the valve. The cubic is used only inside the
-// pressure range of the test (pMin..pMax); outside it see tauRef().
+// Flow curve of the valve and its outlet ("K-beta model"), measured with air on the empty
+// fermenter by the venting test: tau(P) = k / psi_eff(P) (s) is the time constant of the absolute
+// pressure of V_REF litres of air at T_REF, P in gauge bar. psi_eff is the flow function of the
+// pair in series, see seriesPsi(): k is the capacity of the valve nozzle and beta the resistance
+// that holds the flow after it. There is no t0: the opening delay of the valve is taken equal to
+// its closing delay (the real t0, probably within +-20 ms, is +-1% of the moles of a 2 s vent).
+// pMin..pMax only say where the test measured it: the model is physical, with no range.
 struct Curve {
-  float a[4];
-  float t0;
+  float k;        // s
+  float beta;     // outlet resistance, (pm^2 - patm^2) / patm = beta n^2 (n: flow in units of p_up psi)
   float pMin, pMax;
   uint32_t epoch; // local NTP time of the test it came from (0 = default curve)
 } __attribute__((packed));
@@ -39,19 +42,50 @@ inline double nozzlePsi(double gamma, double r) {
   return sqrt(fmax(0.0, 2.0 * gamma / (gamma - 1.0) * (pow(r, 2.0 / gamma) - pow(r, (gamma + 1.0) / gamma))));
 }
 
-constexpr double TAU_MIN_GAUGE = 0.005; // bar: lowest gauge pressure the extrapolation below pMin is taken to
+// Effective flow function of the valve and its outlet (silencer) in series.
+// The valve is an ideal nozzle, molar flow ~ pUp psi(r) with r = pm / pUp, pm the pressure between
+// the valve and the outlet. The outlet is a dissipative restriction without choking,
+// (pm^2 - patm^2) / patm = beta n^2 (n in the units of pUp psi). The same flow goes through both:
+// pUp^2 patm beta psi(r)^2 = pUp^2 r^2 - patm^2, one root in (patm / pUp, 1); found by Newton with
+// bisection fallback (about 5 iterations). Returns psi(r); NAN when pUp <= patm or beta <= 0.
+inline double seriesPsi(double pUp, double patm, double beta, double gamma) {
+  if (!(pUp > patm) || !(beta > 0.0)) return NAN;
+  const double crit = pow(2.0 / (gamma + 1.0), gamma / (gamma - 1.0));
+  const double psiC2 = gamma * pow(2.0 / (gamma + 1.0), (gamma + 1.0) / (gamma - 1.0));
+  const double c = 2.0 * gamma / (gamma - 1.0);
+  const double pu2 = pUp * pUp, pa2 = patm * patm;
+  double lo = patm / pUp, hi = 1.0;
+  double r = fmin(fmax(sqrt(pa2 + patm * beta * pu2 * psiC2) / pUp, lo), hi);
+  for (int i = 0; i < 60; ++i) {
+    double psi2 = psiC2, dpsi2 = 0.0;
+    if (r > crit) {
+      const double u = pow(r, 1.0 / gamma);
+      psi2 = c * (u * u - r * u);
+      dpsi2 = c * (2.0 * u * u / (gamma * r) - (1.0 + 1.0 / gamma) * u);
+    }
+    const double f = patm * beta * pu2 * psi2 - (pu2 * r * r - pa2);
+    const double df = patm * beta * pu2 * dpsi2 - 2.0 * pu2 * r;
+    if (f > 0.0) lo = r; else hi = r;
+    double next = df != 0.0 ? r - f / df : 0.5 * (lo + hi);
+    if (!(next > lo && next < hi)) next = 0.5 * (lo + hi);
+    const bool done = fabs(next - r) < 1e-12;
+    r = next;
+    if (done) break;
+  }
+  double psi2 = psiC2;
+  if (r > crit) {
+    const double u = pow(r, 1.0 / gamma);
+    psi2 = c * (u * u - r * u);
+  }
+  return sqrt(fmax(0.0, psi2));
+}
 
-// tau at a gauge pressure. Inside the range of the test: the cubic. Above pMax: the
-// end value (the flow is choked there, tau nearly constant; the cubic is not extrapolated).
-// Below pMin (subsonic): the end value scaled by the ideal nozzle,
-// tau(P) = tau(pMin) * psi(r(pMin)) / psi(r(P)), r = patm / (P + patm).
+constexpr double TAU_MIN_GAUGE = 0.005; // bar: lowest gauge pressure tau is evaluated at
+
+// tau at a gauge pressure: k / psi_eff(P), air, V_REF, T_REF.
 inline double tauRef(const Curve &c, double pGauge, double patm) {
-  const double inRange = fmin(fmax(pGauge, (double)c.pMin), (double)c.pMax);
-  const double tau = ((c.a[3] * inRange + c.a[2]) * inRange + c.a[1]) * inRange + c.a[0];
-  if (pGauge >= c.pMin) return tau;
-  const double psiEnd = nozzlePsi(GAMMA_AIR, patm / ((double)c.pMin + patm));
-  const double psi = nozzlePsi(GAMMA_AIR, patm / (fmax(pGauge, TAU_MIN_GAUGE) + patm));
-  return psi > 0.0 && psiEnd > 0.0 ? tau * psiEnd / psi : NAN;
+  const double psi = seriesPsi(fmax(pGauge, TAU_MIN_GAUGE) + patm, patm, (double)c.beta, GAMMA_AIR);
+  return psi > 0.0 ? (double)c.k / psi : NAN;
 }
 
 // C_air(P), mol*K^0.5/(s*bar): molar air flow = C_air * P_abs / sqrt(T).
@@ -60,13 +94,14 @@ inline double flowConstantAir(const Curve &c, double pGauge, double patm) {
   return tau > 0.0 ? V_REF / (R * sqrt(T_REF) * tau) : NAN;
 }
 
-// CO2/air molar flow of an ideal nozzle at the same pressures and temperature:
-// 0.788 when choked (>= ~0.85 bar gauge), 0.790 at 0.8, 0.796 at 0.5 bar.
-inline double co2AirRatio(double pGauge, double patm) {
-  const double r = patm / (pGauge + patm);
-  const double psiAir = nozzlePsi(GAMMA_AIR, r);
+// CO2/air molar flow at the same pressures and temperature: sqrt(M_air / M_CO2) (the valve and the
+// outlet both go with 1/sqrt(M)) times the ratio of the nozzle functions of the pair (gamma 1.29 / 1.40).
+// 0.80-0.81 with the silencer; 0.788 (choked) to 0.796 (0.5 bar) for the valve alone.
+inline double co2AirRatio(double beta, double pGauge, double patm) {
+  const double pUp = pGauge + patm;
+  const double psiAir = seriesPsi(pUp, patm, beta, GAMMA_AIR);
   if (!(psiAir > 0.0)) return sqrt(M_AIR / M_CO2);
-  return sqrt(M_AIR / M_CO2) * nozzlePsi(GAMMA_CO2, r) / psiAir;
+  return sqrt(M_AIR / M_CO2) * seriesPsi(pUp, patm, beta, GAMMA_CO2) / psiAir;
 }
 
 // Second virial coefficient of CO2 (L/mol), Tsonopoulos correlation
@@ -98,7 +133,8 @@ inline double coolingFactor(double pOnAbs, double pMeanAbs, double exponent) {
 
 // Effective CO2 flow constant: C_air * ratio / sqrt(Z) * level.
 inline double co2FlowConstant(const Curve &c, double level, double pGauge, double patm, double tKelvin) {
-  return flowConstantAir(c, pGauge, patm) * co2AirRatio(pGauge, patm) / sqrt(co2Z(pGauge + patm, tKelvin)) * level;
+  return flowConstantAir(c, pGauge, patm) * co2AirRatio((double)c.beta, pGauge, patm) /
+      sqrt(co2Z(pGauge + patm, tKelvin)) * level;
 }
 
 struct VentCount {
@@ -108,7 +144,7 @@ struct VentCount {
   double flowConstant;
 };
 
-// CO2 moles out of one vent: C(P_mean) * P_mean / sqrt(T) * cooling * (t - t0).
+// CO2 moles out of one vent: C(P_mean) * P_mean / sqrt(T) * cooling * t.
 // pCloseGauge is the pressure read right after closing (gas still cold).
 inline VentCount ventMoles(const Curve &c, double level, double openSeconds, double pOnGauge,
                            double pCloseGauge, double patm, double tGasKelvin, double exponent) {
@@ -119,7 +155,7 @@ inline VentCount ventMoles(const Curve &c, double level, double openSeconds, dou
   out.pMeanGauge = pMean - patm;
   out.cooling = coolingFactor(pOn, pMean, exponent);
   out.flowConstant = co2FlowConstant(c, level, out.pMeanGauge, patm, tGasKelvin);
-  const double seconds = fmax(0.0, openSeconds - c.t0);
+  const double seconds = fmax(0.0, openSeconds);
   out.moles = out.flowConstant * pMean / sqrt(tGasKelvin) * out.cooling * seconds;
   if (!isfinite(out.moles) || out.moles < 0.0) out.moles = 0.0;
   return out;
@@ -135,7 +171,7 @@ inline double ventSeconds(const Curve &c, double level, double headspace, double
   const double pMean = logMean(pOn, pTarget);
   const double rate = co2FlowConstant(c, level, pMean - patm, patm, tGasKelvin) * pMean /
       sqrt(tGasKelvin) * coolingFactor(pOn, pMean, exponent);
-  return rate > 0.0 ? moles / rate + c.t0 : NAN;
+  return rate > 0.0 ? moles / rate : NAN;
 }
 
 // Settled pressure after a polytropic drop (same as adjustedPressureForPostRelief).
@@ -164,30 +200,25 @@ inline double releaseExponent(double p1Gauge, double pCloseGauge, double p2Gauge
   return (m >= 1.0 && m <= 1.67) ? m : fallback;
 }
 
-// J_k, k = 0..3, so that (t - t0) = sum a_k J_k for one release from the
-// settled P1 to the settled P2 (Simpson over the settled pressure).
-inline void releaseIntegrals(double volume, double t0Kelvin, double p1Gauge, double p2Gauge, double patm,
-                             double exponent, bool co2, double j[4]) {
+// S so that t = k S for one release from the settled P1 to the settled P2 (Simpson over the
+// settled pressure): the time is the integral of tau(P) g dP, tau = k / psi_eff.
+inline double releaseIntegral(double volume, double t0Kelvin, double p1Gauge, double p2Gauge, double patm,
+                              double exponent, bool co2, double beta) {
   const double p1 = p1Gauge + patm, p2 = p2Gauge + patm;
   const double scale = volume / V_REF * sqrt(T_REF / t0Kelvin);
   const int n = SIMPSON_INTERVALS;
   const double h = (p1 - p2) / n;
-  for (int k = 0; k < 4; ++k) j[k] = 0.0;
+  double total = 0.0;
   for (int i = 0; i <= n; ++i) {
     const double pIso = p2 + i * h;
     const double x = pIso / p1;
     const double pAbs = p1 * pow(x, exponent);
     double g = sqrt(pow(x, exponent - 1.0)) / pAbs;
-    if (co2) g /= sqrt(co2Z(pIso, t0Kelvin)) * co2AirRatio(pAbs - patm, patm);
+    if (co2) g /= sqrt(co2Z(pIso, t0Kelvin)) * co2AirRatio(beta, pAbs - patm, patm);
     const double w = (i == 0 || i == n) ? 1.0 : ((i % 2) ? 4.0 : 2.0);
-    const double pg = pAbs - patm;
-    double power = 1.0;
-    for (int k = 0; k < 4; ++k) {
-      j[k] += w * g * power;
-      power *= pg;
-    }
+    total += w * g / seriesPsi(pAbs, patm, beta, GAMMA_AIR);
   }
-  for (int k = 0; k < 4; ++k) j[k] *= scale * h / 3.0;
+  return scale * total * h / 3.0;
 }
 
 struct Release {
@@ -208,20 +239,21 @@ inline void releaseSensitivities(const Curve &c, double volume, double t0Kelvin,
   double g2 = sqrt(pow(x, exponent - 1.0)) / pAbs2;
   double g1 = 1.0 / p1;
   if (co2) {
-    g2 /= sqrt(co2Z(p2, t0Kelvin)) * co2AirRatio(pAbs2 - patm, patm);
-    g1 /= sqrt(co2Z(p1, t0Kelvin)) * co2AirRatio(p1Gauge, patm);
+    g2 /= sqrt(co2Z(p2, t0Kelvin)) * co2AirRatio((double)c.beta, pAbs2 - patm, patm);
+    g1 /= sqrt(co2Z(p1, t0Kelvin)) * co2AirRatio((double)c.beta, p1Gauge, patm);
   }
   s1 = scale * g1 * tauRef(c, p1Gauge, patm);
   s2 = scale * g2 * tauRef(c, pAbs2 - patm, patm);
 }
 
-// Reduced chi-square of a fit: sum r_i^2 / (s1^2 n1^2 + s2^2 n2^2 + st^2) / (n - 5),
+// Reduced chi-square of a fit: sum r_i^2 / (s1^2 n1^2 + s2^2 n2^2 + st^2) / (n - 2),
 // with n1, n2 the noise of each settled reading (bar, at least floorBar) and st
-// the timing noise (s). ~1: the cubic follows the data within the noise.
+// the timing noise (s). ~1: the model follows the data within the noise.
+constexpr int FIT_PARAMETERS = 2; // k, beta
 inline double reducedChiSquare(const Curve &c, const Release *rel, const float *noise1, const float *noise2,
                                const float *residuals, const float *exponents, int count, double volume,
                                double patm, bool co2, double floorBar, double timingSeconds) {
-  if (count <= 5) return NAN;
+  if (count <= FIT_PARAMETERS) return NAN;
   double sum = 0.0;
   for (int i = 0; i < count; ++i) {
     double s1, s2;
@@ -231,97 +263,101 @@ inline double reducedChiSquare(const Curve &c, const Release *rel, const float *
     const double variance = s1 * s1 * n1 * n1 + s2 * s2 * n2 * n2 + timingSeconds * timingSeconds;
     sum += (double)residuals[i] * residuals[i] / variance;
   }
-  return sum / (count - 5);
+  return sum / (count - FIT_PARAMETERS);
 }
 
-// Gaussian elimination with partial pivoting of an n x n system (n <= 5).
-inline bool solveLinear(double m[5][6], int n, double x[5]) {
-  for (int col = 0; col < n; ++col) {
-    int pivot = col;
-    for (int r = col + 1; r < n; ++r) if (fabs(m[r][col]) > fabs(m[pivot][col])) pivot = r;
-    if (!(fabs(m[pivot][col]) > 1e-300)) return false;
-    for (int k = 0; k <= n; ++k) { const double t = m[col][k]; m[col][k] = m[pivot][k]; m[pivot][k] = t; }
-    for (int r = 0; r < n; ++r) {
-      if (r == col) continue;
-      const double f = m[r][col] / m[col][col];
-      for (int k = col; k <= n; ++k) m[r][k] -= f * m[col][k];
-    }
+constexpr double BETA_MIN = 0.01, BETA_MAX = 30.0; // search range of the outlet resistance
+constexpr int BETA_ITERATIONS = 20;                    // golden-section steps on ln(beta): 5e-4 in ln(beta)
+
+// Weighted least squares of t = k S for a fixed beta (closed form). False when singular.
+struct ProfileFit { double sse, k; };
+inline bool profileFit(const double *rows, const double *ts, const double *ws, int n, ProfileFit &out) {
+  double sxx = 0.0, sxy = 0.0;
+  for (int i = 0; i < n; ++i) {
+    sxx += ws[i] * rows[i] * rows[i];
+    sxy += ws[i] * rows[i] * ts[i];
   }
-  for (int i = 0; i < n; ++i) x[i] = m[i][n] / m[i][i];
-  return true;
+  if (!(sxx > 0.0)) return false;
+  out.k = sxy / sxx;
+  out.sse = 0.0;
+  for (int i = 0; i < n; ++i) {
+    const double e = ts[i] - out.k * rows[i];
+    out.sse += ws[i] * e * e;
+  }
+  return isfinite(out.sse);
 }
 
-
-// Weighted least squares t_i = t0 + sum a_k J_ik. A reading error of the
-// pressure becomes an almost constant error in time, ~tau*sigma_P/P_abs: the
-// weights are P_abs^2 (mean of P1 and P2). On a synthetic test with 0.15 mbar of
-// noise this gives the curve within 0.1-0.2% and t0 within ~4 ms; weights
-// 1/t^2 (relative residuals) gave 0.7-0.9% and 11 ms. Fills curve.a and curve.t0 (0 when !fitT0), the per-release
-// residuals (s) and exponents when given. False with too few releases or a
-// singular system.
-// t0StandardError (s, optional): from the covariance of the fit, s^2 (A'WA)^-1.
-inline bool fitVentingTest(const Release *rel, int count, double volume, double patm, bool co2, bool fitT0,
+// Fit of the flow curve: t_i = k S_i(beta), S_i the release integral. For each beta the weighted
+// least squares gives k in closed form; beta is found by golden-section search on ln(beta).
+// A pressure reading error becomes an almost constant error in time, ~tau*sigma_P/P_abs: the weights
+// are P_abs^2 (mean of P1 and P2). Fills curve.k and curve.beta, the per-release residuals (s) and
+// exponents when given. False with too few releases, no memory or a singular system.
+// yieldFn (optional) is called after each evaluation of beta (the fit takes seconds on the board).
+inline bool fitVentingTest(const Release *rel, int count, double volume, double patm, bool co2,
                            double defaultExponent, Curve &curve, float *residuals, float *exponents,
-                           double *t0StandardError = nullptr) {
-  const int n = fitT0 ? 5 : 4;
-  if (count < n + 2) return false;
-  double m[5][6] = {};
+                           void (*yieldFn)() = nullptr) {
+  if (count < FIT_PARAMETERS + 2) return false;
+  double *work = new (std::nothrow) double[4 * count];
+  if (!work) return false;
+  double *rows = work, *ts = work + count, *ws = work + 2 * count, *exps = work + 3 * count;
   for (int i = 0; i < count; ++i) {
     const Release &r = rel[i];
-    const double e = isfinite(r.pClose) ? releaseExponent(r.p1, r.pClose, r.p2, patm, defaultExponent)
-                                        : defaultExponent;
-    if (exponents) exponents[i] = (float)e;
-    double j[4];
-    releaseIntegrals(volume, r.tempK, r.p1, r.p2, patm, e, co2, j);
-    double row[5];
-    int c = 0;
-    if (fitT0) row[c++] = 1.0;
-    for (int k = 0; k < 4; ++k) row[c++] = j[k];
+    exps[i] = isfinite(r.pClose) ? releaseExponent(r.p1, r.pClose, r.p2, patm, defaultExponent) : defaultExponent;
+    ts[i] = r.seconds;
     const double pAbs = 0.5 * (r.p1 + r.p2) + patm;
-    const double w = pAbs * pAbs;
-    for (int a = 0; a < n; ++a) {
-      for (int b = 0; b < n; ++b) m[a][b] += w * row[a] * row[b];
-      m[a][n] += w * row[a] * r.seconds;
+    ws[i] = pAbs * pAbs;
+  }
+  bool ok = true;
+  auto evaluate = [&](double beta, ProfileFit &out) {
+    for (int i = 0; i < count; ++i)
+      rows[i] = releaseIntegral(volume, rel[i].tempK, rel[i].p1, rel[i].p2, patm, exps[i], co2, beta);
+    if (yieldFn) yieldFn();
+    if (!profileFit(rows, ts, ws, count, out)) ok = false;
+  };
+  const double golden = (sqrt(5.0) - 1.0) / 2.0;
+  double lo = log(BETA_MIN), hi = log(BETA_MAX);
+  double x1 = hi - golden * (hi - lo), x2 = lo + golden * (hi - lo);
+  ProfileFit f1 = {}, f2 = {};
+  evaluate(exp(x1), f1);
+  evaluate(exp(x2), f2);
+  for (int i = 0; i < BETA_ITERATIONS && ok; ++i) {
+    if (f1.sse < f2.sse) {
+      hi = x2; x2 = x1; f2 = f1;
+      x1 = hi - golden * (hi - lo);
+      evaluate(exp(x1), f1);
+    } else {
+      lo = x1; x1 = x2; f1 = f2;
+      x2 = lo + golden * (hi - lo);
+      evaluate(exp(x2), f2);
     }
   }
-  double normal[5][6];
-  for (int a = 0; a < n; ++a)
-    for (int b = 0; b <= n; ++b) normal[a][b] = b < n ? m[a][b] : (a == 0 ? 1.0 : 0.0);
-  double x[5], inverse0[5];
-  if (!solveLinear(m, n, x)) return false;
-  const bool covariance = fitT0 && solveLinear(normal, n, inverse0); // first column of (A'WA)^-1
-  curve.t0 = fitT0 ? (float)x[0] : 0.0f;
-  for (int k = 0; k < 4; ++k) curve.a[k] = (float)x[(fitT0 ? 1 : 0) + k];
-  double weightedSquares = 0.0;
-  for (int i = 0; i < count; ++i) {
-    const Release &r = rel[i];
-    const double e = exponents ? exponents[i] : (isfinite(r.pClose) ? releaseExponent(r.p1, r.pClose, r.p2, patm,
-                                                                                   defaultExponent) : defaultExponent);
-    double j[4];
-    releaseIntegrals(volume, r.tempK, r.p1, r.p2, patm, e, co2, j);
-    double model = fitT0 ? x[0] : 0.0;
-    for (int k = 0; k < 4; ++k) model += x[(fitT0 ? 1 : 0) + k] * j[k];
-    const double residual = r.seconds - model;
-    if (residuals) residuals[i] = (float)residual;
-    const double pAbs = 0.5 * (r.p1 + r.p2) + patm;
-    weightedSquares += pAbs * pAbs * residual * residual;
+  ProfileFit best = {};
+  const double beta = exp(0.5 * (lo + hi));
+  if (ok) evaluate(beta, best);
+  if (ok) {
+    curve.k = (float)best.k;
+    curve.beta = (float)beta;
+    for (int i = 0; i < count; ++i) {
+      if (residuals) residuals[i] = (float)(ts[i] - best.k * rows[i]);
+      if (exponents) exponents[i] = (float)exps[i];
+    }
   }
-  if (t0StandardError)
-    *t0StandardError = covariance ? sqrt(fmax(0.0, weightedSquares / (count - n) * inverse0[0])) : NAN;
-  return true;
+  delete[] work;
+  return ok;
 }
 
-// Default curve: the venting test of 18/09 (129.6 L, air, Patm 0.9286 bar,
-// 10 releases of 20 s from 1.98 to 0.36 bar; t0 not measurable there).
+// Default curve: the three venting tests with the silencer of 20-21/10/2026 (130.9 L, air, Patm
+// 0.9286 bar, 0.14-2.08 bar) fitted together without t0 and without the first release of each test,
+// each test with its own scale (1.000, 0.975, 0.975); k is the shape fit times the mean scale.
 inline Curve defaultCurve() {
-  return {{318.6846f, -296.7812f, 218.9469f, -55.9985f}, 0.0f, 0.36f, 1.98f, 0};
+  return {81.6f, 0.88f, 0.14f, 2.08f, 0};
 }
 
 inline bool validCurve(const Curve &c) {
-  if (!(c.pMax > c.pMin) || !(c.pMin >= 0.0f) || !(c.pMax <= 4.0f) || !isfinite(c.t0) || fabs(c.t0) > 1.0f)
-    return false;
+  if (!(c.pMax > c.pMin) || !(c.pMin >= 0.0f) || !(c.pMax <= 4.0f)) return false;
+  if (!(c.k > 1.0f && c.k < 10000.0f) || !(c.beta > 1e-3f && c.beta < 1000.0f)) return false;
   for (int i = 0; i <= 10; ++i) {
-    const double tau = tauRef(c, c.pMin + (c.pMax - c.pMin) * i / 10.0, 1.0); // inside the range: patm unused
+    const double tau = tauRef(c, c.pMin + (c.pMax - c.pMin) * i / 10.0, 0.93);
     if (!(tau > 1.0 && tau < 100000.0)) return false;
   }
   return true;

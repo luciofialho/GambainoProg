@@ -34,9 +34,11 @@ fermenter volume routine (initial value of its field).
 pvt_user: `brightness` (display) and `ledBrightness` (RGB status LED), 1 to 10; a missing or invalid
 `ledBrightness` falls back to 10 (full brightness).
 Direct vent (docs/vent.md): `ventDrop`, `flowLevel` (floats; `ventMinSec`, `ventSafeDrop` and
-`liquidGasMass` are no longer read or written and stay in NVS, unused) and the blobs `ventCurve` / `ventRefCurve`
-(VentModel::Curve, 28 bytes: a0..a3, t0, pMin, pMax, epoch); a blob of another
-size or an invalid curve keeps the default (18/09) curve and no reference.
+`liquidGasMass` are no longer read or written and stay in NVS, unused) and the blobs `ventFlow2` / `ventFlowRef2`
+(VentModel::Curve, 20 bytes: k, beta, pMin, pMax, epoch); a blob of another
+size or an invalid curve keeps the default curve (fit of the 20-21/10/2026 tests) and no reference.
+The blobs `ventCurve` / `ventRefCurve` of the cubic curve (32 bytes) and `ventFlow` / `ventFlowRef` of the (k, beta, t0)
+curve (24 bytes) are no longer read or written and stay in NVS, unused, for the fallback firmware.
 FMTData.dallasAddress holds the Dallas ROM address of each thermometer role,
 one 8-byte blob per role: `dallasFerm` (fermenter), `dallasEnv` (environment),
 `dallasHeadspace` (headspace); zeros = not assigned (`dallasExpTank` is kept, unused). A missing key or a
