@@ -10,6 +10,8 @@ total = totalMolsEjected + CO2InSolution + headSpaceCO2Mols
 
 A fase gasosa medida é `G = totalMolsEjected + headSpaceCO2Mols` (`gasPhaseCO2Mols()`), que não depende do modelo de D. H é o equilíbrio de Henry de `CO2DissolvedMols(P, SG, T, volume)`.
 
+O Henry usa a **pressão parcial do CO2**, `P_abs·(1 − y)`, com P_abs = P + Patm e `y` a fração de vapor de água e etanol do gás saturado, pela mesma função do vent (`VentModel::ventVaporFraction`, `docs/vent.md` seção 4; T do líquido e `beerABV`). Isso reduz H em 1–2% (≈0,1–0,25 mol em 100 L, ~0,05–0,1 ponto de SG, quase constante no lote). O ar do headspace no início do lote continua sem correção (item cosmético do backlog). A troca de firmware deve ser feita entre lotes: no equilíbrio o dissolvido desce em 30 min, enquanto o buffer de Henry restaurado se renova.
+
 ## 1. Estados
 
 | Valor (`co2Mode`) | Estado | Rótulo no log | D |

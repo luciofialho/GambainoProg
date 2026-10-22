@@ -131,6 +131,8 @@ mols  = C_ar(P̄)·razão(P̄)/√Z(P̄)·nível · P̄/√T_gás · fator · t_
     0,75% (10 °C, 5% ABV, 1 bar). `python tests/vent_bench.py` confere as pressões de
     saturação e estes valores.
   - `/ventstatus` mostra a fração do último vent.
+  - A mesma fração também é usada no Henry (`CO2DissolvedMols`): a lei vale para a pressão
+    parcial do CO2, `P_abs·(1 − y)` (`docs/dissolved-co2.md`).
 - Só em Fermenting; nos outros modos o vent controla a pressão sem contar
   (`VentCounted` = `none`).
 - **Duas contagens, sempre**: a do modelo de vazão (`VentFlowMols`) e a do lado
