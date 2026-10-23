@@ -19,3 +19,6 @@ Thumbs.db
 
 # Lovable project (discarded), a separate git repository
 Gambaino/
+
+# Python caches
+__pycache__/

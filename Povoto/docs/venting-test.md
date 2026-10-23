@@ -118,29 +118,12 @@ mede o ruído da leitura: ele aparece só no script.
 Sem válvula: a pressão é simulada (exponencial com a curva atual e o volume
 do ensaio), com as mesmas esperas (5–10 s).
 
-## 5. Ensaio de validação de espera (rotina separada, uma vez)
+## 5. Ensaio de validação de espera (removido)
 
-Rotina de uso único, **sem página**: só por URL (`src/SettleTest.cpp`). Serve para ver como a pressão se
-recupera depois de fechar a válvula, e assim validar a extrapolação exponencial do P assentado (hoje a
-espera termina quando a variação cai abaixo do limite e ainda restam alguns mbar para subir; docs/vent.md).
-Não mexe no ensaio normal nem no seu histórico.
-
-- **Preparo**: modo OFF, fermentador vazio com ar a ~2,0 bar (mínimo 1,85) e ~15 min de espera.
-- **URLs** (da placa): `/settle/start?confirm=yes` inicia; `/settle/status` mostra o andamento (atualiza
-  a cada 10 s); `/settle/abort?confirm=yes` aborta (a válvula fecha e o arquivo guarda o que foi gravado);
-  `/settle/file` baixa o CSV (também durante o ensaio). A placa pode ser reiniciada a qualquer momento: o ensaio
-  termina, e o arquivo guarda o que foi gravado até ali.
-- **Sequência** (espera inicial de pressão estável, com limite de 0,15 mbar em 30 s, e depois 8 liberações,
-  cada uma seguida de **20 min** de espera): 8 s; 2 s; 0,5 s; passo até 1,1 bar; 8 s; 2 s; passo até
-  0,55 bar; 8 s. Cerca de 3 h no total. Termina antes se a pressão passar abaixo de 0,1 bar, ou se o modo
-  deixar de ser OFF, uma task começar ou a pressão passar da de segurança. Não roda em placa de bancada
-  (debug). Usa a curva em uso para os passos (mesma fórmula da seção 1).
-- **Arquivo** `/settle.csv` (uma leitura por segundo, ~900–1200 linhas por espera, ~300 KB; sobrescrito a cada
-  execução, sem histórico): `release;kind;t_requested_s;t_real_s;P1_bar;P_close_bar;seconds_since_close;
-  pressure_bar;temp_ferm_K;temp_amb_C`. Os campos da liberação (`kind`, tempos, P1 e P_close) só aparecem na
-  primeira linha de cada uma; `release` 0 é a espera inicial. Nome do download:
-  `PovotoCalibration-Settle-FMT<n>-aaaammddhhmm.csv`. Cada término vira um evento de calibração (`settle-test`).
-- **Análise** (fora da placa, a cargo do desenvolvimento): ajuste de uma exponencial, de duas e de uma raiz do
-  tempo à cauda de cada espera, e comparação do P∞ extrapolado com horizontes de 60, 90, 120, 180 e 300 s
-  contra o valor medido aos 20 min (viés e dispersão por tipo de liberação e pressão). A escolha do modelo
-  de cauda decide se a extrapolação entra no ajuste do ensaio normal e se as esperas podem encurtar.
+Uma rotina de uso único (`/settle/*`, 8 liberações com 20 min de espera, uma leitura por segundo) mediu a
+recuperação da pressão depois de fechar a válvula. Resultados: recuperação exponencial com tau de 34–66 s e
+amplitude de 18–25% da queda (liberações de 2–8 s), mais uma queda linear que era um **vazamento** (1,4–1,5
+mbar/min a 1,9 bar), reparado em 22/10/2026 (depois 0,25–0,35 mbar/min). Esses resultados levaram à espera por
+inclinação (seção 1) e às colunas `Pinf_*` e `end_slope_mbar_min`. O código foi removido da árvore principal; está
+no commit marcado com a tag `vent-d-com-settle-2026-10-22`. `tests/recovery_fit_check.py` aceita o
+`settle.csv` dessa rotina.

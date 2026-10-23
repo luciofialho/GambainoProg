@@ -1,8 +1,8 @@
 """Check of the exponential recovery fit (PressureWait::fitRecovery, mirrored by vent_model.fit_recovery).
 
 Usage:  python tests/recovery_fit_check.py [settle.csv]
-Synthetic recoveries with noise: p_inf, tau and amp must come back. With the settle test file (docs/venting-test.md,
-section 5): the fit of the first 120, 180 and 300 s of each wait against the exp + linear decline fit of the 20 min.
+Synthetic recoveries with noise: p_inf, tau and amp must come back. With the file of the removed settle test (docs/venting-test.md,
+section 5; tag vent-d-com-settle-2026-10-22): the fit of the first 120, 180 and 300 s of each wait against the exp + linear decline fit of the 20 min.
 """
 import csv
 import random

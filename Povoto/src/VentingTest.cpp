@@ -13,7 +13,6 @@
 #include "AtmosphericPressure.h"
 #include "CalibrationEvents.h"
 #include "BuildId.h"
-#include "SettleTest.h"
 #include "datalog.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/portmacro.h>
@@ -327,7 +326,7 @@ static char statusText[96] = "Idle";
 static volatile bool abortRequested = false;
 
 bool ventingTestActive() {
-  return stage != VT_IDLE || settleTestActive(); // the settle test (SettleTest.cpp) is a valve routine as well
+  return stage != VT_IDLE;
 }
 
 // The page (web task) copies the finished releases of the running test while
@@ -541,7 +540,6 @@ static void openRelease(float p1, unsigned long now) {
 }
 
 void processVentingTest() {
-  processSettleTest();
   if (stage == VT_IDLE) return;
   if (abortRequested) {
     abortRequested = false;

@@ -37,7 +37,6 @@
 #include "AtmosphericPressure.h"
 #include "CalibrationEvents.h"
 #include "VentingTest.h"
-#include "SettleTest.h"
 #include "ExpansionTank.h"
 #include "LeakHold.h"
 #include "BuildId.h"
@@ -284,11 +283,6 @@ void setup() {
   server.on("/calibration/venting/abort", HTTP_POST, handleVentingTestAbort);
   server.on("/calibration/venting/save", HTTP_POST, handleVentingTestSave);
   server.on("/calibration/venting.csv", HTTP_GET, handleVentingTestCSV);
-  // One-off settle validation test, by URL only (docs/venting-test.md, section 5).
-  server.on("/settle/start", HTTP_GET, handleSettleStart);
-  server.on("/settle/status", HTTP_GET, handleSettleStatus);
-  server.on("/settle/abort", HTTP_GET, handleSettleAbort);
-  server.on("/settle/file", HTTP_GET, handleSettleFile);
   server.on("/calibration/cleaning/start", HTTP_POST, handleValveCleaningStart);
   server.on("/calibration/cleaning/abort", HTTP_POST, handleValveCleaningAbort);
   server.on("/calibration/expansion/start", HTTP_POST, handleExpansionTankStart);
