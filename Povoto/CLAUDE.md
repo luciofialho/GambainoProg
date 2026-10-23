@@ -30,7 +30,7 @@ O método antigo, com tanque de expansão (TE), está na tag `te-final-2026-10-1
 
 ## Estado atual (11/10/2026)
 - Branch `povoto-vent`: firmware só de vent, implementado e não gravado em placa nenhuma. Próximo passo: visita ao local (manual, seção 8), ensaio de ventilação com ar, análise do CSV e gravação da curva e do t0.
-- Curva padrão até o primeiro ensaio: modelo K–β (k 81,6 s; β 0,88) dos ensaios de 20–21/10/2026, sem t0 (docs/vent.md).
+- Curva padrão até o primeiro ensaio: modelo K–β (k 82,8 s; β 1,06) dos ensaios de 22/10/2026 depois do reparo do vazamento, sem t0 (docs/vent.md).
 - O expoente politrópico fixo 1,29 (recuperação medida na média diária, τ ≈ 30 s) continua na contagem (resfriamento) e na pressão assentada. Não mudar.
 - Limites: pressão máxima de segurança até 2,3 bar (o sensor, 0–2 bar, lê bem até aí); pressão máxima de setpoint até 2 bar; número do Povoto 0–99 (o cloud usa site × 100 + número).
 - Nomes: o evento de ventilação é "relief" nas telas, páginas e no cloud (`reliefs`, chave `rc`); "vent" nos docs e no código novo. TBLV = tempo entre os últimos vents (o maior entre o último intervalo e o tempo desde o último vent).

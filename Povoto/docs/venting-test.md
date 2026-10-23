@@ -32,9 +32,12 @@ Código: `src/VentingTest.cpp`; ajuste em `include/VentModel.h`
   mais o erro do nível da curva em uso (±1,5%) e o de P2 ainda não assentado (poucos mbar). A fórmula anterior
   (rebote constante r medido na liberação de 8 s e sem o resfriamento) pousava 18–47 mbar abaixo do alvo,
   porque o rebote de um passo de 10–30 s (14–18%) é menor que o da liberação de 8 s (19–27%).
-- Cada espera termina com a pressão estável (variação < 0,3 mbar em 30 s; **< 0,15 mbar em 30 s ao
-  redor das liberações de 1 s ou menos**, a que acabou de terminar ou a seguinte, porque um erro de
-  ~1 mbar no P assentado é 10% da queda de uma abertura de 0,5 s; mínimo 45 s, máximo 300 s). P1 e P2 = média dos últimos 10 s; P2 de uma
+- Cada espera termina quando a **inclinação** da pressão (reta de mínimos quadrados dos últimos 40 s) fica
+  abaixo de **0,6 mbar/min**, ou de **0,3 mbar/min ao redor das liberações de 1 s ou menos** (a que acabou de
+  terminar ou a seguinte), porque um erro de ~1 mbar no P assentado é 10% da queda de uma abertura de 0,5 s;
+  mínimo 45 s, máximo 300 s. (Antes era a diferença de duas leituras únicas < 0,3 mbar em 30 s: com 0,2 mbar de
+  ruído ela parava as esperas com a pressão ainda subindo 1–2 mbar/min, como mostrou a coluna `end_slope_mbar_min`
+  dos ensaios de 22/10.) P1 e P2 = média dos últimos 10 s; P2 de uma
   liberação é o P1 da seguinte. `P_close` = a primeira leitura ≥ 0,5 s depois de
   fechar. A coluna `settled` do CSV diz `no` quando a espera terminou no máximo,
   sem a pressão estável (num ensaio com teto de 180 s, 8 de 21 esperas — as de 8 s,

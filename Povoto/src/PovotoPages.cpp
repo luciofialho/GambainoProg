@@ -1017,7 +1017,7 @@ static String curveText(const VentModel::Curve &curve) {
   formatLocalEpochISO(curve.epoch, when, sizeof(when));
   return String("tau(P) = k / psi(P), k ") + String(curve.k, 3) + " s, beta " + String(curve.beta, 4) +
     " (100 L of air, 20 &deg;C), measured " + String(curve.pMin, 2) + "-" + String(curve.pMax, 2) + " bar, " +
-    (when[0] ? String("test of ") + when : String("default: tests of 20-21/10/2026"));
+    (when[0] ? String("test of ") + when : String("default: tests of 22/10/2026"));
 }
 
 static String calibrationField(const char *name, const char *label, float value, int decimals, const char *range,
@@ -1063,7 +1063,7 @@ static String flowCurveFieldsHtml() {
     "<li>tau(P) is the time constant of the absolute pressure of 100 L of air at 20 &deg;C, with P in bar (gauge): "
     "k is the capacity of the valve nozzle and beta the resistance of its outlet (docs/vent.md). "
     "The firmware scales it to the headspace volume and the gas temperature.</li>"
-    "<li>Curve now in use: " + (c.epoch ? String("dated ") + source : String("default (tests of 20-21/10/2026)")) +
+    "<li>Curve now in use: " + (c.epoch ? String("dated ") + source : String("default (tests of 22/10/2026)")) +
     ". Changes are saved with Save, between batches only.</li></ul>";
   return html;
 }

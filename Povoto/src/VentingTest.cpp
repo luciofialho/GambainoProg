@@ -41,12 +41,14 @@ static constexpr float VT_LEVEL_MARGIN = 0.15f;     // a level must be this far 
 static constexpr float VT_STEP_MIN_SECONDS = 3.0f, VT_STEP_MAX_SECONDS = 90.0f;
 // Polytropic exponent used to plan the first step of a test (1.2-1.3 measured in the steps of 20-21/10/2026).
 static constexpr float VT_STEP_EXPONENT = 1.22f;
-static constexpr float VT_STABLE_DELTA_BAR = 0.0003f;   // in 30 s
-// Around the releases of 1 s or less (the one that just ended or the next one) the stability limit is half: a
-// settled-pressure error of ~1 mbar is 10% of the drop of a 0.5 s release (the 21/10/2026 test of 18:47 showed it).
-static constexpr float VT_STABLE_DELTA_STRICT_BAR = 0.00015f;
+// A wait ends when the slope of the pressure, a least-squares line over the last VT_SLOPE_WINDOW_MS, falls below the
+// limit. (Before, the difference of two single readings < 0.3 mbar in 30 s: with ~0.2 mbar of noise it stopped the waits
+// while the pressure was still rising 1-2 mbar/min.) Around the releases of 1 s or less (the one that just ended or
+// the next one) the limit is half: a settled-pressure error of ~1 mbar is 10% of the drop of a 0.5 s release.
+static constexpr float VT_STABLE_SLOPE_MBAR_MIN = 0.6f;         // the same as 0.3 mbar in 30 s
+static constexpr float VT_STABLE_SLOPE_STRICT_MBAR_MIN = 0.3f;
 static constexpr float VT_SHORT_RELEASE_SECONDS = 1.0f;
-static constexpr unsigned long VT_STABLE_WINDOW_MS = 30000UL;
+static constexpr unsigned long VT_SLOPE_WINDOW_MS = 40000UL;
 static constexpr unsigned long VT_AVERAGE_MS = 10000UL;
 static constexpr unsigned long VT_CLOSE_READING_MS = 500UL;
 static unsigned long vtWaitMinMs() { return debugging ? 5000UL : 45000UL; }
@@ -317,8 +319,8 @@ static float currentP1 = NAN;
 static float currentP1Noise = NAN; // standard error of the P1 of the next release
 static unsigned long stageMillis = 0, openPlannedMs = 0;
 static int64_t openMicros = 0;
-static volatile float waitChange = NAN; // bar in the last 30 s of the wait (the web task never touches `wait`)
-static volatile float stableLimit = VT_STABLE_DELTA_BAR; // limit of the current wait (bar in 30 s)
+static volatile float waitSlope = NAN;  // mbar/min over the last 40 s of the wait (the web task never touches `wait`)
+static volatile float stableLimit = VT_STABLE_SLOPE_MBAR_MIN; // limit of the current wait (mbar/min)
 static float simulatedPressure = NAN;   // debug boards
 static char statusText[96] = "Idle";
 // Set by the web handler; the loop aborts (buffers are freed in the loop only).
@@ -419,10 +421,9 @@ String ventingTestProgressText() {
                    stage == VT_OPEN ? "valve open" : "waiting for a stable pressure", (millis() - stageMillis) / 1000UL,
                    ControlData.pressure);
   if (stage != VT_OPEN && n > 0 && n < (int)sizeof(text)) {
-    const float change = waitChange; // bar in the last 30 s
-    if (isfinite(change))
-      snprintf(text + n, sizeof(text) - n, ", change %+.2f mbar in %lu s (limit %.2f)", change * 1000.0f,
-               VT_STABLE_WINDOW_MS / 1000UL, stableLimit * 1000.0f);
+    const float slope = waitSlope; // mbar/min over the last 40 s
+    if (isfinite(slope))
+      snprintf(text + n, sizeof(text) - n, ", slope %+.2f mbar/min (limit %.2f)", slope, (float)stableLimit);
   }
   return String(text);
 }
@@ -496,8 +497,8 @@ bool startVentingTest(uint8_t label, bool co2, float volume, char *reason, size_
   stepNext = false;
   simulatedPressure = ControlData.pressure;
   wait->reset(millis());
-  waitChange = NAN;
-  stableLimit = VT_STABLE_DELTA_BAR;
+  waitSlope = NAN;
+  stableLimit = VT_STABLE_SLOPE_MBAR_MIN;
   stageMillis = millis();
   abortRequested = false;
   stage = VT_WAIT_P1;
@@ -509,11 +510,11 @@ bool startVentingTest(uint8_t label, bool co2, float volume, char *reason, size_
 static bool waitDone() {
   const uint32_t last = wait->lastSampleElapsed();
   if (wait->count == 0) return false;
-  waitChange = last >= VT_STABLE_WINDOW_MS ? wait->change(VT_STABLE_WINDOW_MS) : NAN; // for the status text
+  const float slope = last >= VT_SLOPE_WINDOW_MS ? wait->slopePerMinute(VT_SLOPE_WINDOW_MS) : NAN; // bar/min
+  waitSlope = isfinite(slope) ? 1000.0f * slope : NAN; // also for the status text
   if (last >= vtWaitMaxMs()) return true;
-  if (last < vtWaitMinMs() || last < VT_STABLE_WINDOW_MS) return false;
-  const float change = waitChange;
-  return isfinite(change) && fabsf(change) < stableLimit;
+  if (last < vtWaitMinMs() || last < VT_SLOPE_WINDOW_MS) return false;
+  return isfinite(waitSlope) && fabsf(waitSlope) < stableLimit;
 }
 
 static void openRelease(float p1, unsigned long now) {
@@ -585,9 +586,9 @@ void processVentingTest() {
     const bool shortNow = levelRelease && x.requested <= VT_SHORT_RELEASE_SECONDS;
     const bool shortNext = levelRelease && durationIndex + 1 < VT_DURATION_COUNT &&
                            VT_DURATIONS[durationIndex + 1] <= VT_SHORT_RELEASE_SECONDS;
-    stableLimit = (shortNow || shortNext) ? VT_STABLE_DELTA_STRICT_BAR : VT_STABLE_DELTA_BAR;
+    stableLimit = (shortNow || shortNext) ? VT_STABLE_SLOPE_STRICT_MBAR_MIN : VT_STABLE_SLOPE_MBAR_MIN;
     wait->reset(now);
-    waitChange = NAN;
+    waitSlope = NAN;
     stageMillis = now;
     stage = VT_SETTLE;
     showProgress(true);
@@ -607,8 +608,8 @@ void processVentingTest() {
       // The pressure still falling at the end of the wait is a leak or the gas still cooling (10 mbar per K at 2 bar): both are logged.
       x.endSlope = wait->slopePerMinute(60000UL);
       x.tempEndK = 273.15f + ControlData.temperature;
-      const float change = waitChange; // set by waitDone() in this same pass
-      if (!(isfinite(change) && fabsf(change) < stableLimit)) x.kind |= VT_KIND_UNSETTLED;
+      const float slope = waitSlope; // set by waitDone() in this same pass
+      if (!(isfinite(slope) && fabsf(slope) < stableLimit)) x.kind |= VT_KIND_UNSETTLED;
       portENTER_CRITICAL(&testLock);
       ++test->count;
       portEXIT_CRITICAL(&testLock);
@@ -628,7 +629,8 @@ void processVentingTest() {
         finishTest("Completed");
         return;
       }
-      openRelease(x.p2, now);
+      // millis() again, not `now`: the extrapolation above takes ~0.1-0.2 s, and the opening time is counted from this instant.
+      openRelease(x.p2, millis());
       showProgress(true);
     }
   }

@@ -3076,7 +3076,7 @@ String getVentStatusHtml() {
     char when[20];
     formatLocalEpochISO(c.epoch, when, sizeof(when));
     return "k " + num(c.k, 3) + " s, beta " + num(c.beta, 4) + ", " + num(c.pMin, 3) + "-" + num(c.pMax, 3) + " bar, " +
-           (when[0] ? String(when) : String("default (tests of 20-21/10/2026)"));
+           (when[0] ? String(when) : String("default (tests of 22/10/2026)"));
   };
   const unsigned long now = millis();
   String html;

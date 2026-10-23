@@ -346,11 +346,12 @@ inline bool fitVentingTest(const Release *rel, int count, double volume, double 
   return ok;
 }
 
-// Default curve: the three venting tests with the silencer of 20-21/10/2026 (130.9 L, air, Patm
-// 0.9286 bar, 0.14-2.08 bar) fitted together without t0 and without the first release of each test,
-// each test with its own scale (1.000, 0.975, 0.975); k is the shape fit times the mean scale.
+// Default curve: the two venting tests of 22/10/2026 (E at 13:10 and F at 15:32, 130.9 L, air, with the silencer, after the
+// leak repair, Patm 0.9286 bar, 0.18-2.1 bar) fitted together without t0 and without the first release of each test, each
+// test with its own scale (1.000 and 0.997); k is the shape fit times the mean scale. The tests of 20-21/10/2026, made
+// with a leak of ~1 mbar/min, gave a flow ~5% faster (k 81.6, beta 0.88) and are not pooled with them.
 inline Curve defaultCurve() {
-  return {81.6f, 0.88f, 0.14f, 2.08f, 0};
+  return {82.8f, 1.06f, 0.18f, 2.10f, 0};
 }
 
 inline bool validCurve(const Curve &c) {

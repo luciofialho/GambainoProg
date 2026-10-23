@@ -94,15 +94,21 @@ t          = máx(mín(t_estimado, t_seg), 1,5 s)
 - **Fator de nível** `flowLevelFactor` (1,0): ajustado entre lotes pela SG
   desgaseificada (manual, P7).
 - **Sem t0** (decisão de 21/10/2026): o atraso de abertura da válvula é tomado igual ao de
-  fechamento (t0 = δ_abre − δ_fecha = 0), então o tempo aberto medido é o tempo de vazão. O t0
-  ajustado nos quatro ensaios foi +4,7, +9,5, +12,6 e −89 ms (erro padrão 12–18 ms cada), com uma
-  dispersão entre ensaios muito maior que o erro de cada um: o ajuste não o mede (o P assentado das
-  liberações curtas pesa demais). Um t0 real de ±20 ms erra os mols em ±1,0% a 2 s de abertura
-  (±1,3% a 1,5 s; ±0,7% a 3 s; `tests/vent_bench.py`). A suposição entra na incerteza (±1%).
-- **Curva padrão** (antes do primeiro ensaio): os três ensaios com o silenciador de 20–21/10/2026
-  (130,9 L, ar, Patm 0,9286 bar, 0,14–2,08 bar) ajustados juntos **sem t0 e sem a primeira
-  liberação**, cada ensaio com a sua escala (1,000, 0,975 e 0,975; desvio de 1,5%): k = 81,6 s (a
-  forma ajustada, 83,0 s, vezes a escala média 0,983) e β = 0,88. Ajuste: `python tests/venting_fit.py`.
+  fechamento (t0 = δ_abre − δ_fecha = 0), então o tempo aberto medido é o tempo de vazão. Os dois
+  atrasos da VT307 são da ordem de 20 ms cada (estimativa; confirmar no catálogo SMC), então a
+  diferença deve ser de poucos ms. O t0 ajustado nos quatro ensaios foi +4,7, +9,5, +12,6 e −89 ms
+  (erro padrão 12–18 ms cada), com uma dispersão entre ensaios muito maior que o erro de cada um: o
+  ajuste não o mede (o P assentado das liberações curtas pesa demais), só mostra que a diferença
+  fica abaixo da resolução dos ensaios. Resíduo adotado: ±5 ms, que erra os mols em ±0,25% a 2 s
+  de abertura (±0,33% no mínimo de 1,5 s; ±0,17% a 3 s; o erro é ±t0/t_real). A suposição entra
+  na incerteza (±0,25–0,33%).
+- **Curva padrão** (antes do primeiro ensaio): os dois ensaios de **22/10/2026 depois do reparo do
+  vazamento** (E às 13:10 e F às 15:32; 130,9 L, ar, com o silenciador, Patm 0,9286 bar, 0,18–2,1 bar)
+  ajustados juntos **sem t0 e sem a primeira liberação**, cada ensaio com a sua escala (1,000 e 0,997; os dois
+  repetem a 0,2%): k = 82,8 s e β = 1,06. Os ensaios de 20–21/10, feitos com um vazamento de ~1 mbar/min,
+  deram uma vazão ~5% mais rápida (k = 81,6; β = 0,88) e não entram no conjunto. Se a placa já tem uma curva
+  gravada (qualquer "Save" da página grava a curva em uso), o padrão novo não a substitui: digite k e β na página.
+  Ajuste: `python tests/venting_fit.py`.
 
 ## 4. Contagem
 
@@ -164,7 +170,7 @@ mols  = C_ar(P̄)·razão(P̄)/√Z(P̄)·nível · P̄/√T_gás · fator · t_
   contagem erra ≤ 0,11% a 0,5 / 1,0 / 1,9 bar com Vh de 20 / 30 / 50 L. Com uma
   curva plana é exata (< 0,002%): o resto vem de avaliar C em P̄ quando a cúbica
   de 18/09 muda ~8% dentro de um vent perto de 1,9 bar. Sensibilidades (1,9 bar,
-  30 L): t0 real de ±20 ms (suposto 0) ±1,0%; válvula 3% mais lenta +3,0%; gás 2 K mais quente
+  30 L): t0 real de ±20 ms (suposto 0) ±1,0% (linear: o resíduo adotado de ±5 ms dá ±0,25%); válvula 3% mais lenta +3,0%; gás 2 K mais quente
   +0,25%; gás 6 K mais quente com a T do líquido +1,0%; expoente real 1,20 ou
   1,40: < 0,25% na contagem (mas ±7% no Vh aparente). Abaixo de `pMin` o bench confere a
   continuidade em `pMin`, o τ de ponta acima de `pMax`, a escala do bocal e a contagem de um
@@ -224,7 +230,7 @@ alarmes do vent e a contagem de vents fora da faixa.
 | Queda alvo (%) — página Settings | `ventDrop` | 6 |
 | Fator de nível — Calibration | `flowLevel` | 1,0 |
 | Expoente efetivo de ventilação — Calibration | `ventExponent` | 1,29 |
-| Curva de vazão k, β (blob de 20 bytes; editável na página Calibration, entre lotes, ou pelo "Save curve" do ensaio) | `ventFlow2` | ensaios de 20–21/10 (k 81,6; β 0,88) |
+| Curva de vazão k, β (blob de 20 bytes; editável na página Calibration, entre lotes, ou pelo "Save curve" do ensaio) | `ventFlow2` | ensaios de 22/10 (k 82,8; β 1,06) |
 | Curva de referência (blob) | `ventFlowRef2` | nenhuma |
 
 A abertura mínima (1,5 s) e a queda de segurança (2 × a alvo) são fixas no código. As chaves antigas

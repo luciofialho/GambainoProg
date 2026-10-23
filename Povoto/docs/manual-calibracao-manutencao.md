@@ -660,7 +660,7 @@ as linhas do mesmo ensaio. `python tests/venting_fit.py arquivo.csv` refaz o aju
 | temp_ferm_K | Temperatura do fermentador em P1 (K) |
 | temp_amb_C | Temperatura ambiente (SideKick ou Dallas ambiente) quando a válvula abriu; vazia se não havia valor válido (o SideKick envia a cada 60 s). Só para correlações: não entra no ajuste |
 | wait_s | Tempo de espera pela estabilização depois da liberação (máximo 300 s) |
-| settled | `yes` se a pressão estabilizou (< 0,3 mbar em 30 s; < 0,15 mbar ao redor das liberações de 1 s ou menos); `no` se a espera terminou no máximo, e o P2 pode ainda estar subindo |
+| settled | `yes` se a pressão estabilizou (inclinação dos últimos 40 s < 0,6 mbar/min; < 0,3 mbar/min ao redor das liberações de 1 s ou menos); `no` se a espera terminou no máximo, e o P2 pode ainda estar subindo |
 | P1_noise_mbar / P2_noise_mbar | Erro padrão da média de cada pressão assentada, em mbar |
 | fit_K_s, fit_beta | k (s; 100 L de ar a 20 °C) e β da curva τ(P) = k/ψ_ef(P) ajustada |
 | shape_rms_pct | Resíduo rms de forma das aberturas ≥ 4 s (%), só informação |

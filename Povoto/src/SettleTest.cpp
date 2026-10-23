@@ -22,8 +22,8 @@ static constexpr float ST_MIN_START_PRESSURE = 1.85f;     // bar gauge
 static constexpr float ST_END_PRESSURE = 0.1f;            // bar gauge: below it the test ends
 static constexpr unsigned long ST_WAIT_MS = 20UL * 60UL * 1000UL;
 static constexpr unsigned long ST_INITIAL_MIN_MS = 45000UL, ST_INITIAL_MAX_MS = 300000UL;
-static constexpr unsigned long ST_STABLE_WINDOW_MS = 30000UL;
-static constexpr float ST_INITIAL_DELTA_BAR = 0.00015f;   // strict, in 30 s
+static constexpr unsigned long ST_SLOPE_WINDOW_MS = 40000UL;
+static constexpr float ST_INITIAL_SLOPE_MBAR_MIN = 0.3f;  // strict: least-squares slope of the last 40 s
 static constexpr unsigned long ST_AVERAGE_MS = 10000UL;   // P1 = mean of the last 10 s of the wait
 static constexpr unsigned long ST_CLOSE_READING_MS = 500UL;
 static constexpr unsigned long ST_FLUSH_MS = 20000UL;
@@ -222,9 +222,9 @@ void processSettleTest() {
   if (stage == ST_INITIAL) {
     const uint32_t last = wait->lastSampleElapsed();
     bool done = wait->count > 0 && last >= ST_INITIAL_MAX_MS;
-    if (!done && wait->count > 0 && last >= ST_INITIAL_MIN_MS && last >= ST_STABLE_WINDOW_MS) {
-      const float change = wait->change(ST_STABLE_WINDOW_MS);
-      done = isfinite(change) && fabsf(change) < ST_INITIAL_DELTA_BAR;
+    if (!done && wait->count > 0 && last >= ST_INITIAL_MIN_MS && last >= ST_SLOPE_WINDOW_MS) {
+      const float slope = 1000.0f * wait->slopePerMinute(ST_SLOPE_WINDOW_MS);
+      done = isfinite(slope) && fabsf(slope) < ST_INITIAL_SLOPE_MBAR_MIN;
     }
     if (done) {
       p1 = wait->mean(ST_AVERAGE_MS);
