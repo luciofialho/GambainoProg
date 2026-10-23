@@ -90,6 +90,21 @@ Saídas (página, CSV e eventos de calibração):
 O desvio padrão dos resíduos das aberturas curtas (~15–45 ms com 0,15 mbar)
 mede o ruído da leitura: ele aparece só no script.
 
+### Qual curva usar (procedimento)
+
+- A curva de cada fermentador fica **gravada na própria placa** (e no backup de configuração). O padrão do
+  firmware só vale para uma placa nunca calibrada e **não é alterado por calibração**: o firmware serve a vários
+  fermentadores.
+- Depois de um ensaio válido (sem vazamento visível em `end_slope_mbar_min`), use **Use last test curve** na página
+  de Calibração e **Save**, entre lotes. Não é preciso fazer média de ensaios: a repetibilidade de um ensaio
+  (~0,4% no nível) é bem menor que a incerteza total (~1,9%).
+- k e β andam juntos: um ensaio isolado pode trocar um pelo outro (22/10/2026: 83,4/1,02; 82,0/1,09; 80,5/1,24),
+  mas a vazão (tau) que descrevem é quase a mesma. Compare ensaios pelo **tau** (colunas de comparação acima), não
+  por k e β.
+- Ensaios de versões diferentes do ensaio (regra de parada da espera, tempo de abertura) não se misturam: vale o
+  último, feito com a versão atual. Ao repetir o ensaio, se o tau ficar a menos de ~0,5% do anterior, mantenha a
+  curva gravada; se divergir, investigue (vazamento, volume, temperatura) antes de trocar.
+
 ## 3. Histórico e gravação
 
 - `/venttest6.bin` na partição `persist` (magic `VTH8`): os últimos **50

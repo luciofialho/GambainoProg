@@ -1058,7 +1058,6 @@ static String flowCurveFieldsHtml() {
       "document.getElementById('ventPMin').value='" + num(s.curve.pMin, 3) + "';" +
       "document.getElementById('ventPMax').value='" + num(s.curve.pMax, 3) + "'\">Use last test curve</button></div>";
   }
-  html += "</div>";
   html += "</div><ul>"
     "<li>tau(P) is the time constant of the absolute pressure of 100 L of air at 20 &deg;C, with P in bar (gauge): "
     "k is the capacity of the valve nozzle and beta the resistance of its outlet (docs/vent.md). "
