@@ -97,7 +97,7 @@ mede o ruído da leitura: ele aparece só no script.
   fermentadores.
 - Depois de um ensaio válido (sem vazamento visível em `end_slope_mbar_min`), use **Use last test curve** na página
   de Calibração e **Save**, entre lotes. Não é preciso fazer média de ensaios: a repetibilidade de um ensaio
-  (~0,4% no nível) é bem menor que a incerteza total (~0,9%, docs/vent.md, seção 4).
+  (~0,4% no nível) é bem menor que a incerteza total (~0,8%, docs/vent.md, seção 4).
 - k e β andam juntos: um ensaio isolado pode trocar um pelo outro (22/10/2026: 83,4/1,02; 82,0/1,09; 80,5/1,24),
   mas a vazão (tau) que descrevem é quase a mesma. Compare ensaios pelo **tau** (colunas de comparação acima), não
   por k e β.
