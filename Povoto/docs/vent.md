@@ -196,11 +196,11 @@ vent se cancela nos 100–160 vents por dia). Dados dos ensaios E, F e G de 22/1
 | Atraso da válvula: t0 = +5 ± 8 ms (ajuste livre de E+F+G; compatível com 0), numa abertura de 2 s | 0,4% |
 | Pressão de vapor (estimativa: gás saturado na T do líquido; a_w, γ e ABV; ~0,3% se saísse a 80% de saturação) | 0,2% |
 | Temperatura do gás (sem termômetro de headspace; ~0,1% com ele) | 0,35% |
-| Exatidão do sensor de pressão (XDB401-G1-W7-A, 0–2 bar), calibrado em dois pontos (zero e ~2 bar) contra um manômetro de referência de 0,5% FS em 0–250 kPa (12,5 mbar, limite retangular, σ 7,2 mbar em cada ponto, erros independentes): a ~1 bar a interpolação dá σ 5,1 mbar, sobre a pressão absoluta de ~1,93 bar; deriva do sensor de 0,03% FS (0,6 mbar) desprezível; não linearidade e histerese do sensor não incluídas (a medir) | 0,26% |
+| Exatidão do sensor de pressão (XDB401-G1-W7-A, 0–2 bar), calibrado em dois pontos: zero com o sensor aberto para a atmosfera (erro desprezível) e ~2 bar contra um manômetro de referência de 0,5% FS em 0–250 kPa (12,5 mbar, limite retangular, σ 7,2 mbar); o erro do ponto de 2 bar cresce linearmente com a pressão, então a ~1 bar são 3,6 mbar, sobre a pressão absoluta de ~1,93 bar; deriva do sensor de 0,03% FS (0,6 mbar) desprezível; não linearidade e histerese do sensor não incluídas (a medir) | 0,19% |
 | **Total (soma quadrática)** | **~0,8%** |
 
-O erro do atraso vai com 1/t: ±0,8% numa abertura de 1 s. O erro do sensor depende da pressão: 0,25% a 1,9 bar (perto do ponto de
-calibração, σ 7,2 mbar) e 0,4% a 0,5 bar.
+O erro do atraso vai com 1/t: ±0,8% numa abertura de 1 s. O erro do sensor: 0,24% a 1,9 bar (perto do ponto de calibração) e
+0,13% a 0,5 bar.
 
 ## 5. Vh aparente e headspace
 
