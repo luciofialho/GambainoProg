@@ -196,11 +196,11 @@ vent se cancela nos 100–160 vents por dia). Dados dos ensaios E, F e G de 22/1
 | Atraso da válvula: t0 = +5 ± 8 ms (ajuste livre de E+F+G; compatível com 0), numa abertura de 2 s | 0,4% |
 | Pressão de vapor (estimativa: gás saturado na T do líquido; a_w, γ e ABV; ~0,3% se saísse a 80% de saturação) | 0,2% |
 | Temperatura do gás (sem termômetro de headspace; ~0,1% com ele) | 0,35% |
-| Exatidão do sensor de pressão: 1% do fundo de escala de 2 bar = 20 mbar, tomado como limite retangular (σ 11,5 mbar) sobre a pressão absoluta de ~1,93 bar; a calibração com o mesmo sensor absorve parte | 0,6% |
-| **Total (soma quadrática)** | **~1,0%** |
+| Exatidão do sensor de pressão (XDB401-G1-W7-A, 0–2 bar), calibrado contra um manômetro de referência de 0,5% FS em 0–250 kPa (12,5 mbar, limite retangular, σ 7,2 mbar) sobre a pressão absoluta de ~1,93 bar; deriva do sensor de 0,03% FS (0,6 mbar) desprezível; não linearidade e histerese do sensor não incluídas (a medir) | 0,37% |
+| **Total (soma quadrática)** | **~0,9%** |
 
-O erro do atraso vai com 1/t: ±0,8% numa abertura de 1 s. O erro do sensor vai com 1/P absoluta: 0,4% a 1,9 bar e
-0,8% a 0,5 bar.
+O erro do atraso vai com 1/t: ±0,8% numa abertura de 1 s. O erro do sensor vai com 1/P absoluta: 0,25% a 1,9 bar e
+0,5% a 0,5 bar.
 
 ## 5. Vh aparente e headspace
 
