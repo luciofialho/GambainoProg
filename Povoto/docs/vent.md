@@ -176,26 +176,31 @@ mols  = C_ar(P̄)·razão(P̄)/√Z(P̄)·nível · P̄/√T_gás · fator · t_
   continuidade em `pMin`, o τ de ponta acima de `pMax`, a escala do bocal e a contagem de um
   vent a 0,25 bar (≤ 0,5%).
 
-### Incerteza dos mols ventados (1σ, a ~1 bar, ensaios E, F e G de 22/10/2026)
+### Incerteza dos mols ventados (1σ, a ~1 bar, versão final planejada)
 
-**Premissas** (fora da tabela, e não entram no total): fermentador **sem vazamento** (a inclinação final de cada
-espera, `end_slope_mbar_min`, deve ficar perto de zero; docs/venting-test.md) e **calibração mantida em dia**, de
-modo que derivas da válvula, do silenciador e do sensor sejam compensadas pelo reensaio. Sem isso o erro não tem
-limite e a tabela não vale.
+Incerteza **sistemática** nos mols de CO2 ventados por lote, inerente ao modelo e ao equipamento (o ruído de cada
+vent se cancela nos 100–160 vents por dia). Dados dos ensaios E, F e G de 22/10/2026.
+
+**Premissas** (não entram na tabela; sem elas o erro não tem limite):
+- fermentador **sem vazamento** (`end_slope_mbar_min` perto de zero; docs/venting-test.md);
+- **calibração mantida em dia**, compensando derivas da válvula, do silenciador e do sensor (reensaio de tempos em
+  tempos);
+- **barômetro BMP580/581** instalado (Patm em tempo real; resta ~0,02%);
+- **`flowLevelFactor` calibrado** com a DG degaseificada de lotes reais, o que absorve nível e conversão CO2/ar
+  (resta a incerteza da própria referência, a DG: ±1,5–2,5% por lote, ~1% com vários lotes).
 
 | Fonte | Incerteza |
 |---|---|
 | Nível da curva (repetibilidade entre ensaios, pós-reparo) | 0,4% |
 | Forma da curva (resíduo do ajuste, rms) | 0,35% |
 | Atraso da válvula: t0 = +5 ± 8 ms (ajuste livre de E+F+G; compatível com 0), numa abertura de 2 s | 0,4% |
-| Conversão CO2/ar (some com o ajuste de `flowLevelFactor` pela DG de lotes reais) | 1,0% |
-| Pressão de vapor | 0,4% |
-| Temperatura do gás | 0,35% |
-| Patm (de altitude; o barômetro BMP580/581 reduz) | 0,1% |
-| Offset do sensor | 0,13% |
-| **Total (soma quadrática)** | **~1,3%** |
+| Pressão de vapor (estimativa: gás saturado na T do líquido; a_w, γ e ABV; ~0,3% se saísse a 80% de saturação) | 0,2% |
+| Temperatura do gás (sem termômetro de headspace; ~0,1% com ele) | 0,35% |
+| Exatidão do sensor de pressão: 1% do fundo de escala de 2 bar = 20 mbar, tomado como limite retangular (σ 11,5 mbar) sobre a pressão absoluta de ~1,93 bar; a calibração com o mesmo sensor absorve parte | 0,6% |
+| **Total (soma quadrática)** | **~1,0%** |
 
-O erro do atraso vai com 1/t: ±0,8% numa abertura de 1 s.
+O erro do atraso vai com 1/t: ±0,8% numa abertura de 1 s. O erro do sensor vai com 1/P absoluta: 0,4% a 1,9 bar e
+0,8% a 0,5 bar.
 
 ## 5. Vh aparente e headspace
 
