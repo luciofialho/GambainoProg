@@ -176,6 +176,27 @@ mols  = C_ar(P̄)·razão(P̄)/√Z(P̄)·nível · P̄/√T_gás · fator · t_
   continuidade em `pMin`, o τ de ponta acima de `pMax`, a escala do bocal e a contagem de um
   vent a 0,25 bar (≤ 0,5%).
 
+### Incerteza dos mols ventados (1σ, a ~1 bar, ensaios E, F e G de 22/10/2026)
+
+**Premissas** (fora da tabela, e não entram no total): fermentador **sem vazamento** (a inclinação final de cada
+espera, `end_slope_mbar_min`, deve ficar perto de zero; docs/venting-test.md) e **calibração mantida em dia**, de
+modo que derivas da válvula, do silenciador e do sensor sejam compensadas pelo reensaio. Sem isso o erro não tem
+limite e a tabela não vale.
+
+| Fonte | Incerteza |
+|---|---|
+| Nível da curva (repetibilidade entre ensaios, pós-reparo) | 0,4% |
+| Forma da curva (resíduo do ajuste, rms) | 0,35% |
+| Atraso da válvula: t0 = +5 ± 8 ms (ajuste livre de E+F+G; compatível com 0), numa abertura de 2 s | 0,4% |
+| Conversão CO2/ar (some com o ajuste de `flowLevelFactor` pela DG de lotes reais) | 1,0% |
+| Pressão de vapor | 0,4% |
+| Temperatura do gás | 0,35% |
+| Patm (de altitude; o barômetro BMP580/581 reduz) | 0,1% |
+| Offset do sensor | 0,13% |
+| **Total (soma quadrática)** | **~1,3%** |
+
+O erro do atraso vai com 1/t: ±0,8% numa abertura de 1 s.
+
 ## 5. Vh aparente e headspace
 
 `Vh_aparente = mols·R·T_gás / Δ(P/Z)`, com Δ entre `P_on` extrapolada (a
