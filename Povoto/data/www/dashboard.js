@@ -223,7 +223,7 @@
       ['Total reliefs', st.reliefCount],
       [null],
       ['CO2 headspace', ...pair(st.co2Headspace)],
-      ['CO2 solution', ...pair(st.co2Solution)],
+      ['CO2 in solution', ...pair(st.co2Solution)],
       ['CO2 vented', ...pair(st.co2Vented)],
     ];
     for (let i = 0; i < PURPLE_BAR.length; ++i) {

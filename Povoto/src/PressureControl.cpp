@@ -1619,11 +1619,21 @@ float SGToApparentPlato(float sg) {
           - 616.868f;
 }
 
+// Balling's attenuation quotient q = (OE - AE) / (OE - RE) as a function of the
+// original extract OE (degrees Plato): q = 1.220 + 0.001 * OE (Hrach 1927, the same
+// as Balling 1846; Savel, Kosin & Broz 2015, eq. 27). Real and apparent extract
+// are then related by RE = (1 - 1/q) * OE + AE / q (docs/extract.md).
+float attenuationQuotient(float originalPlato) {
+  if (!isfinite(originalPlato) || originalPlato < 0.0f) originalPlato = 0.0f;
+  return 1.220f + 0.001f * originalPlato;
+}
+
 float SGToRealPlato(float sg) {
   const float oe = SGToApparentPlato(BatchData.batchOG);
   const float ae = SGToApparentPlato(sg);
+  const float q = attenuationQuotient(oe);
 
-  return 0.1808f * oe + 0.8192f * ae;
+  return (1.0f - 1.0f / q) * oe + ae / q;
 }
 
 float ApparentPlatoToSG(float apparentPlato) {
@@ -1651,8 +1661,9 @@ float RealPlatoToSG(float realPlato) {
     const float originalPlato =
         SGToApparentPlato(BatchData.batchOG);
 
+    const float q = attenuationQuotient(originalPlato);
     const float apparentPlato =
-        (realPlato - 0.1808f * originalPlato) / 0.8192f;
+        (realPlato - (1.0f - 1.0f / q) * originalPlato) * q;
 
     return ApparentPlatoToSG(apparentPlato);
 }
@@ -2257,9 +2268,11 @@ void calculateFermentationState() {
     remainingExtractMassPerLiterG /
     currentBeerMassPerLiterG;
 
+  // Balling's attenuation quotient for this original extract (docs/extract.md).
+  const float attenuationQ = attenuationQuotient(OE);
   const float beerApparentPlato =
-    (beerRealPlato - 0.1808f * OE) /
-    0.8192f;
+    (beerRealPlato - (1.0f - 1.0f / attenuationQ) * OE) *
+    attenuationQ;
 
   beerSG =
     ApparentPlatoToSG(beerApparentPlato);

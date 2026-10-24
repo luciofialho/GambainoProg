@@ -113,6 +113,8 @@ void getCO2RateLabel(char *out, size_t outSize);
 float getTimeBetweenVentsSeconds();
 float SGToApparentPlato(float sg);
 float SGToRealPlato(float sg);
+// Balling's attenuation quotient q(OE) = 1.220 + 0.001 * OE (docs/extract.md).
+float attenuationQuotient(float originalPlato);
 
 extern float beerVolume;
 extern float beerSG;

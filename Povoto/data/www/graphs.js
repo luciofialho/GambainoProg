@@ -341,12 +341,29 @@
     }
   }
 
+  // Back returns to the page we came from when it was the dashboard (the
+  // touch zones); otherwise the default of the page stays (the device menu).
+  // The cloud has no /menu: it returns to the previous page, or to the list.
+  function cameFrom() {
+    try {
+      const ref = new URL(document.referrer);
+      if (ref.origin === location.origin && ref.pathname !== location.pathname) return ref;
+    } catch (error) { /* no referrer */ }
+    return null;
+  }
+  const referrer = location.protocol === 'file:' ? null : cameFrom();
+  if (referrer && /\/dashboard\/?$/.test(referrer.pathname)) {
+    document.querySelector('.back').href = referrer.href;
+  }
+
   // Cloud only: readOnly (public link) hides the menu and the CSV export;
   // batches fills the batch selector. The device sends neither.
   function applyCloudMeta(meta) {
     if (meta.readOnly) {
       document.querySelector('.back').hidden = true;
       document.getElementById('download-csv').hidden = true;
+    } else if (Array.isArray(meta.batches)) {
+      document.querySelector('.back').href = referrer ? referrer.href : '/povotos';
     }
     if (!Array.isArray(meta.batches) || !meta.batches.length) return;
     const select = document.getElementById('batch');
