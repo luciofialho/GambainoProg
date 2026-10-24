@@ -8,6 +8,7 @@
 #include "PovotoGraphScreen.h"
 #include "PovotoData.h"
 #include "PressureControl.h"
+#include "HoldTest.h"
 #include "PovotoTasks.h"
 #include "TemperatureControl.h"
 #include "PovotoAlarms.h"
@@ -1342,8 +1343,9 @@ void processTouch() {
   uint16_t x, y;
   uint16_t raw_x, raw_y;
 
-  // Tests and an active alarm keep the screen awake.
-  if (calibrationRoutineActive() || activePovotoAlarm() != ALARM_NONE) {
+  // Tests and an active alarm keep the screen awake. The leak hold test lasts hours (up to 48 h): the screensaver works.
+  const bool testKeepsAwake = calibrationRoutineActive() && !holdTestActive();
+  if (testKeepsAwake || activePovotoAlarm() != ALARM_NONE) {
     lastClick = millis();
     if (screenSaverActive) {
       forceScreenSaver(false);
@@ -1352,7 +1354,7 @@ void processTouch() {
   
   if (!touchFlag) {
     unsigned long ssTimeout = (unsigned long)UserConfigurationData.screensaverTime * 1000UL;
-    if (!screenSaverActive && !calibrationRoutineActive() && !taskUIActive && (MILLISDIFF(lastClick, ssTimeout))) {
+    if (!screenSaverActive && !testKeepsAwake && !taskUIActive && (MILLISDIFF(lastClick, ssTimeout))) {
       forceScreenSaver(true);
     }
     // Sai da tela de seleção de tarefa se ficar idle por mais que o timeout do screensaver

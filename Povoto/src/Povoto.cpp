@@ -39,6 +39,7 @@
 #include "VentingTest.h"
 #include "ExpansionTank.h"
 #include "LeakHold.h"
+#include "HoldTest.h"
 #include "BuildId.h"
 #include <esp_system.h>
 #include <esp_heap_caps.h>
@@ -292,6 +293,9 @@ void setup() {
   server.on("/calibration/leak/start", HTTP_POST, handleLeakHoldStart);
   server.on("/calibration/leak/abort", HTTP_POST, handleLeakHoldAbort);
   server.on("/calibration/leak.csv", HTTP_GET, handleLeakHoldCSV);
+  server.on("/calibration/holdtest/start", HTTP_POST, handleHoldTestStart);
+  server.on("/calibration/holdtest/abort", HTTP_POST, handleHoldTestAbort);
+  server.on("/calibration/holdtest.csv", HTTP_GET, handleHoldTestCSV);
   server.on("/calibration", HTTP_GET, handleCalibrationDataPage);
   server.on("/calibration/refresh-current", HTTP_GET, handleCalibrationCurrentRefresh);
   server.on("/calibration/update", HTTP_POST, handleCalibrationDataUpdate);

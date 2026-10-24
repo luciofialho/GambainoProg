@@ -29,6 +29,7 @@
 #include "ValveCleaning.h"
 #include "ExpansionTank.h"
 #include "LeakHold.h"
+#include "HoldTest.h"
 #include "BuildId.h"
 #include "NucleationRecord.h"
 #include "AtmosphericPressure.h"
@@ -1005,7 +1006,7 @@ static float measureCurrentAverage(uint32_t durationMs, uint32_t sampleIntervalM
 
 void handleCalibrationCurrentRefresh(AsyncWebServerRequest *request) {
   const float avgCurrent = measureCurrentAverage(30000UL, 100UL);
-  String target = "/calibration?avgCurrent=" + String(avgCurrent, 2);
+  String target = "/calibration?tab=sensor&avgCurrent=" + String(avgCurrent, 2);
   request->redirect(target);
 }
 
@@ -1067,17 +1068,24 @@ static String flowCurveFieldsHtml() {
   return html;
 }
 
-static String ventSettingsHtml() {
-  String html = "<hr><h2>Vent</h2><p>The valve vents the fermenter to the atmosphere for a time estimated from the flow curve "
-    "and the headspace; the CO2 is counted from the real opening time (docs/vent.md). The target drop per vent is on the "
-    "Settings page. The opening is at least " + String(VENT_MIN_SECONDS, 1) + " s and at most the time that gives " +
-    String(VENT_SAFETY_DROP_FACTOR, 0) + " times the target drop with the smallest plausible headspace (the minimum wins).</p>";
+// Physical parameters tab: the factors of the vent and CO2 models that are fitted from batches, not measured by a routine.
+static String physicalParametersHtml() {
+  String html = "<h2>Physical parameters</h2>";
   html += calibrationField("flowLevelFactor", "Flow level factor (degassed SG, between batches only)", FMTData.flowLevelFactor, 4,
                            "min='0.5' max='1.5'");
   html += calibrationField("FMTEffectiveVentingExponent", "Effective Venting Exponent", FMTData.FMTEffectiveVentingExponent, 3,
                            "min='1' max='1.3'",
                            "Effective polytropic exponent used to correct the temporary pressure drop caused by gas cooling during "
                            "venting. Use 1.00 for isothermal venting and approximately 1.29 for adiabatic CO2 venting.");
+  return html;
+}
+
+// Vent tab, after the venting test: the flow curve in use.
+static String ventSettingsHtml() {
+  String html = "<hr><h2>Vent flow curve</h2><p>The valve vents the fermenter to the atmosphere for a time estimated from the flow curve "
+    "and the headspace; the CO2 is counted from the real opening time (docs/vent.md). The target drop per vent is on the "
+    "Settings page. The opening is at least " + String(VENT_MIN_SECONDS, 1) + " s and at most the time that gives " +
+    String(VENT_SAFETY_DROP_FACTOR, 0) + " times the target drop with the smallest plausible headspace (the minimum wins).</p>";
   html += flowCurveFieldsHtml();
   html += "<p><b>Reference curve:</b> " + curveText(FMTData.ventReferenceCurve) +
     "<br>Last vents: <a href='/ventstatus'>/ventstatus</a></p>";
@@ -1143,7 +1151,7 @@ static String pressureSensorSectionHtml(float pageCurrentReading, bool usingAver
     html += "<p><b>Running:</b> " + String(sensorZeroProgressMinutes(), 1) + " min; current " + num(currentReading, 3) +
       " mA. <form action='/calibration/zero/abort' method='POST'><button>Abort</button></form></p>";
   } else {
-    html += "<form action='/calibration/zero/start' method='POST'><label><input type='checkbox' name='open' value='1' required> "
+    html += "<form action='/calibration/zero/start' method='POST' onsubmit=\"return confirm('Start the sensor zero test (5 min)?')\"><label><input type='checkbox' name='open' value='1' required> "
       "The fermenter is open to the atmosphere</label> <button>Run sensor zero test</button></form>";
   }
   if (r.available) {
@@ -1173,7 +1181,7 @@ static String pressureSensorSectionHtml(float pageCurrentReading, bool usingAver
     html += "<p><b>Running:</b> " + String(sensorZeroProgressMinutes(), 1) + " min; current " + num(currentReading, 3) +
       " mA. <form action='/calibration/zero/abort' method='POST'><button>Abort</button></form></p>";
   } else {
-    html += "<form action='/calibration/pointb/start' method='POST'><label>Reference pressure (bar) "
+    html += "<form action='/calibration/pointb/start' method='POST' onsubmit=\"return confirm('Start the point B reading (2 min)?')\"><label>Reference pressure (bar) "
       "<input type='number' name='reference' step='0.001' min='0.501' style='width:100px' required></label> "
       "<label><input type='checkbox' name='steady' value='1' required> The pressure has been steady for 5 min</label> "
       "<button>Run point B reading</button></form>";
@@ -1204,7 +1212,7 @@ static String pct(float fraction) {
 
 static String ventingTestSectionHtml() {
   auto num = [](float v, int d) { return isfinite(v) ? String(v, d) : String("n/a"); };
-  String html = "<hr><h2>Venting test</h2><ul>"
+  String html = "<h2>Venting test</h2><ul>"
     "<li>Empty fermenter with air.</li>"
     "<li>Valve outlet in its working assembly.</li>"
     "<li>Pressurize above the highest fermentation pressure + ~3% (e.g. 2.05&ndash;2.10 bar for 1.9) and wait ~15 min.</li>"
@@ -1220,7 +1228,7 @@ static String ventingTestSectionHtml() {
       "(the finished releases so far)</p>";
   } else {
     const uint8_t preset = defaultVentingTestLabel();
-    html += "<form action='/calibration/venting/start' method='POST'><label>Label <select name='label'>";
+    html += "<form action='/calibration/venting/start' method='POST' onsubmit=\"return confirm('Start the venting test (about 2 h 15 min)?')\"><label>Label <select name='label'>";
     for (uint8_t i = 0; i < VENTING_LABEL_COUNT; ++i)
       html += String("<option value='") + i + "'" + (i == preset ? " selected" : "") + ">" + ventingTestLabelName(i) + "</option>";
     html += "</select></label> <button>Venting test</button></form><p>" + ventingTestProgressText() + "</p>";
@@ -1297,26 +1305,35 @@ static String dissolvedCO2SectionHtml() {
   return html;
 }
 
+// The one field of the expansion tank volume of the Volume tab, in the order of execution: the leak test and the
+// volume determination below start with their own buttons (form='volForm', formaction). Enter in the field starts
+// the first of them, the leak test. Not shown while one of the routines runs.
+static String expansionTankFieldHtml() {
+  if (expansionTankActive() || leakHoldActive()) return String();
+  return "<h2>Expansion tank</h2><form id='volForm' action='/calibration/leak/start' method='POST'>"
+    "<label>Expansion tank volume (L) <input type='number' name='tank' id='tankVolume' step='0.001' min='0.5' "
+    "style='width:90px' required value='" + String(FMTData.lastExpTankVolume, 3) + "'></label></form>";
+}
+
 // Fermenter volume with an expansion tank (docs/expansion-tank-volume.md).
-static String fermenterVolumeSectionHtml() {
+static String volumeDeterminationSectionHtml() {
   const ExpansionTankResult r = getExpansionTankResult();
-  String html = "<hr><h2>Fermenter volume</h2><ul>"
+  String html = "<hr><h2>Volume determination</h2><ul>"
     "<li>Measures the fermenter volume (FMT volume) with an expansion tank of known volume.</li>"
     "<li>Connect the expansion tank to port A.</li>"
     "<li>Pressurize the fermenter to ~2.0 bar, wait at least 15 min and press Start.</li>"
     "<li>The routine takes about 2&ndash;3 h and repeats by itself down to ~0.5 bar: it waits for a stable pressure, opens the "
     "valve to the tank, waits again, closes and vents the tank.</li>"
-    "<li>Result: the fermenter volume (mean of the stable steps) and its spread. If accepted, press Save as new FMT volume.</li></ul>"
-    "<p><b>" + expansionTankStatusText() + "</b></p>";
+    "<li>Result: the fermenter volume (mean of the stable steps) and its spread. If accepted, press Save as new FMT volume.</li></ul>";
   if (expansionTankActive()) {
     html += "<form action='/calibration/expansion/abort' method='POST'><button>Abort</button></form>";
-  } else {
-    html += "<form action='/calibration/expansion/start' method='POST'><label>Expansion tank volume (L) <input type='number' name='tank' "
-      "id='tankVolume' step='0.001' min='0.5' style='width:90px' required value='" + String(FMTData.lastExpTankVolume, 3) +
-      "'></label> <button>Start</button></form><p>Planned at the current pressure (" + String(ControlData.pressure, 2) +
-      " bar) with this tank: <b>" + String(expansionTankPlannedReliefs(ControlData.pressure, FMTData.lastExpTankVolume)) +
+  } else if (!leakHoldActive()) {
+    html += "<button type='submit' form='volForm' formaction='/calibration/expansion/start' onclick=\"return confirm('Start the volume determination (about 2-3 h)?')\">Start volume determination</button>"
+      "<p>Planned at the current pressure (" + String(ControlData.pressure, 2) + " bar) with this tank: <b>" +
+      String(expansionTankPlannedReliefs(ControlData.pressure, FMTData.lastExpTankVolume)) +
       "</b> reliefs (computed again at the start).</p>";
   }
+  html += "<p><b>" + expansionTankStatusText() + "</b></p>";
   if (r.total > 0) {
     html += "<p><a href='/calibration/expansion.csv'>" + String(expansionTankActive() ? "Current run CSV" : "CSV") + "</a> (every relief, "
       "with its stability marks)</p>";
@@ -1350,15 +1367,13 @@ static String leakHoldSectionHtml() {
   String html = "<hr><h2>Leak test</h2><ul>"
     "<li>Measures gas losses of the fermenter and of the expansion tank side.</li>"
     "<li>Connect the expansion tank to port A, pressurize to ~1.5&ndash;2 bar, wait 15 min and press Start.</li>"
-    "<li>It takes 25 min: 10 min with the valve closed (fermenter alone), then 15 min with the valve open.</li></ul>"
-    "<p><b>" + leakHoldStatusText() + "</b></p>";
+    "<li>It takes 25 min: 10 min with the valve closed (fermenter alone), then 15 min with the valve open.</li></ul>";
   if (leakHoldActive()) {
     html += "<form action='/calibration/leak/abort' method='POST'><button>Abort</button></form>";
-  } else {
-    html += "<form action='/calibration/leak/start' method='POST'><label>Expansion tank volume (L) <input type='number' name='tank' "
-      "step='0.001' min='0.5' style='width:90px' required value='" + String(FMTData.lastExpTankVolume, 3) +
-      "'></label> <button>Start</button></form>";
+  } else if (!expansionTankActive()) {
+    html += "<button type='submit' form='volForm' formaction='/calibration/leak/start' onclick=\"return confirm('Start the leak test (25 min)?')\">Start leak test</button>";
   }
+  html += "<p><b>" + leakHoldStatusText() + "</b></p>";
   if (leakHoldHasData())
     html += "<p><a href='/calibration/leak.csv'>" + String(leakHoldActive() ? "Current run CSV" : "CSV") + "</a></p>";
   if (r.available) {
@@ -1375,6 +1390,73 @@ static String leakHoldSectionHtml() {
   return html;
 }
 
+// Leak hold tests tab (docs/hold-test.md).
+static String holdTestSectionHtml() {
+  const HoldTestResult r = getHoldTestResult();
+  String html = "<h2>Leak hold tests</h2><ul>"
+    "<li>Holds the pressure without any opening and logs it with the temperatures; the loss comes from the slope of P/T.</li>"
+    "<li>Pressurize, wait 15 min and press Start (mode OFF, no task). The valve stays de-energized: the fermenter is closed.</li>"
+    "<li>With more than one step, the time is divided into equal steps and the fermenter is vented to half of the pressure "
+    "between them (a milder factor if the last step would fall below 0.3 bar; port A open to the atmosphere, no tank). Under 20 min per step the rates are not reliable.</li>"
+    "<li>Everything is logged; the first 10 min of each step after a vent (2 min of the first step) are left out of its rate.</li>"
+    "<li>The mL/min column uses the FMT volume: look at the pressure loss when only part of the system is closed.</li></ul>";
+  if (holdTestActive()) {
+    html += "<form action='/calibration/holdtest/abort' method='POST'><button>Abort</button></form>";
+  } else if (!expansionTankActive() && !leakHoldActive()) {
+    html += "<form action='/calibration/holdtest/start' method='POST' "
+      "onsubmit=\"var m=Number(this.minutes.value),s=Number(this.steps.value);return confirm(m<20*s?'Short test (under 20 min per step): its rates are not reliable. Start?':'Start the leak hold test?')\">"
+      "<label>Duration (min, up to 4320) <input type='number' name='minutes' value='60' min='1' max='4320' step='any' style='width:90px' required></label>"
+      "<label>Steps <select name='steps'><option>1</option><option>2</option><option>3</option><option>4</option></select></label>"
+      "<label>Label <input type='text' name='label' maxlength='40' style='width:100%;padding:6px' placeholder='fermenter closed'></label>"
+      "<button>Start</button></form>";
+  }
+  html += "<p><b>" + holdTestStatusText() + "</b></p>";
+  if (holdTestHasData())
+    html += "<p><a href='/calibration/holdtest.csv'>" + String(holdTestActive() ? "Current run CSV" : "CSV") + "</a></p>";
+  if (r.available) {
+    auto cell = [](const HoldTestWindow &w, int kind) -> String {
+      if (!w.valid) return String("<td>n/a</td>");
+      String text;
+      switch (kind) {
+        case 0: text = String(w.samples); break;
+        case 1: text = String(w.pressure, 3); break;
+        case 2: text = String(w.slope, 3); break;
+        case 3: text = String(w.tempSlope, 3); break;
+        case 4: text = String(w.lossPercent, 4); break;
+        default: text = String(w.flow, 1); break;
+      }
+      return "<td>" + text + "</td>";
+    };
+    html += "<p>" + String(r.label[0] ? r.label : "no label") + ": " + String(r.minutes, 0) + " min planned in " + String(r.steps) +
+      " step" + (r.steps > 1 ? "s" : "") + " of " + String(r.stepMinutes, 0) + " min, one sample every " + String(r.intervalSeconds) +
+      " s, " + String(r.elapsedSeconds / 60) + " min logged.</p>"
+      "<table style='width:100%;font-size:0.85em'><tr><th></th><th>n</th><th>P bar</th><th>mbar/min</th><th>K/min</th>"
+      "<th>%/min</th><th>mL/min</th><th>%/min 1st half</th><th>2nd half</th></tr>";
+    for (uint8_t k = 0; k < r.steps; ++k) {
+      const HoldTestStep &s = r.step[k];
+      html += "<tr><td>Step " + String(k + 1) + "</td>";
+      for (int c = 0; c < 6; ++c) html += cell(s.whole, c);
+      html += cell(s.first, 4) + cell(s.second, 4) + "</tr>";
+    }
+    html += "<tr><td>Last 10 min</td>";
+    for (int c = 0; c < 6; ++c) html += cell(r.last10, c);
+    html += "<td></td><td></td></tr><tr><td>Last 30 min</td>";
+    for (int c = 0; c < 6; ++c) html += cell(r.last30, c);
+    html += "<td></td><td></td></tr></table>";
+    if (r.exponentValid)
+      html += "<p>Loss against the gauge pressure: flow &prop; P<sup>" + String(r.exponent, 2) + "</sup></p>";
+    else if (r.steps >= 3)
+      html += "<p>No exponent: fewer than 3 steps lose gas measurably.</p>";
+  }
+  return html;
+}
+
+// Tabs of the Calibration page: where each routine returns to.
+static const char *const CAL_TAB_SENSOR = "/calibration?tab=sensor";
+static const char *const CAL_TAB_VOLUME = "/calibration?tab=volume";
+static const char *const CAL_TAB_VENT = "/calibration?tab=vent";
+static const char *const CAL_TAB_LEAKS = "/calibration?tab=leaks";
+
 static void sendCalibrationMessage(AsyncWebServerRequest *request, const char *title, const char *text,
                                    const char *backTo = "/calibration") {
   String html = String("<!DOCTYPE html><html><head><meta charset='UTF-8'><meta http-equiv='refresh' content='3;url=") + backTo + "'>"
@@ -1388,15 +1470,15 @@ static void sendCalibrationMessage(AsyncWebServerRequest *request, const char *t
 
 void handleSensorZeroStart(AsyncWebServerRequest *request) {
   if (!request->hasParam("open", true)) {
-    sendCalibrationMessage(request, "Sensor zero not started", "Confirm that the fermenter is open to the atmosphere.");
+    sendCalibrationMessage(request, "Sensor zero not started", "Confirm that the fermenter is open to the atmosphere.", CAL_TAB_SENSOR);
     return;
   }
   char reason[100];
   if (!startSensorZero(reason, sizeof(reason))) {
-    sendCalibrationMessage(request, "Sensor zero not started", reason);
+    sendCalibrationMessage(request, "Sensor zero not started", reason, CAL_TAB_SENSOR);
     return;
   }
-  request->redirect("/calibration");
+  request->redirect(CAL_TAB_SENSOR);
 }
 
 // Always air, in the fermenter with the configured FMT volume.
@@ -1404,15 +1486,15 @@ void handleVentingTestStart(AsyncWebServerRequest *request) {
   const uint8_t label = request->hasParam("label", true) ? request->getParam("label", true)->value().toInt() : 0;
   char reason[100];
   if (!startVentingTest(label, false, FMTData.FMTVolume, reason, sizeof(reason))) {
-    sendCalibrationMessage(request, "Venting test not started", reason);
+    sendCalibrationMessage(request, "Venting test not started", reason, CAL_TAB_VENT);
     return;
   }
-  request->redirect("/calibration");
+  request->redirect(CAL_TAB_VENT);
 }
 
 void handleVentingTestAbort(AsyncWebServerRequest *request) {
   abortVentingTest();
-  request->redirect("/calibration");
+  request->redirect(CAL_TAB_VENT);
 }
 
 void handleVentingTestSave(AsyncWebServerRequest *request) {
@@ -1420,10 +1502,10 @@ void handleVentingTestSave(AsyncWebServerRequest *request) {
   const bool reference = request->hasParam("target", true) && request->getParam("target", true)->value() == "reference";
   char reason[100];
   if (!saveVentingTestCurve(index, reference, reason, sizeof(reason))) {
-    sendCalibrationMessage(request, "Curve not saved", reason);
+    sendCalibrationMessage(request, "Curve not saved", reason, CAL_TAB_VENT);
     return;
   }
-  request->redirect("/calibration");
+  request->redirect(CAL_TAB_VENT);
 }
 
 void handleValveCleaningStart(AsyncWebServerRequest *request) {
@@ -1445,76 +1527,93 @@ void handleExpansionTankStart(AsyncWebServerRequest *request) {
   const float tank = request->hasParam("tank", true) ? request->getParam("tank", true)->value().toFloat() : NAN;
   char reason[100];
   if (!startExpansionTank(tank, reason, sizeof(reason))) {
-    sendCalibrationMessage(request, "Fermenter volume not started", reason);
+    sendCalibrationMessage(request, "Fermenter volume not started", reason, CAL_TAB_VOLUME);
     return;
   }
-  request->redirect("/calibration");
+  request->redirect(CAL_TAB_VOLUME);
 }
 
 void handleExpansionTankAbort(AsyncWebServerRequest *request) {
   abortExpansionTank();
-  request->redirect("/calibration");
+  request->redirect(CAL_TAB_VOLUME);
 }
 
 void handleExpansionTankSave(AsyncWebServerRequest *request) {
   char reason[100];
   if (!saveExpansionTankAsFmtVolume(reason, sizeof(reason))) {
-    sendCalibrationMessage(request, "FMT volume not saved", reason);
+    sendCalibrationMessage(request, "FMT volume not saved", reason, CAL_TAB_VOLUME);
     return;
   }
-  request->redirect("/calibration");
+  request->redirect(CAL_TAB_VOLUME);
 }
 
 void handleLeakHoldStart(AsyncWebServerRequest *request) {
   const float tank = request->hasParam("tank", true) ? request->getParam("tank", true)->value().toFloat() : NAN;
   char reason[100];
   if (!startLeakHold(tank, reason, sizeof(reason))) {
-    sendCalibrationMessage(request, "Leak test not started", reason);
+    sendCalibrationMessage(request, "Leak test not started", reason, CAL_TAB_VOLUME);
     return;
   }
-  request->redirect("/calibration");
+  request->redirect(CAL_TAB_VOLUME);
 }
 
 void handleLeakHoldAbort(AsyncWebServerRequest *request) {
   abortLeakHold();
-  request->redirect("/calibration");
+  request->redirect(CAL_TAB_VOLUME);
+}
+
+void handleHoldTestStart(AsyncWebServerRequest *request) {
+  auto param = [request](const char *name) { return request->hasParam(name, true) ? request->getParam(name, true)->value() : String(); };
+  const float minutes = param("minutes").toFloat();
+  const uint8_t steps = (uint8_t)constrain(param("steps").toInt(), 1, 4);
+  char reason[100];
+  if (!startHoldTest(minutes, steps, param("label").c_str(), reason, sizeof(reason))) {
+    sendCalibrationMessage(request, "Leak hold test not started", reason, CAL_TAB_LEAKS);
+    return;
+  }
+  request->redirect(CAL_TAB_LEAKS);
+}
+
+void handleHoldTestAbort(AsyncWebServerRequest *request) {
+  abortHoldTest();
+  request->redirect(CAL_TAB_LEAKS);
 }
 
 void handleSensorZeroAbort(AsyncWebServerRequest *request) {
   abortSensorZero();
-  request->redirect("/calibration");
+  request->redirect(CAL_TAB_SENSOR);
 }
 
 void handleSensorZeroSave(AsyncWebServerRequest *request) {
   char reason[100];
   if (!saveSensorZero(reason, sizeof(reason))) {
-    sendCalibrationMessage(request, "Zero not saved", reason);
+    sendCalibrationMessage(request, "Zero not saved", reason, CAL_TAB_SENSOR);
     return;
   }
-  request->redirect("/calibration");
+  request->redirect(CAL_TAB_SENSOR);
 }
 
 void handleSensorPointBStart(AsyncWebServerRequest *request) {
   if (!request->hasParam("steady", true) || !request->hasParam("reference", true)) {
-    sendCalibrationMessage(request, "Point B not started", "Type the reference pressure and confirm that it has been steady for 5 min.");
+    sendCalibrationMessage(request, "Point B not started", "Type the reference pressure and confirm that it has been steady for 5 min.", CAL_TAB_SENSOR);
     return;
   }
   const float reference = request->getParam("reference", true)->value().toFloat();
   char reason[100];
   if (!startSensorPointB(reference, reason, sizeof(reason))) {
-    sendCalibrationMessage(request, "Point B not started", reason);
+    sendCalibrationMessage(request, "Point B not started", reason, CAL_TAB_SENSOR);
     return;
   }
-  request->redirect("/calibration");
+  request->redirect(CAL_TAB_SENSOR);
 }
 
 void handleSensorPointBSave(AsyncWebServerRequest *request) {
   char reason[120];
   if (!saveSensorPointB(reason, sizeof(reason))) {
-    sendCalibrationMessage(request, "Point B not saved", reason);
+    sendCalibrationMessage(request, "Point B not saved", reason, CAL_TAB_SENSOR);
     return;
   }
-  request->redirect("/calibration");
+  request->redirect(CAL_TAB_SENSOR);
 }
 
 void handleCalibrationDataPage(AsyncWebServerRequest *request) {
@@ -1548,24 +1647,60 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
     ".btn-refresh { background: #ff9800; color: white; white-space: nowrap; text-decoration: none; display: inline-block; padding: 8px 14px; border-radius: 4px; font-size: 14px; }"
     ".current-badge { background: #e8f5e9; border: 1px solid #a5d6a7; border-radius: 6px; padding: 8px 14px; font-size: 1.1em; color: #2e7d32; }"
     ".current-row { display: flex; gap: 10px; align-items: center; margin-bottom: 18px; } .current-row .current-badge { flex: 1; }"
+    ".tabs { display: flex; gap: 4px; border-bottom: 2px solid #ddd; margin-bottom: 14px; }"
+    ".tabs a { flex: 1; text-align: center; padding: 8px 4px; text-decoration: none; color: #555; background: #eee; border-radius: 6px 6px 0 0; }"
+    ".tabs a.active { background: #4CAF50; color: white; font-weight: bold; }"
     "</style></head><body><div class='container'><h1>Calibration</h1>"
     "<form id='calForm' action='/calibration/update' method='POST'></form>";
-  page += pressureSensorSectionHtml(pageCurrentReading, usingAverageCurrent);
-  page += fermenterVolumeSectionHtml();
-  page += leakHoldSectionHtml();
-  page += ventingTestSectionHtml();
-  page += ventSettingsHtml();
-  page += dissolvedCO2SectionHtml();
-  page += "<hr><div><button type='submit' form='calForm'>Save</button> "
-          "<button type='button' class='btn-secondary' onclick='window.location=\"/menu\"'>Cancel</button></div>";
-  const String events = calibrationEventsHtmlRows(10);
-  if (events.length())
-    page += "<hr><h3>Calibration events</h3><p>Newest first; <a href='/calibration/events.txt'>all</a></p>"
-      "<table style='width:100%;font-size:0.9em'><tr><th>Time</th><th>Event</th><th>Details</th></tr>" + events + "</table>";
+  // One tab at a time (?tab=): a smaller page, and the 10-s refresh of a running routine keeps the tab.
+  // Fields of the other tabs are not posted: the update handler keeps the stored value of a missing field.
+  const String requested = request->hasParam("tab") ? request->getParam("tab")->value() : String("sensor");
+  const char *const tabIds[] = {"sensor", "volume", "leaks", "vent", "physical", "events"};
+  const char *const tabNames[] = {"Sensor", "Volume", "Leaks", "Vent", "Physical", "Events"};
+  constexpr uint8_t tabCount = 6;
+  uint8_t tab = 0;
+  for (uint8_t i = 0; i < tabCount; ++i)
+    if (requested == tabIds[i]) tab = i;
+  page += "<div class='tabs'>";
+  for (uint8_t i = 0; i < tabCount; ++i)
+    page += String("<a href='/calibration?tab=") + tabIds[i] + "'" + (i == tab ? " class='active'" : "") + ">" + tabNames[i] + "</a>";
+  page += "</div>";
+  bool running = false, editable = true;
+  if (tab == 0) {
+    page += pressureSensorSectionHtml(pageCurrentReading, usingAverageCurrent);
+    running = sensorZeroActive();
+  } else if (tab == 1) {
+    page += expansionTankFieldHtml();
+    page += leakHoldSectionHtml();
+    page += volumeDeterminationSectionHtml();
+    running = expansionTankActive() || leakHoldActive();
+    editable = false; // nothing of this tab is saved with the Save button
+  } else if (tab == 2) {
+    page += holdTestSectionHtml();
+    running = holdTestActive();
+    editable = false;
+  } else if (tab == 3) {
+    page += ventingTestSectionHtml();
+    page += ventSettingsHtml();
+    running = ventingTestActive();
+  } else if (tab == 4) {
+    page += physicalParametersHtml();
+    page += dissolvedCO2SectionHtml();
+  } else {
+    editable = false;
+    const String events = calibrationEventsHtmlRows(30);
+    page += "<h2>Calibration events</h2><p>Newest first; <a href='/calibration/events.txt'>all</a></p>";
+    page += events.length() ? "<table style='width:100%;font-size:0.9em'><tr><th>Time</th><th>Event</th><th>Details</th></tr>" +
+                              events + "</table>"
+                            : String("<p>No events yet.</p>");
+  }
+  page += "<hr><div>";
+  if (editable) page += "<button type='submit' form='calForm'>Save</button> ";
+  page += String("<button type='button' class='btn-secondary' onclick='window.location=\"/menu\"'>") +
+          (editable ? "Cancel" : "Menu") + "</button></div>";
   page += String("<p style='font-size:0.8em'>Build ") + BUILD_INFO + " (" + BUILD_ID + ")</p>";
   page += "</div></body></html>";
-  if (sensorZeroActive() || ventingTestActive() || expansionTankActive() || leakHoldActive())
-    page.replace("<head>", "<head><meta http-equiv='refresh' content='10'>");
+  if (running) page.replace("<head>", "<head><meta http-equiv='refresh' content='10'>");
   request->send(200, "text/html", page);
 }
 
@@ -2853,7 +2988,7 @@ static String valveCleaningSectionHtml() {
   if (valveCleaningActive()) {
     html += "<form action='/calibration/cleaning/abort' method='POST'><button>Abort</button></form>";
   } else {
-    html += "<form action='/calibration/cleaning/start' method='POST'><label style='width:auto'>Minutes "
+    html += "<form action='/calibration/cleaning/start' method='POST' onsubmit=\"return confirm('Start the valve cleaning?')\"><label style='width:auto'>Minutes "
       "<input type='number' name='minutes' value='4' min='0.5' max='15' step='0.5' style='width:70px'></label> "
       "<button>Start valve cleaning</button></form>";
   }

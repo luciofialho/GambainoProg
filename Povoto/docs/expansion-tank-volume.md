@@ -16,17 +16,25 @@ volume da época do TE com um tanque simples (sem pesagem), sem os tempos fixos
 - Tanque vazio e seco na porta A, sem válvula de retenção na saída de ventilação.
   Zero do sensor antes (P1 do manual). Pressurize a ~2,0 bar, espere 15 min e aperte Start.
 - Para cada relief:
-  1. **P1**: espera a pressão estável — inclinação dos últimos 2 min abaixo de
+  1. **P1**: espera a pressão estável (a espera conta desde o fechamento da válvula do relief anterior, durante
+     a ventilação do tanque) — inclinação dos últimos 2 min abaixo de
      **0,3 mbar/min** (era 0,1: abaixo da deriva do próprio sensor e do gás; a página
      mostra a inclinação atual e o limite), mínimo 2 min, máximo 15 min (ao bater o máximo, segue e
      marca "stable: no"). P1 = média dos últimos 10 s; T_F1 (Dallas do
-     fermentador), T_E1 (ambiente: o tanque acompanha o ambiente), Patm1.
+     fermentador), T_E1 (ambiente: o tanque acompanha o ambiente), Patm1. Durante a espera registra, aos 60, 120,
+     180, 240, 300 e 420 s depois do fechamento, a pressão (média de 10 s) e a temperatura do fermentador
+     (colunas `P1_*s_bar` e `Tferm_P1_*s_C` do CSV): só registro, para avaliar a recuperação do P1; o cálculo
+     continua usando o P1 do fim da espera.
   2. **Abre a válvula** (fermentador → tanque) e lê P2 num **tempo fixo de 5 min** (sem critério
-     de inclinação). Ensaio de 21/10: depois do mínimo de pressão (11–22 mbar abaixo do valor final,
-     a ~17–25 s) a pressão se recupera com constante de tempo de 36–61 s, e entre 180 e 300 s ela
-     varia ≤0,7 mbar; esperas mais longas (reliefs de 766 e 888 s) só acumularam uma queda
-     de 3–5 mbar, com a temperatura subindo. O relief fica "stable: no" (fora da média) se P2
-     aos 300 s diferir do de 180 s em 1 mbar ou mais. No ensaio de 20/10 a espera de ~2 min
+     de inclinação). Depois do mínimo de pressão (10–27 mbar abaixo do valor final, a ~17–27 s) a pressão
+     se recupera com constante de tempo de 65–87 s (ensaio de 23/10, sem vazamento; em 21/10 a perda de gás
+     escondia a cauda); esperas mais longas só acumulam deriva (reliefs de 766 e 888 s em 21/10).
+     **P2 é a assíntota** de uma exponencial `P(t) = P∞ − A·exp(−t/τ)` ajustada aos 5 checkpoints
+     (30, 60, 120, 180 e 300 s; mínimos quadrados para P∞ e A em cada τ de 20 a 300 s, e o melhor τ):
+     aos 300 s ainda faltam 0,3–1 mbar (0,2–0,9% de volume por mbar, pela amplificação de ~7,7×).
+     Sem ajuste possível (checkpoint ausente, A ≤ 0 ou cauda acima de 3 mbar) usa a média dos últimos 10 s.
+     O relief fica "stable: no" (fora da média) se a cauda estimada passar de 1 mbar, ou se a pressão
+     tiver caído mais de 1 mbar entre 180 s e 300 s (sinal de perda). No ensaio de 20/10 a espera de ~2 min
      (limite de 0,3 mbar/min) subestimava o volume em 1,3–2%. P2, T_F2, T_E2, Patm2. Durante a
      espera registra, aos 30, 60, 120, 180 e 300 s, a pressão (média de 10 s), a temperatura do
      fermentador e a ambiente (colunas `P2_*s_bar`, `Tferm_*s_C`, `Tenv_*s_C` do CSV). Registra também a menor pressão lida com a válvula aberta, o instante
@@ -35,7 +43,8 @@ volume da época do TE com um tanque simples (sem pesagem), sem os tempos fixos
   3. **Fecha**: o tanque ventila pela porta R. Espera ~6 constantes de tempo do
      tanque pela válvula (curva atual, com ar), 3–15 min. O fermentador, fechado,
      continua a espera do P1 seguinte.
-- Fim no número planejado (ou abaixo de 0,15 bar). Mudança de modo, task ou
+- Fim no número planejado (ou abaixo de 0,15 bar). O último relief termina assim que o P2 é lido: a válvula é
+  desenergizada (o tanque ventila sozinho pela porta R) e a rotina é encerrada, sem esperar a ventilação. Mudança de modo, task ou
   pressão acima da máxima aborta. Dura cerca de 2–3 h.
 
 ## Cálculo
@@ -70,7 +79,7 @@ Erro por relief (±0,5 mbar), fermentador de 130 L: 2,5% com 2 L, 0,31% com
   Com a rotina em andamento, o CSV é montado de uma cópia dos reliefs medidos tirada sob
   trava (a página roda na task web, a rotina no loop), sem escrita na flash. Um relief entra na
   tabela, no CSV, na média e no resultado assim que o P2 e o volume são calculados, sem esperar a
-  ventilação do tanque; `vent_s` fica vazio até a ventilação terminar (e continua vazio se o
+  ventilação do tanque; `vent_s` fica vazio até a ventilação terminar (e continua vazio no último relief e se o
   ensaio for abortado durante ela).
 
 Modo debug: a equalização é simulada com o FMT volume (τ 3 s) e esperas

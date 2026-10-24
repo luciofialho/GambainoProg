@@ -1,6 +1,6 @@
 # Teste de perda de gás (leak hold)
 
-Código: `src/LeakHold.cpp`; página Calibration, seção "Leak test".
+Código: `src/LeakHold.cpp`; página Calibration, aba Volume, seção "Leak test" (o campo do volume do tanque é o mesmo do Fermenter volume; cada rotina tem o seu botão Start).
 
 ## Por que existe
 

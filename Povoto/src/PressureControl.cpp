@@ -21,6 +21,7 @@
 #include "ValveCleaning.h"
 #include "ExpansionTank.h"
 #include "LeakHold.h"
+#include "HoldTest.h"
 #include <esp_timer.h>
 #include <math.h>
 #include <algorithm>
@@ -2736,12 +2737,12 @@ void pressureRelief() {
 }
 
 bool calibrationRoutineActive() {
-  return sensorZeroActive() || ventingTestActive() || valveCleaningActive() || expansionTankActive() || leakHoldActive();
+  return sensorZeroActive() || ventingTestActive() || valveCleaningActive() || expansionTankActive() || leakHoldActive() || holdTestActive();
 }
 
 // Routines that drive the valve themselves: no automatic vent meanwhile.
 static bool valveRoutineActive() {
-  return ventingTestActive() || valveCleaningActive() || expansionTankActive() || leakHoldActive();
+  return ventingTestActive() || valveCleaningActive() || expansionTankActive() || leakHoldActive() || holdTestActive();
 }
 
 int64_t routineValve(bool open) {
@@ -2898,6 +2899,7 @@ void pressureControl() {
     processValveCleaning();
     processExpansionTank();
     processLeakHold();
+    processHoldTest();
     return;
   }
   applyValveOverride();

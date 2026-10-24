@@ -26,12 +26,19 @@ static constexpr unsigned long TANK_AVERAGE_MS = 10000UL;
 // P2 is logged at these times after the valve opens (pressure, fermenter and ambient temperature)
 static constexpr uint8_t TANK_CHECKPOINTS = 5;
 static constexpr unsigned long TANK_CHECKPOINT_S[TANK_CHECKPOINTS] = {30, 60, 120, 180, 300};
+// P1 is logged at these times after the valve closed (the wait of the fermenter starts then, during the vent of the tank):
+// only logged, the calculation uses the P1 at the end of the wait (docs/expansion-tank-volume.md)
+static constexpr uint8_t TANK_P1_CHECKPOINTS = 6;
+static constexpr unsigned long TANK_P1_CHECKPOINT_S[TANK_P1_CHECKPOINTS] = {60, 120, 180, 240, 300, 420};
 static unsigned long tankWaitMinMs() { return debugging ? 10000UL : 120000UL; }
-// P2 is read at a fixed time after the valve opens (the thermal recovery has a time constant of
-// ~45 s, so 5 min is ~6 of them); longer waits only accumulate drift. Not stable if the pressure
-// still moved by more than TANK_OPEN_DRIFT_BAR between the 180 s and 300 s checkpoints.
+// P2 is read at a fixed time after the valve opens; longer waits only accumulate drift. The thermal
+// recovery after the opening has a time constant of 60-90 s, so at 300 s a tail of 0.3-1 mbar is left: P2 is the
+// asymptote of an exponential fitted to the checkpoints (docs/expansion-tank-volume.md). The relief is not stable if
+// that tail is above TANK_OPEN_TAIL_BAR or if the pressure fell by more than TANK_OPEN_DRIFT_BAR between 180 s and 300 s.
 static constexpr unsigned long TANK_OPEN_WAIT_MS = 300000UL;
+static constexpr float TANK_OPEN_TAIL_BAR = 0.001f;
 static constexpr float TANK_OPEN_DRIFT_BAR = 0.001f;
+static constexpr float TANK_OPEN_MAX_TAIL_BAR = 0.003f; // a larger tail is not believed: the fit is not used
 static unsigned long tankWaitMaxMs() { return debugging ? 30000UL : 900000UL; }
 static unsigned long tankVentMinMs() { return debugging ? 10000UL : 180000UL; }
 static constexpr unsigned long TANK_VENT_MAX_MS = 900000UL;
@@ -52,9 +59,17 @@ struct TankRelief {
   // solenoid noise window), when it happened (s after opening) and how many were seen.
   float pMin, tMin;
   uint16_t openSamples;
+  float p2Fit, tail, tau; // asymptote of the checkpoints (bar), its distance from the 300 s value (bar), time constant (s); NAN without a fit
+  float cp1P[TANK_P1_CHECKPOINTS], cp1Tf[TANK_P1_CHECKPOINTS]; // checkpoints of the P1 wait: 10-s mean pressure (gauge) and fermenter temperature (K)
 };
 static void clearCheckpoints(TankRelief &k) {
   for (uint8_t i = 0; i < TANK_CHECKPOINTS; ++i) k.cpP[i] = k.cpTf[i] = k.cpTe[i] = NAN;
+  for (uint8_t i = 0; i < TANK_P1_CHECKPOINTS; ++i) k.cp1P[i] = k.cp1Tf[i] = NAN;
+}
+// The P1 checkpoints of the wait in progress (that of the next relief): copied to its record when the wait ends.
+static float waitCpP[TANK_P1_CHECKPOINTS], waitCpTf[TANK_P1_CHECKPOINTS];
+static void clearWaitCheckpoints() {
+  for (uint8_t i = 0; i < TANK_P1_CHECKPOINTS; ++i) waitCpP[i] = waitCpTf[i] = NAN;
 }
 
 enum TankStage : uint8_t { TANK_IDLE, TANK_WAIT_P1, TANK_OPEN, TANK_VENTING };
@@ -205,6 +220,7 @@ bool startExpansionTank(float volume, char *reason, size_t reasonSize) {
   waitSlope = NAN;
   simulated = ControlData.pressure;
   wait->reset(millis());
+  clearWaitCheckpoints();
   stageMillis = millis();
   abortRequested = false;
   stage = TANK_WAIT_P1;
@@ -227,12 +243,50 @@ static bool waitDone(bool &settled) {
   return settled || last >= tankWaitMaxMs();
 }
 
-// P2: fixed wait (bench boards keep the short slope wait of the simulation).
-static bool openWaitDone(const TankRelief &k, bool &settled) {
+// P(t) = P_inf - A exp(-t / tau) fitted to the checkpoints (least squares for P_inf and A at each tau of a grid,
+// the best tau kept). False when a checkpoint is missing or the fit is not a recovery (A <= 0, or a tail above the limit).
+static bool fitOpenAsymptote(TankRelief &k) {
+  k.p2Fit = k.tail = k.tau = NAN;
+  for (uint8_t i = 0; i < TANK_CHECKPOINTS; ++i)
+    if (!isfinite(k.cpP[i])) return false;
+  const double ref = k.cpP[TANK_CHECKPOINTS - 1];
+  double bestSse = INFINITY, bestA = NAN, bestTau = NAN;
+  for (double tau = 20.0; tau <= 300.0; tau += 5.0) {
+    double sx = 0, sxx = 0, sy = 0, sxy = 0;
+    for (uint8_t i = 0; i < TANK_CHECKPOINTS; ++i) {
+      const double x = exp(-(double)TANK_CHECKPOINT_S[i] / tau), y = (k.cpP[i] - ref) * 1000.0; // mbar around the 300 s value
+      sx += x; sxx += x * x; sy += y; sxy += x * y;
+    }
+    const double n = TANK_CHECKPOINTS, den = n * sxx - sx * sx;
+    if (!(den > 0.0)) continue;
+    const double c = (n * sxy - sx * sy) / den, a = (sy - c * sx) / n; // y = a + c x, c = -A
+    if (!(c < 0.0)) continue;
+    double sse = 0;
+    for (uint8_t i = 0; i < TANK_CHECKPOINTS; ++i) {
+      const double r = (k.cpP[i] - ref) * 1000.0 - (a + c * exp(-(double)TANK_CHECKPOINT_S[i] / tau));
+      sse += r * r;
+    }
+    if (sse < bestSse) { bestSse = sse; bestA = a; bestTau = tau; }
+  }
+  if (!isfinite(bestSse)) return false;
+  const float tail = float(bestA / 1000.0); // asymptote minus the 300 s value
+  if (!(tail >= 0.0f && tail <= TANK_OPEN_MAX_TAIL_BAR)) return false;
+  k.tail = tail;
+  k.tau = (float)bestTau;
+  k.p2Fit = (float)ref + tail;
+  return true;
+}
+
+// P2: fixed wait (bench boards keep the short slope wait of the simulation). Stable: the tail left at 300 s is small
+// (or, without a fit, the pressure moved little between 180 s and 300 s) and the pressure did not fall.
+static bool openWaitDone(TankRelief &k, bool &settled) {
   if (debugging) return waitDone(settled);
   settled = false;
   if (wait->count == 0 || wait->lastSampleElapsed() < TANK_OPEN_WAIT_MS) return false;
-  settled = isfinite(k.cpP[3]) && isfinite(k.cpP[4]) && fabsf(k.cpP[4] - k.cpP[3]) < TANK_OPEN_DRIFT_BAR;
+  const bool haveCheckpoints = isfinite(k.cpP[3]) && isfinite(k.cpP[4]);
+  const float change = haveCheckpoints ? k.cpP[4] - k.cpP[3] : NAN;
+  if (fitOpenAsymptote(k)) settled = k.tail <= TANK_OPEN_TAIL_BAR && change > -TANK_OPEN_DRIFT_BAR;
+  else settled = haveCheckpoints && fabsf(change) < TANK_OPEN_DRIFT_BAR;
   return true;
 }
 
@@ -277,6 +331,14 @@ void processExpansionTank() {
   }
   wait->sample(now, ControlData.pressure, debugging ? 0 : pressureAcquisitionMillis(), 1000);
   waitSlope = wait->slopePerMinute(TANK_SLOPE_WINDOW_MS); // for the status text (the web task never touches `wait`)
+  if (stage == TANK_VENTING || stage == TANK_WAIT_P1) { // the wait of the fermenter, closed, for the next P1
+    const uint32_t waited = wait->lastSampleElapsed();
+    for (uint8_t i = 0; i < TANK_P1_CHECKPOINTS; ++i)
+      if (!isfinite(waitCpP[i]) && waited >= TANK_P1_CHECKPOINT_S[i] * 1000UL) {
+        waitCpP[i] = wait->mean(TANK_AVERAGE_MS);
+        waitCpTf[i] = ControlData.temperature + 273.15f;
+      }
+  }
   if (stage == TANK_OPEN) { // k is not shown to the web task until its P2 is final
     static unsigned long lastOpenAcquisition = 0;
     if (k.openSamples == 0) lastOpenAcquisition = 0;
@@ -301,7 +363,12 @@ void processExpansionTank() {
   if (stage == TANK_WAIT_P1 && waitDone(settled)) {
     k = {};
     clearCheckpoints(k);
+    for (uint8_t i = 0; i < TANK_P1_CHECKPOINTS; ++i) {
+      k.cp1P[i] = waitCpP[i];
+      k.cp1Tf[i] = waitCpTf[i];
+    }
     k.pMin = k.tMin = NAN;
+    k.p2Fit = k.tail = k.tau = NAN;
     k.epoch = NTPEpoch();
     k.p1 = wait->mean(TANK_AVERAGE_MS);
     k.fermenterK1 = ControlData.temperature + 273.15f;
@@ -315,7 +382,7 @@ void processExpansionTank() {
     stage = TANK_OPEN;
     showProgress(true);
   } else if (stage == TANK_OPEN && openWaitDone(k, settled)) {
-    k.p2 = wait->mean(TANK_AVERAGE_MS);
+    k.p2 = isfinite(k.p2Fit) ? k.p2Fit : wait->mean(TANK_AVERAGE_MS);
     k.fermenterK2 = ControlData.temperature + 273.15f;
     k.tankK2 = environmentKelvin();
     k.patm2 = Patm;
@@ -329,12 +396,22 @@ void processExpansionTank() {
     Serial.printf("[EXPTANK] relief %u: P1 %.5f P2 %.5f bar, V_F %.3f L (simple %.3f)\n", reliefCount + 1, k.p1, k.p2,
                   k.volume, k.simpleVolume);
     routineValve(false); // the tank vents through R
+    if (reliefCount + 1 >= reliefTarget || ControlData.pressure < TANK_MIN_START_PRESSURE * 0.5f) {
+      // The last relief: no other follows, so the run ends with the valve de-energized (the tank vents by itself)
+      // instead of waiting for the vent; its vent_s stays empty.
+      portENTER_CRITICAL(&reliefLock);
+      ++reliefCount;
+      portEXIT_CRITICAL(&reliefLock);
+      finish("Completed");
+      return;
+    }
     // A complete vent: about six time constants of the tank through the valve
     // (current curve with air), 3-15 min.
     const double tau = VentModel::tauRef(FMTData.ventCurve, k.p2, Patm) * expansionTankVolume / VentModel::V_REF;
     ventWaitMs = (unsigned long)fmin((double)TANK_VENT_MAX_MS, fmax((double)tankVentMinMs(), 6000.0 * tau));
     if (debugging) ventWaitMs = tankVentMinMs();
     wait->reset(now);
+    clearWaitCheckpoints();
     stageMillis = now;
     stage = TANK_VENTING;
     showProgress(true);
@@ -440,7 +517,11 @@ void handleExpansionTankCSV(AsyncWebServerRequest *request) {
   for (uint8_t c = 0; c < TANK_CHECKPOINTS; ++c) csv += ";P2_" + String(TANK_CHECKPOINT_S[c]) + "s_bar";
   for (uint8_t c = 0; c < TANK_CHECKPOINTS; ++c) csv += ";Tferm_" + String(TANK_CHECKPOINT_S[c]) + "s_C";
   for (uint8_t c = 0; c < TANK_CHECKPOINTS; ++c) csv += ";Tenv_" + String(TANK_CHECKPOINT_S[c]) + "s_C";
-  csv += ";Pmin_open_bar;t_Pmin_s;open_samples;build\n";
+  csv += ";Pmin_open_bar;t_Pmin_s;open_samples;P2_tail_mbar;P2_tau_s";
+  // P1 wait checkpoints: pressure and fermenter temperature at 60, 120, 180, 240, 300 and 420 s after the valve closed
+  for (uint8_t c = 0; c < TANK_P1_CHECKPOINTS; ++c) csv += ";P1_" + String(TANK_P1_CHECKPOINT_S[c]) + "s_bar";
+  for (uint8_t c = 0; c < TANK_P1_CHECKPOINTS; ++c) csv += ";Tferm_P1_" + String(TANK_P1_CHECKPOINT_S[c]) + "s_C";
+  csv += ";build\n";
   auto add = [&csv](float v, int d) {
     if (isfinite(v)) {
       String t(v, (unsigned int)d);
@@ -466,6 +547,9 @@ void handleExpansionTankCSV(AsyncWebServerRequest *request) {
     for (uint8_t c = 0; c < TANK_CHECKPOINTS; ++c) add(k.cpTf[c] - 273.15f, 2);
     for (uint8_t c = 0; c < TANK_CHECKPOINTS; ++c) add(k.cpTe[c] - 273.15f, 2);
     add(k.pMin, 6); add(k.tMin, 2); add((float)k.openSamples, 0);
+    add(k.tail * 1000.0f, 2); add(k.tau, 0);
+    for (uint8_t c = 0; c < TANK_P1_CHECKPOINTS; ++c) add(k.cp1P[c], 6);
+    for (uint8_t c = 0; c < TANK_P1_CHECKPOINTS; ++c) add(k.cp1Tf[c] - 273.15f, 2);
     csv += BUILD_ID;
     csv += '\n';
   }
