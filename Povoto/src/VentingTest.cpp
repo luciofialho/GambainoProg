@@ -652,6 +652,8 @@ struct VentCsvExport {
   bool headerSent;
   bool loaded;
   bool live;             // the running test (a copy of its finished releases)
+  String pending;        // the row being sent: a row longer than the space the server offers goes in several calls
+  size_t pendingPos = 0;
   VentTestRecord record;
 };
 
@@ -742,34 +744,44 @@ void handleVentingTestCSV(AsyncWebServerRequest *request) {
       [e](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
         (void)index;
         size_t len = 0;
-        String line;
-        if (!e->headerSent) {
-          line = "test;date_time;epoch;batch;label;gas;volume_L;patm_bar;patm_source;"
-                 "firmware;release;level;kind;t_requested_s;t_real_s;P1_bar;P_close_bar;P2_bar;Pinf_bar;Pinf_tau_s;Pinf_amp_mbar;end_slope_mbar_min;temp_end_K;temp_ferm_K;temp_amb_C;wait_s;settled;"
-                 "P1_noise_mbar;P2_noise_mbar;"
-                 "fit_K_s;fit_beta;shape_rms_pct;chi2_reduced;drift_pct;drift_se_pct;"
-                 "vs_ref_1_8_pct;vs_ref_1_2_pct;vs_ref_0_8_pct\n";
-          if (line.length() > maxLen) return 0;
-          memcpy(buffer, line.c_str(), line.length());
-          len = line.length();
-          e->headerSent = true;
-        }
-        while (e->testIndex >= e->lastTest) {
-          if (!e->loaded) {
-            if (!readRecord((uint8_t)e->testIndex, e->record)) e->record.count = 0;
-            e->loaded = true;
-            e->releaseIndex = 0;
+        // Returning 0 ends the response, so a row is never held back for lack of space (a download over a slow link lost the
+        // last rows of a test that way): it is sent in as many pieces as the server asks for.
+        while (len < maxLen) {
+          if (e->pendingPos >= e->pending.length()) {
+            e->pending = "";
+            e->pendingPos = 0;
+            if (!e->headerSent) {
+              e->pending = "test;date_time;epoch;batch;label;gas;volume_L;patm_bar;patm_source;"
+                           "firmware;release;level;kind;t_requested_s;t_real_s;P1_bar;P_close_bar;P2_bar;Pinf_bar;Pinf_tau_s;Pinf_amp_mbar;end_slope_mbar_min;temp_end_K;temp_ferm_K;temp_amb_C;wait_s;settled;"
+                           "P1_noise_mbar;P2_noise_mbar;"
+                           "fit_K_s;fit_beta;shape_rms_pct;chi2_reduced;drift_pct;drift_se_pct;"
+                           "vs_ref_1_8_pct;vs_ref_1_2_pct;vs_ref_0_8_pct\n";
+              e->headerSent = true;
+            } else {
+              bool row = false;
+              while (e->testIndex >= e->lastTest) {
+                if (!e->loaded) {
+                  if (!readRecord((uint8_t)e->testIndex, e->record)) e->record.count = 0;
+                  e->loaded = true;
+                  e->releaseIndex = 0;
+                }
+                if (e->releaseIndex >= e->record.count || e->releaseIndex >= VT_MAX_RELEASES) {
+                  --e->testIndex;
+                  e->loaded = false;
+                  continue;
+                }
+                appendCsvRow(*e, e->pending);
+                ++e->releaseIndex;
+                row = true;
+                break;
+              }
+              if (!row) break; // all the tests are sent
+            }
           }
-          if (e->releaseIndex >= e->record.count || e->releaseIndex >= VT_MAX_RELEASES) {
-            --e->testIndex;
-            e->loaded = false;
-            continue;
-          }
-          appendCsvRow(*e, line);
-          if (len + line.length() > maxLen) return len;
-          memcpy(buffer + len, line.c_str(), line.length());
-          len += line.length();
-          ++e->releaseIndex;
+          const size_t chunk = min(maxLen - len, e->pending.length() - e->pendingPos);
+          memcpy(buffer + len, e->pending.c_str() + e->pendingPos, chunk);
+          e->pendingPos += chunk;
+          len += chunk;
         }
         return len;
       });
