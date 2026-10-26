@@ -758,7 +758,7 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, "<div class='form-group'>"
                "<label for='FMTVolume'>FMT Total Volume (L):</label>", remaining);
-  sprintf(buffer, "<input type='number' id='FMTVolume' name='FMTVolume' value='%.2f' step='0.01'>", FMTData.FMTVolume);
+  sprintf(buffer, "<input type='number' id='FMTVolume' name='FMTVolume' value='%.3f' step='0.001'>", FMTData.FMTVolume);
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
