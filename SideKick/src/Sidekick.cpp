@@ -16,6 +16,8 @@
 #include <atomic>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
+#include <esp_heap_caps.h>
+#include <stdio.h>
 
 // Task handle para envio de logs
 TaskHandle_t logSendTaskHandle = NULL;
@@ -102,6 +104,31 @@ static void handleResetBrewCore(AsyncWebServerRequest *request) {
   digitalWrite(RESETBREWCOREPIN, HIGH);
   resetBrewCoreUntil = millis() + 500UL;
   responseConfirmation(request, "BrewCore reset pulse sent", "/getstatus");
+}
+
+// Free memory per heap region (TLS needs two ~16.7 KB blocks): the IDF report
+// goes to the serial port, so stdout is pointed at a buffer for this task.
+static void handleHeapInfo(AsyncWebServerRequest *request) {
+  // Only while the page is built, not kept out of the heap the rest of the time.
+  constexpr size_t REPORT_SIZE = 2048;
+  char *report = static_cast<char *>(malloc(REPORT_SIZE));
+  if (!report) {
+    request->send(503, "text/plain", "no memory for the heap report");
+    return;
+  }
+  memset(report, 0, REPORT_SIZE);
+  FILE *memoryFile = fmemopen(report, REPORT_SIZE - 1, "w");
+  if (memoryFile) {
+    setvbuf(memoryFile, nullptr, _IONBF, 0);
+    FILE *previous = stdout;
+    stdout = memoryFile;
+    heap_caps_print_heap_info(MALLOC_CAP_8BIT);
+    stdout = previous;
+    fclose(memoryFile);
+  }
+  const String text = report[0] ? String(report) : String("heap report unavailable");
+  free(report);
+  request->send(200, "text/plain", text);
 }
 
 static void handleReconnectNetwork(AsyncWebServerRequest *request) {
@@ -333,6 +360,7 @@ void setup() {
   registerPeerSetupRoute();
   server.on("/resetbrewcore", HTTP_GET, handleResetBrewCore);
   server.on("/net", HTTP_GET, handleReconnectNetwork);
+  server.on("/heap", HTTP_GET, handleHeapInfo);
   registerCloudLogSettings();
 
   pinMode(RESETBREWCOREPIN, OUTPUT);

@@ -18,6 +18,12 @@ constexpr size_t BREWFATHER_QUEUE_SIZE = 4;
 struct LogRecord {
   char payload[MAXPACKETSIZE + 1];
 };
+// The Povoto builds the Brewfather JSON in 512 bytes (datalog.cpp): 2 KB
+// records here only took ~7.5 KB from the heap that TLS needs.
+constexpr size_t BREWFATHER_PAYLOAD_MAX = 511;
+struct BrewfatherRecord {
+  char payload[BREWFATHER_PAYLOAD_MAX + 1];
+};
 
 // Ownership: free queue -> receiver -> ready queue -> LogSend batch -> free queue.
 // Only the owner accesses the payload; HTTP never holds a shared lock.
@@ -28,12 +34,12 @@ QueueHandle_t brewfatherQueue = nullptr; // Pending payloads in arrival order.
 StaticQueue_t freeLogQueueControl, readyLogQueueControl, brewfatherQueueControl;
 LogRecord *freeLogQueueStorage[LOGCACHESIZE];
 LogRecord *readyLogQueueStorage[LOGCACHESIZE];
-LogRecord brewfatherQueueStorage[BREWFATHER_QUEUE_SIZE];
+BrewfatherRecord brewfatherQueueStorage[BREWFATHER_QUEUE_SIZE];
 
 // Accessed exclusively by the one LogSend task.
 LogRecord *googleBatch[LOGCACHESIZE];
 size_t googleBatchCount = 0;
-LogRecord brewfatherPayload;
+BrewfatherRecord brewfatherPayload;
 bool brewfatherRetryPending = false;
 
 // Diagnostic values read by the web task; these do not control ownership.
@@ -62,7 +68,7 @@ bool initLogQueues() {
       reinterpret_cast<uint8_t *>(freeLogQueueStorage), &freeLogQueueControl);
   readyLogQueue = xQueueCreateStatic(LOGCACHESIZE, sizeof(LogRecord *),
       reinterpret_cast<uint8_t *>(readyLogQueueStorage), &readyLogQueueControl);
-  brewfatherQueue = xQueueCreateStatic(BREWFATHER_QUEUE_SIZE, sizeof(LogRecord),
+  brewfatherQueue = xQueueCreateStatic(BREWFATHER_QUEUE_SIZE, sizeof(BrewfatherRecord),
       reinterpret_cast<uint8_t *>(brewfatherQueueStorage), &brewfatherQueueControl);
   if (!freeLogQueue || !readyLogQueue || !brewfatherQueue) return false;
   for (size_t i = 0; i < LOGCACHESIZE; ++i) {
@@ -176,9 +182,12 @@ void cashLogRequest(const char *logEntry) {
 
 void cashBrewfatherLogRequest(const char *logEntry) {
   if (!logEntry || !brewfatherQueue) return;
-  const size_t length = strnlen(logEntry, MAXPACKETSIZE + 1);
-  if (length == 0 || length > MAXPACKETSIZE) return;
-  LogRecord record = {};
+  const size_t length = strnlen(logEntry, BREWFATHER_PAYLOAD_MAX + 1);
+  if (length == 0 || length > BREWFATHER_PAYLOAD_MAX) {
+    ++numBrewfatherQueueOverflow;   // too long to keep: counted with the losses
+    return;
+  }
+  BrewfatherRecord record = {};
   memcpy(record.payload, logEntry, length + 1);
   lastCashBrewfatherLogMs = millis();
   ++numBrewfatherReceived;

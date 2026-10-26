@@ -104,6 +104,10 @@ std::atomic<unsigned long> recordsPosted{0};
 std::atomic<unsigned long> statesPosted{0};
 std::atomic<unsigned long> postsFailed{0};
 std::atomic<int> lastHttpCode{0};
+// Of the last failed post: the TLS error (mbedtls, 0 = none) and the largest
+// free block just before connecting; there is no serial to read them from.
+std::atomic<int> lastFailTlsError{0};
+std::atomic<unsigned> lastFailLargestBlock{0};
 std::atomic<unsigned long> lastPostOkMs{0};
 std::atomic<unsigned long> lastPostAttemptMs{0};
 std::atomic<size_t> pendingBytes{0};
@@ -405,7 +409,9 @@ void sendCloudLog() {
   http.setTimeout(10000);
   http.addHeader("Content-Type", "application/x-ndjson");
   http.addHeader("Authorization", "Bearer " + token);
+  const unsigned largestBefore = ESP.getMaxAllocHeap();
   const int code = http.POST(body);
+  const int tlsError = client.lastError(nullptr, 0);
   // NDJSON answer: a summary line, then one line per request for a Povoto.
   const String answer = code >= 200 && code < 300 ? http.getString() : String();
   http.end();
@@ -435,6 +441,8 @@ void sendCloudLog() {
   else if (advance && cloudSite == -1) cloudSite = 0;   // token accepted again: ask the site
   if (!advance) {
     ++postsFailed;
+    lastFailTlsError = tlsError;
+    lastFailLargestBlock = largestBefore;
     Serial.printf("[CLOUD] POST failed: %d (heap %u, largest block %u)\n", code,
                   (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
     return;
@@ -482,6 +490,11 @@ void appendCloudLogStatus(char *st, size_t size) {
   snprintf(line, sizeof(line), "Heap free: %u, largest block: %u, minimum ever: %u<br>",
            (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap(), (unsigned)ESP.getMinFreeHeap());
   strncat(st, line, size - strlen(st) - 1);
+  if (postsFailed.load()) {
+    snprintf(line, sizeof(line), "Last failed post: TLS error -0x%X, largest block before connect %u<br>",
+             (unsigned)-lastFailTlsError.load(), lastFailLargestBlock.load());
+    strncat(st, line, size - strlen(st) - 1);
+  }
   snprintf(line, sizeof(line), "Cloud requests: received %lu, forwarded %lu, not delivered %lu<br>",
            commandsReceived.load(), commandsForwarded.load(), commandsUndeliverable.load());
   strncat(st, line, size - strlen(st) - 1);
