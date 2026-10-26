@@ -76,7 +76,8 @@ bool buildRecord(uint32_t epoch, char *out, size_t size) {
   json.number("abv", point.abv, 2);
   json.number("r", point.co2Rate, 3);
   json.integer("f", (long)point.flags);
-  json.number("vol", beerVolume, 1);
+  // Off and Manual control: no beer, the dashboard shows the fermenter's volume.
+  json.number("vol", modeIsOffLike(SetPointData.mode) ? FMTData.FMTVolume : beerVolume, 1);
   json.number("co2", CO2Mass(), 0);
   json.number("tblv", getTimeBetweenVentsSeconds(), 0);
   // Day 0 of the profile, so the cloud check can recompute every value.
@@ -161,7 +162,8 @@ unsigned long cloudLogSendErrors() { return sendErrors; }
 
 void maybeSendCloudLog() {
   static unsigned long lastAttempt = 0;
-  if (BatchData.batchNumber == 0 || SetPointData.mode == MODE_OFF) return;
+  // Also without a batch open (batch 0) and in Off: the cloud dashboard shows
+  // the Povoto at any time; the cloud keeps batch 0 out of its batch lists.
   if (WiFi.status() != WL_CONNECTED || isZeroMac(peerSideKick.mac)) return;
   if (lastAttempt && millis() - lastAttempt < RETRY_MS) return;
   const uint32_t now = NTPEpoch();

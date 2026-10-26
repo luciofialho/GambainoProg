@@ -1989,7 +1989,8 @@ void checkPressureSensor() {
   pressureSensorNoResponse = !responding;
   pressureSensorProblemText = !responding ? "INA226 not responding"
       : inRange ? "" : debugging ? "negative pressure (debug)" : "current out of range";
-  const bool controlling = (SetPointData.mode == MODE_FERMENTING || SetPointData.mode == MODE_CONDITIONING) &&
+  const bool controlling = (SetPointData.mode == MODE_FERMENTING || SetPointData.mode == MODE_CONDITIONING ||
+                            SetPointData.mode == MODE_MANUAL) &&
       SetPointData.setPointPressure != NOTaTEMP;
   pressureSensorAlarm = controlling && invalidSince != 0 && now - invalidSince >= PRESSURE_SENSOR_INVALID_TOLERANCE_MS;
 }

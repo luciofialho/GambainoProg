@@ -143,7 +143,7 @@ void maybeSendBrewfatherLog() {
   static unsigned long lastSuccessfulSend = 0;
   static unsigned long lastAttemptTime = 0;
 
-  if (SetPointData.mode == MODE_OFF) {
+  if (modeIsOffLike(SetPointData.mode)) {
     return;
   }
   const bool finalPoint = SetPointData.mode == MODE_CONDITIONING;
@@ -244,7 +244,7 @@ void doDataLog() {
     return;
   }
 
-  if (SetPointData.mode == MODE_OFF) {
+  if (modeIsOffLike(SetPointData.mode)) {
     return;
   }
   if (SetPointData.mode == MODE_CONDITIONING && !conditioningFinalColdPending) {

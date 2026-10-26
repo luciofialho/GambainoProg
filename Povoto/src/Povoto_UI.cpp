@@ -187,10 +187,15 @@ void screenData() {
     return;
   }
 
+  // Off and Manual control: no batch. "N/B" instead of the number, and no
+  // date, OG, SG, ABV or CO2. The name says which one: "no batch" (Off, which
+  // also hides the three targets) or "Manual control" (the targets stay).
+  const bool offMode = SetPointData.mode == MODE_OFF;
+  const bool noBatch = modeIsOffLike(SetPointData.mode);
   char co2RateLabel[32];
   getCO2RateLabel(co2RateLabel, sizeof(co2RateLabel));
   char staticSignature[sizeof(lastScreenStaticSignature)];
-  snprintf(staticSignature, sizeof(staticSignature), "%d|%s|%d|%s|%.3f",
+  snprintf(staticSignature, sizeof(staticSignature), "%d|%d|%s|%d|%s|%.3f", (int)SetPointData.mode,
     (int)BatchData.batchNumber, BatchData.batchDate, (int)FMTData.PovotoNum,
     BatchData.batchName, BatchData.batchOG);
   const bool drawStatic = screenDataInvalidated ||
@@ -202,10 +207,10 @@ void screenData() {
 
   char screenSignature[sizeof(lastScreenDataSignature)];
   snprintf(screenSignature, sizeof(screenSignature),
-    "%.1f|%.1f|%.1f|%.2f|%.2f|%s|%.0f|%.0f|%.3f|%.2f",
+    "%d|%.1f|%.1f|%.1f|%.2f|%.2f|%s|%.0f|%.0f|%.3f|%.2f", (int)SetPointData.mode,
     ControlData.temperature, SetPointData.setPointTemp, SetPointData.setPointSlowTemp,
     ControlData.pressure, SetPointData.setPointPressure, co2RateLabel,
-    CO2Mass(), beerVolume, beerSG, beerABV);
+    CO2Mass(), noBatch ? FMTData.FMTVolume : beerVolume, beerSG, beerABV);
   const bool drawDynamic = screenDataInvalidated ||
     strcmp(screenSignature, lastScreenDataSignature) != 0;
   if (!drawStatic && !drawDynamic) {
@@ -229,21 +234,28 @@ void screenData() {
     restoreMainBackgroundRect(315, 155, 165, 40); // Batch OG label
 
     tft.setTextColor(TFT_WHITE);
-    textOut(CENTER,&Swiss_911_Extra_Compressed_Regular12pt7b,86,21, "%04d", BatchData.batchNumber);
+    if (noBatch)
+      textOut(CENTER,&Swiss_911_Extra_Compressed_Regular12pt7b,86,21, "N/B");
+    else
+      textOut(CENTER,&Swiss_911_Extra_Compressed_Regular12pt7b,86,21, "%04d", BatchData.batchNumber);
 
-    char batchDateShortBuf[8];
-    formatBatchDateShort(BatchData.batchDate, batchDateShortBuf, sizeof(batchDateShortBuf));
-
-    tft.setTextColor(TFT_LIGHTGREY,tft.color565(204,102,153));
-    textOut(CENTER,&Swiss_911_Extra_Compressed_Regular10pt7b,168,16, "  %s  ", batchDateShortBuf);
+    if (!noBatch) {
+      char batchDateShortBuf[8];
+      formatBatchDateShort(BatchData.batchDate, batchDateShortBuf, sizeof(batchDateShortBuf));
+      tft.setTextColor(TFT_LIGHTGREY,tft.color565(204,102,153));
+      textOut(CENTER,&Swiss_911_Extra_Compressed_Regular10pt7b,168,16, "  %s  ", batchDateShortBuf);
+    }
 
     tft.setTextColor(TFT_LIGHTGREY);
     textOut(CENTER, &Swiss_911_Extra_Compressed_Regular72pt7b, 63,150, "%d",FMTData.PovotoNum);
 
     tft.setTextColor(tft.color565(238,214,157),0);
-    textOut(CENTER,&Swiss_911_Extra_Compressed_Regular16pt7b,343,27, "   %s   ",BatchData.batchName);
-    tft.setTextColor(0);
-    textOut(LEFT,&Swiss_911_Extra_Compressed_Regular12pt7b,320,176, "SG   [ OG=%.3f ]", BatchData.batchOG);
+    textOut(CENTER,&Swiss_911_Extra_Compressed_Regular16pt7b,343,27, "   %s   ",
+            offMode ? "no batch" : noBatch ? "Manual control" : BatchData.batchName);
+    if (!noBatch) {
+      tft.setTextColor(0);
+      textOut(LEFT,&Swiss_911_Extra_Compressed_Regular12pt7b,320,176, "SG   [ OG=%.3f ]", BatchData.batchOG);
+    }
   }
 
   if (!drawDynamic) {
@@ -265,30 +277,39 @@ void screenData() {
   tft.setFreeFont(&Swiss_911_Extra_Compressed_Regular12pt7b);                                    
   tft.drawString("C",170,128);
 
+  if (offMode) {
+    // Off: no targets (labels and values), the background again.
+    restoreMainBackgroundRect(218, 90, 262, 28);   // Temperature target
+    restoreMainBackgroundRect(218, 118, 262, 28);  // Slow temperature target
+  } else {
   // TEMPERATURE TARGET
-  tft.setTextColor(0);   
+  tft.setTextColor(0);
   textOut(LEFT,&Swiss_911_Extra_Compressed_Regular12pt7b,320,104, "Target");
-  tft.setTextColor(TFT_YELLOW,0); 
+  tft.setTextColor(TFT_YELLOW,0);
   if (SetPointData.setPointTemp != NOTaTEMP)
     textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,104, "%.1f",SetPointData.setPointTemp);
   else
     textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,104, "n/a");
 
-  // SLOW TEMPERATURE TARGET 
-  tft.setTextColor(0,tft.color565(153,153,204)); 
+  // SLOW TEMPERATURE TARGET
+  tft.setTextColor(0,tft.color565(153,153,204));
   textOut(LEFT,&Swiss_911_Extra_Compressed_Regular12pt7b,320,132, "Slow target");
-  tft.setTextColor(TFT_YELLOW,0); 
-  if (SetPointData.setPointSlowTemp != NOTaTEMP) 
+  tft.setTextColor(TFT_YELLOW,0);
+  if (SetPointData.setPointSlowTemp != NOTaTEMP)
     textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,132, "   %.1f",SetPointData.setPointSlowTemp);
   else
     textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,132, "   n/a");
+  }
 
   // PRESSURE 
   tft.setTextColor(TFT_WHITE,tft.color565(153,153,255)); 
   textOut(CENTER,&Swiss_911_Extra_Compressed_Regular18pt7b,170,259, " %.2f ",ControlData.pressure);
   textOut(CENTER,&Swiss_911_Extra_Compressed_Regular12pt7b,170,284, "bar");
 
-  // PRESSURE TARGET 
+  // PRESSURE TARGET (none in Off)
+  if (offMode) {
+    restoreMainBackgroundRect(218, 231, 262, 28);
+  } else {
   tft.setTextColor(0);
   textOut(LEFT,&Swiss_911_Extra_Compressed_Regular12pt7b,320,245, "Target");
   tft.setTextColor(TFT_YELLOW,0);
@@ -296,27 +317,36 @@ void screenData() {
     textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,245, "   %.2f", SetPointData.setPointPressure);
   else
     textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,245, "   n/a");
-
-  // CO2 MASS COUNT
-  tft.setTextColor(0, tft.color565(185,208,170));
-  textOut(LEFT,&Swiss_911_Extra_Compressed_Regular12pt7b,320,273, "%s ", co2RateLabel);
-  tft.setTextColor(TFT_YELLOW,0);
-  textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,273, " %.0f", CO2Mass()); 
+  }
 
   // VOLUME
-  tft.setTextColor(TFT_WHITE,tft.color565(204,102,153)); 
-  textOut(CENTER,&Swiss_911_Extra_Compressed_Regular18pt7b,170,179, " %.0f ",beerVolume);
+  tft.setTextColor(TFT_WHITE,tft.color565(204,102,153));
+  // Off and Manual control: no beer, so the fermenter's total volume.
+  textOut(CENTER,&Swiss_911_Extra_Compressed_Regular18pt7b,170,179, " %.0f ", noBatch ? FMTData.FMTVolume : beerVolume);
   textOut(CENTER,&Swiss_911_Extra_Compressed_Regular12pt7b,170,204, "liters");
 
-  // SPECIFIC GRAVITY
-  tft.setTextColor(TFT_YELLOW,0);
-  textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,176, " %.3f", beerSG);
+  if (noBatch) {
+    // The background again where SG, ABV and CO2 (labels and values) were.
+    restoreMainBackgroundRect(218, 162, 88, 28);   // SG value
+    restoreMainBackgroundRect(218, 190, 262, 28);  // ABV value and label
+    restoreMainBackgroundRect(218, 259, 262, 28);  // CO2 value and label
+  } else {
+    // CO2 MASS COUNT
+    tft.setTextColor(0, tft.color565(185,208,170));
+    textOut(LEFT,&Swiss_911_Extra_Compressed_Regular12pt7b,320,273, "%s ", co2RateLabel);
+    tft.setTextColor(TFT_YELLOW,0);
+    textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,273, " %.0f", CO2Mass());
 
-  // ABV
-  tft.setTextColor(0);
-  textOut(LEFT,&Swiss_911_Extra_Compressed_Regular12pt7b,320,204, "%% ABV");
-  tft.setTextColor(TFT_YELLOW,0);
-  textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,204, " %.2f", beerABV);
+    // SPECIFIC GRAVITY
+    tft.setTextColor(TFT_YELLOW,0);
+    textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,176, " %.3f", beerSG);
+
+    // ABV
+    tft.setTextColor(0);
+    textOut(LEFT,&Swiss_911_Extra_Compressed_Regular12pt7b,320,204, "%% ABV");
+    tft.setTextColor(TFT_YELLOW,0);
+    textOut(RIGHT,&Swiss_911_Extra_Compressed_Regular12pt7b,304,204, " %.2f", beerABV);
+  }
 
   povotoWiFiDrawStatusIndicator();
   drawCalibrationStatus();

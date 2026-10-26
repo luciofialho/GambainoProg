@@ -342,7 +342,7 @@ bool readSetPointDataFromEEPROM() {
   if (!isfinite(SetPointData.setPointSlowPressureSpeed) ||
       SetPointData.setPointSlowPressureSpeed < 0.1f || SetPointData.setPointSlowPressureSpeed > 2.0f)
     SetPointData.setPointSlowPressureSpeed = defaultSetPointData.setPointSlowPressureSpeed;
-  if (SetPointData.mode > MODE_CONDITIONING) SetPointData.mode = defaultSetPointData.mode;
+  if (SetPointData.mode > MODE_MANUAL) SetPointData.mode = defaultSetPointData.mode;
   store.end();
   return true;
 }

@@ -227,7 +227,8 @@ long int fermenterOnOffCycle(float temperature, byte targetMode) {
 
   if (SetPointData.mode==MODE_BREWING_TRANSFERING) // brewing/transfering mode
     return 5*timeUnit;
-  else if (SetPointData.mode==MODE_FERMENTING || SetPointData.mode==MODE_CONDITIONING) { // fermenting mode
+  else if (SetPointData.mode==MODE_FERMENTING || SetPointData.mode==MODE_CONDITIONING ||
+           SetPointData.mode==MODE_MANUAL) { // fermenting mode (manual control: same cycles, no logs)
     const long onTime = lround(coolingCycleMinutes(temperature,
       FMTData.coolingCycle[0].onMinutes, FMTData.coolingCycle[1].onMinutes,
       FMTData.coolingCycle[2].onMinutes) * timeUnit);
@@ -285,7 +286,8 @@ static void fermenterThermometerAlarm() {
   else if (invalidSince == 0) invalidSince = now | 1;
   const bool missing = (!debugging && !dallasRoleAssigned(DALLAS_ROLE_FERMENTER)) ||
       (invalidSince != 0 && now - invalidSince >= INVALID_TOLERANCE_MS);
-  const bool controlling = (SetPointData.mode == MODE_FERMENTING || SetPointData.mode == MODE_CONDITIONING) &&
+  const bool controlling = (SetPointData.mode == MODE_FERMENTING || SetPointData.mode == MODE_CONDITIONING ||
+                            SetPointData.mode == MODE_MANUAL) &&
       SetPointData.setPointTemp != NOTaTEMP;
   thermometerAlarmActive = controlling && missing;
 }

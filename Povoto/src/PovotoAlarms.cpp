@@ -46,6 +46,7 @@ static const char *modeLabel(byte mode) {
     case MODE_BREWING_TRANSFERING: return "Brewing/transferring";
     case MODE_FERMENTING: return "Fermenting";
     case MODE_CONDITIONING: return "Conditioning";
+    case MODE_MANUAL: return "Manual control";
     default: return "?";
   }
 }

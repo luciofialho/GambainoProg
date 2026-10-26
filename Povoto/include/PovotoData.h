@@ -10,6 +10,10 @@
 #define MODE_BREWING_TRANSFERING 1
 #define MODE_FERMENTING          2
 #define MODE_CONDITIONING        3
+// Manual control: like Off for the control and the logs (outputs only through
+// the overrides of the Control page, no batch), shown as "Manual control".
+#define MODE_MANUAL              4
+inline bool modeIsOffLike(unsigned mode) { return mode == MODE_OFF || mode == MODE_MANUAL; }
 
 // Helper macros to stringify defines at compile time
 #define XSTR(x) #x
@@ -132,7 +136,7 @@ extern BatchData_t BatchData;
 
 // Set points
 struct SetPointData_t {
-  byte mode;  // MODE_OFF=0, MODE_BREWING_TRANSFERING=1, MODE_FERMENTING=2, MODE_CONDITIONING=3
+  byte mode;  // MODE_OFF=0, MODE_BREWING_TRANSFERING=1, MODE_FERMENTING=2, MODE_CONDITIONING=3, MODE_MANUAL=4
   float setPointTemp;
   float setPointSlowTemp;
   float setPointSlowTempSpeed;

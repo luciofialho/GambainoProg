@@ -8,9 +8,12 @@ Caminho: Povoto → ESP-NOW → SideKick → HTTPS → Worker na Cloudflare
 - Um registro por janela de 5 min (`epoch / 300`), alinhado ao relógio: o
   horário do registro é o início da janela, e os valores são os do momento do
   envio (o primeiro `loop()` dentro da janela).
-- Enviado ao `peerSideKick` com o pacote `CLOUDLOGPACKET` ('G'), em modo
-  diferente de Off e com batch ≠ 0, Wi-Fi conectado (canal do ESP-NOW) e NTP
-  válido. Se o `sendEspNow` falhar, tenta de novo a cada 5 s dentro da mesma
+- Enviado ao `peerSideKick` com o pacote `CLOUDLOGPACKET` ('G'), com Wi-Fi
+  conectado (canal do ESP-NOW) e NTP válido, em qualquer modo e mesmo sem
+  batch aberto (desde 26/10/2026; antes só fora de Off e com batch ≠ 0). Sem
+  batch, `b` = 0: a nuvem guarda só dois dias dessas linhas e mantém a linha
+  do batch 0 em `batches` só para as estatísticas do dashboard, fora das
+  listas, da busca, dos gráficos e dos links. Se o `sendEspNow` falhar, tenta de novo a cada 5 s dentro da mesma
   janela. Não há confirmação de entrega: a perda no rádio aparece como
   lacuna na conferência (`cloud/scripts/check-phase1.mjs`).
 - Depois de um reboot, a janela atual pode ser enviada de novo; a nuvem
@@ -39,12 +42,12 @@ Histórico (uma linha JSON, até ~400 bytes):
 | `v` | versão do formato (1) |
 | `p` | PovotoNum |
 | `e` | epoch local do início da janela |
-| `m` | modo (0 Off, 1 transferência, 2 Fermenting, 3 Conditioning) |
+| `m` | modo (0 Off, 1 transferência, 2 Fermenting, 3 Conditioning, 4 Manual control: controle de temperatura e pressão ativos, sem logs de lote; o registro da nuvem continua, com `b` = 0) |
 | `b` | número do batch (nome, data e OG vão no estado; firmware antigo ainda os manda aqui em `bn`, `bd`, `og`, e a nuvem aceita) |
 | `t`, `ts`, `tsl` | temperatura, setpoint, slow target |
 | `pr`, `ps`, `psl` | pressão, setpoint, slow target |
 | `sg`, `abv`, `r`, `f` | SG, ABV, gCO2/L/d e flags dos gráficos (1 retido, 2 transição, 4 sintético) |
-| `vol`, `co2`, `tblv` | volume (L), g de CO2, TBLV em s (o maior entre o intervalo dos dois últimos vents e o tempo desde o último; vazio antes de dois vents). Firmware antigo mandava `rph` (reliefs por hora), que a nuvem ignora |
+| `vol`, `co2`, `tblv` | volume (L; em Off e Manual control é o volume do fermentador, não o da cerveja), g de CO2, TBLV em s (o maior entre o intervalo dos dois últimos vents e o tempo desde o último; vazio antes de dois vents). Firmware antigo mandava `rph` (reliefs por hora), que a nuvem ignora |
 | `ss` | só no log sintético: dia 0 do perfil (epoch local) |
 
 Estado do batch (uma linha JSON, até ~330 bytes; o SideKick aceita até 400):

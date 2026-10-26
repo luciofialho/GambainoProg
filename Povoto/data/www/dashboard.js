@@ -164,14 +164,15 @@
       textOut(CENTER, 18, 170, 105, s.temperature, WHITE);
       gfxString('o', 7, 162, 128, WHITE);
       gfxString('C', 12, 170, 128, WHITE);
-      textOut(LEFT, 12, 320, 104, 'Target', BLACK);
+      // No targets (Off): no labels either, as on the TFT.
+      if (s.tempTarget) textOut(LEFT, 12, 320, 104, 'Target', BLACK);
       textOut(RIGHT, 12, 304, 104, s.tempTarget, YELLOW);
-      textOut(LEFT, 12, 320, 132, 'Slow target', BLACK);
+      if (s.slowTarget) textOut(LEFT, 12, 320, 132, 'Slow target', BLACK);
       textOut(RIGHT, 12, 304, 132, s.slowTarget, YELLOW);
 
       textOut(CENTER, 18, 170, 259, s.pressure, WHITE);
       textOut(CENTER, 12, 170, 284, 'bar', WHITE);
-      textOut(LEFT, 12, 320, 245, 'Target', BLACK);
+      if (s.pressureTarget) textOut(LEFT, 12, 320, 245, 'Target', BLACK);
       textOut(RIGHT, 12, 304, 245, s.pressureTarget, YELLOW);
       textOut(LEFT, 12, 320, 273, s.co2Label, BLACK);
       textOut(RIGHT, 12, 304, 273, s.co2Mass, YELLOW);
@@ -179,7 +180,8 @@
       textOut(CENTER, 18, 170, 179, s.volume, WHITE);
       textOut(CENTER, 12, 170, 204, 'liters', WHITE);
       textOut(RIGHT, 12, 304, 176, s.sg, YELLOW);
-      textOut(LEFT, 12, 320, 204, '% ABV', BLACK);
+      // No ABV (Off, no batch): no label either, as on the TFT.
+      if (s.abv) textOut(LEFT, 12, 320, 204, '% ABV', BLACK);
       textOut(RIGHT, 12, 304, 204, s.abv, YELLOW);
       if (statsShown()) drawStats(s.stats);
     }

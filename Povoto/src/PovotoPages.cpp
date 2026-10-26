@@ -338,15 +338,21 @@ void handleDashboardStatus(AsyncWebServerRequest *request) {
   json.reserve(1024);
   json += '{';
 
+  // Off and Manual control: no batch, as on the TFT (screenData): "N/B", the
+  // name "no batch" / "Manual control", no date, OG, SG, ABV or CO2, and the
+  // fermenter's total volume instead of the beer's. Off also has no targets.
+  // Empty texts are not drawn.
+  const bool offMode = SetPointData.mode == MODE_OFF;
+  const bool noBatch = modeIsOffLike(SetPointData.mode);
   snprintf(text, sizeof(text), "%04d", BatchData.batchNumber);
-  dashboardJsonString(json, "batchNumber", text);
+  dashboardJsonString(json, "batchNumber", noBatch ? "N/B" : text);
   formatBatchDateShort(BatchData.batchDate, text, sizeof(text));
-  dashboardJsonString(json, "batchDate", text);
+  dashboardJsonString(json, "batchDate", noBatch ? "" : text);
   snprintf(text, sizeof(text), "%d", FMTData.PovotoNum);
   dashboardJsonString(json, "povotoNum", text);
-  dashboardJsonString(json, "batchName", BatchData.batchName);
+  dashboardJsonString(json, "batchName", offMode ? "no batch" : noBatch ? "Manual control" : BatchData.batchName);
   snprintf(text, sizeof(text), "SG   [ OG=%.3f ]", BatchData.batchOG);
-  dashboardJsonString(json, "ogLabel", text);
+  dashboardJsonString(json, "ogLabel", noBatch ? "" : text);
 
   if (ControlData.temperature != NOTaTEMP)
     snprintf(text, sizeof(text), "%.1f", ControlData.temperature);
@@ -357,30 +363,30 @@ void handleDashboardStatus(AsyncWebServerRequest *request) {
     snprintf(text, sizeof(text), "%.1f", SetPointData.setPointTemp);
   else
     snprintf(text, sizeof(text), "n/a");
-  dashboardJsonString(json, "tempTarget", text);
+  dashboardJsonString(json, "tempTarget", offMode ? "" : text);
   if (SetPointData.setPointSlowTemp != NOTaTEMP)
     snprintf(text, sizeof(text), "%.1f", SetPointData.setPointSlowTemp);
   else
     snprintf(text, sizeof(text), "n/a");
-  dashboardJsonString(json, "slowTarget", text);
+  dashboardJsonString(json, "slowTarget", offMode ? "" : text);
   snprintf(text, sizeof(text), "%.2f", ControlData.pressure);
   dashboardJsonString(json, "pressure", text);
   if (SetPointData.setPointPressure != 0)
     snprintf(text, sizeof(text), "%.2f", SetPointData.setPointPressure);
   else
     snprintf(text, sizeof(text), "n/a");
-  dashboardJsonString(json, "pressureTarget", text);
+  dashboardJsonString(json, "pressureTarget", offMode ? "" : text);
 
   getCO2RateLabel(text, sizeof(text));
-  dashboardJsonString(json, "co2Label", text);
+  dashboardJsonString(json, "co2Label", noBatch ? "" : text);
   snprintf(text, sizeof(text), "%.0f", CO2Mass());
-  dashboardJsonString(json, "co2Mass", text);
-  snprintf(text, sizeof(text), "%.0f", beerVolume);
+  dashboardJsonString(json, "co2Mass", noBatch ? "" : text);
+  snprintf(text, sizeof(text), "%.0f", noBatch ? FMTData.FMTVolume : beerVolume);
   dashboardJsonString(json, "volume", text);
   snprintf(text, sizeof(text), "%.3f", beerSG);
-  dashboardJsonString(json, "sg", text);
+  dashboardJsonString(json, "sg", noBatch ? "" : text);
   snprintf(text, sizeof(text), "%.2f", beerABV);
-  dashboardJsonString(json, "abv", text);
+  dashboardJsonString(json, "abv", noBatch ? "" : text);
 
   // Statistics view of the dashboard (statistics icon): texts as shown.
   json += "\"stats\":{";
@@ -2804,11 +2810,13 @@ void handleSetPointDataPage(AsyncWebServerRequest *request) {
                                    "<option value='" TOSTR(MODE_BREWING_TRANSFERING) "'%s>Brewing/Transfering</option>"
                                    "<option value='" TOSTR(MODE_FERMENTING)          "'%s>Fermenting</option>"
                                    "<option value='" TOSTR(MODE_CONDITIONING)        "'%s>Conditioning</option>"
+                                   "<option value='" TOSTR(MODE_MANUAL)              "'%s>Manual control</option>"
                                    "</select>",
           SetPointData.mode == MODE_OFF                 ? " selected" : "",
           SetPointData.mode == MODE_BREWING_TRANSFERING ? " selected" : "",
           SetPointData.mode == MODE_FERMENTING          ? " selected" : "",
-          SetPointData.mode == MODE_CONDITIONING        ? " selected" : "");
+          SetPointData.mode == MODE_CONDITIONING        ? " selected" : "",
+          SetPointData.mode == MODE_MANUAL              ? " selected" : "");
   remaining = BUFFER_SIZE - strlen(html) - 1;
   strncat(html, buffer, remaining);
   remaining = BUFFER_SIZE - strlen(html) - 1;
@@ -2908,7 +2916,8 @@ void handleSetPointDataUpdate(AsyncWebServerRequest *request) {
   }
 
   if (request->hasParam("mode", true)) {
-    SetPointData.mode = request->getParam("mode", true)->value().toInt();
+    const long requestedMode = request->getParam("mode", true)->value().toInt();
+    if (requestedMode >= MODE_OFF && requestedMode <= MODE_MANUAL) SetPointData.mode = (byte)requestedMode;
   }
   if (request->hasParam("setPointTemp", true)) {
     String v = request->getParam("setPointTemp", true)->value();
