@@ -144,9 +144,20 @@ export async function storeRecords(db: D1Database, site: number, records: LogRec
       s.epoch, s.chillSeconds, s.heatSeconds, s.molHeadspace, s.molDissolved, s.molEjected,
       s.reliefs, s.dumpedVolume, s.tempMode, s.headspaceVolume));
   }
+  // Batch 0 (no batch open) only feeds the dashboard: two days of rows are kept.
+  const pruneNoBatch = db.prepare('DELETE FROM logs WHERE povoto_id = ? AND batch = 0 AND epoch < ?');
+  const noBatchNewest = new Map<number, number>();
+  for (const r of records) {
+    if (r.batch !== 0) continue;
+    const id = site * 100 + r.num;
+    noBatchNewest.set(id, Math.max(noBatchNewest.get(id) ?? 0, r.epoch));
+  }
+  for (const [id, newest] of noBatchNewest) statements.push(pruneNoBatch.bind(id, newest - NO_BATCH_KEEP_SECONDS));
   const results = await db.batch(statements);
   return results.slice(0, records.length).reduce((sum, result) => sum + (result.meta.changes ?? 0), 0);
 }
+
+const NO_BATCH_KEEP_SECONDS = 2 * 86400;
 
 // null ids = every Povoto.
 export async function listPovotos(db: D1Database, ids: number[] | null): Promise<PovotoRow[]> {
@@ -172,9 +183,11 @@ export async function latestLog(db: D1Database, povotoId: number): Promise<LogRo
     .bind(povotoId).first<LogRow>();
 }
 
+// Batch 0 (no batch open) has a row only for the dashboard statistics: lists,
+// search and graphs leave it out.
 export async function listBatches(db: D1Database, povotoId: number): Promise<BatchRow[]> {
   const { results } = await db.prepare(
-    'SELECT * FROM batches WHERE povoto_id = ? ORDER BY last_epoch DESC').bind(povotoId).all<BatchRow>();
+    'SELECT * FROM batches WHERE povoto_id = ? AND batch > 0 ORDER BY last_epoch DESC').bind(povotoId).all<BatchRow>();
   return results;
 }
 
@@ -184,7 +197,7 @@ export async function getBatch(db: D1Database, povotoId: number, batch: number):
 }
 
 export async function latestBatch(db: D1Database, povotoId: number): Promise<BatchRow | null> {
-  return db.prepare('SELECT * FROM batches WHERE povoto_id = ? ORDER BY last_epoch DESC LIMIT 1')
+  return db.prepare('SELECT * FROM batches WHERE povoto_id = ? AND batch > 0 ORDER BY last_epoch DESC LIMIT 1')
     .bind(povotoId).first<BatchRow>();
 }
 
@@ -198,7 +211,7 @@ export async function graphRows(db: D1Database, povotoId: number, batch: number)
 }
 
 export async function searchBatches(db: D1Database, query: string, ids: number[] | null): Promise<BatchRow[]> {
-  const filters: string[] = [];
+  const filters: string[] = ['batch > 0'];
   const values: (string | number)[] = [];
   if (/^\d+$/.test(query)) {
     filters.push('batch = ?');

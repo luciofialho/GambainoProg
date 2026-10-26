@@ -420,6 +420,7 @@ app.get('/p/:id/dashboard/:file', async c => {
 // Graphs: ?batch=N, or the latest batch.
 async function graphBatch(c: Ctx, povotoId: number): Promise<db.BatchRow | null> {
   const requested = intParam(c.req.query('batch'));
+  if (requested === 0) return null;   // no batch open: not a batch to plot
   return requested === null ? db.latestBatch(c.env.DB, povotoId)
     : db.getBatch(c.env.DB, povotoId, requested);
 }
@@ -530,7 +531,7 @@ app.post('/p/:id/setpoint/trigger/:i', c => {
 app.post('/p/:id/batches/:batch/share', async c => {
   const povoto = await povotoFor(c, true);
   const batch = intParam(c.req.param('batch'));
-  if (!povoto || batch === null || !(await db.getBatch(c.env.DB, povoto.id, batch))) return notFound(c);
+  if (!povoto || !batch || !(await db.getBatch(c.env.DB, povoto.id, batch))) return notFound(c);
   await db.createShare(c.env.DB, { token: randomToken(), povoto_id: povoto.id, batch,
     created_by: c.get('email'), created_at: nowUtc() });
   return c.redirect(`/p/${povoto.id}/`, 303);

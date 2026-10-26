@@ -88,7 +88,7 @@ export function povotoName(povoto: { num: number }): string {
 // Fermenting or Conditioning. null otherwise.
 export function currentBatch(latest: { epoch: number; mode: number; batch: number } | null,
                              nowLocal: number): number | null {
-  if (!latest || !(latest.mode in MODE_NAMES)) return null;
+  if (!latest || !latest.batch || !(latest.mode in MODE_NAMES)) return null;
   return nowLocal - latest.epoch <= ACTIVE_SECONDS ? latest.batch : null;
 }
 

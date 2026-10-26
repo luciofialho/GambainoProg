@@ -114,8 +114,9 @@ function recordFrom(raw: Record<string, unknown>, nowUtc: number): LogRecord | n
     num: int(raw.p, 1, 99),
     // Local epoch is behind UTC here; a day of margin covers any offset.
     epoch: int(raw.e, MIN_EPOCH, nowUtc + 86400),
-    mode: int(raw.m, 0, 3),
-    batch: int(raw.b, 1, 65535),
+    mode: int(raw.m, 0, 4),   // 4: manual control
+    // 0: no batch open (firmware that keeps the dashboard fed without one)
+    batch: int(raw.b, 0, 65535),
     batchName: optionalText(raw.bn, 64),
     batchDate: optionalText(raw.bd, 16),
     og: num(raw.og),
@@ -142,7 +143,7 @@ function stateFrom(raw: Record<string, unknown>, nowUtc: number): StateRecord | 
   const state = {
     num: int(raw.p, 1, 99),
     epoch: int(raw.e, MIN_EPOCH, nowUtc + 86400),
-    batch: int(raw.b, 1, 65535),
+    batch: int(raw.b, 0, 65535),
     batchName: text(raw.bn, 64),
     batchDate: text(raw.bd, 16),
     og: num(raw.og),

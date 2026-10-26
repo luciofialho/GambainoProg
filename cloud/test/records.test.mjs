@@ -70,6 +70,28 @@ test('a newer firmware: unknown fields are ignored, unknown kinds rejected alone
   assert.equal(parsed.rejected, 1);
 });
 
+test('no batch open (batch 0): accepted, for the dashboard', () => {
+  const { records, states } = parseBody(fixture('2026-10-no-batch.ndjson'), NOW);
+  assert.equal(records[0].batch, 0);
+  assert.equal(states[0].batch, 0);
+  assert.equal(states[0].reliefs, 6);
+});
+
+test('manual control (mode 4) and the dashboard texts of Off / manual', async () => {
+  const { records } = parseBody(fixture('2026-10-manual-mode.ndjson'), NOW);
+  assert.equal(records[0].mode, 4);
+  const { dashboardStatus } = await import('../src/format.ts');
+  const row = mode => ({ epoch: 1790001800, mode, batch: 0, temp: 18.2, temp_sp: 18, temp_slow: null,
+    press: 0.5, press_sp: 0.5, sg: null, abv: null, rate: null, co2_mass: 0, volume: 131.4 });
+  const manual = dashboardStatus(row(4), null, 1, NOW);
+  assert.deepEqual([manual.batchNumber, manual.batchName, manual.tempTarget, manual.pressureTarget, manual.volume],
+    ['N/B', 'Manual control', '18.0', '0.50', '131']);
+  const off = dashboardStatus(row(0), null, 1, NOW);
+  assert.deepEqual([off.batchNumber, off.batchName, off.tempTarget, off.slowTarget, off.pressureTarget, off.sg],
+    ['N/B', 'no batch', '', '', '', '']);
+  assert.equal(dashboardStatus(row(2), null, 1, NOW).tempTarget, '18.0');
+});
+
 test('time between the last vents ("tblv") and the relief count ("rc"; "nx" of older firmware)', () => {
   const now = parseBody(fixture('2026-10-tblv-reliefs.ndjson'), NOW);
   assert.equal(now.records[0].tblvSeconds, 540);

@@ -2,7 +2,9 @@
 // /dashboard and /graphs pages run unchanged (Povoto/src/PovotoPages.cpp).
 import type { BatchRow, LogRow } from './db';
 
+const MODE_OFF = 0;
 const MODE_FERMENTING = 2;
+const MODE_MANUAL = 4;
 
 function fixed(value: number | null, decimals: number, missing: string): string {
   return value === null ? missing : value.toFixed(decimals);
@@ -41,22 +43,27 @@ export function dashboardStatus(log: LogRow, batch: BatchRow | null, num: number
   // in the device's format (handleDashboardStatus).
   const co2Label = log.mode !== MODE_FERMENTING ? 'g CO2'
     : log.rate === null ? 'gCO2 [---]' : `gCO2 [${log.rate.toFixed(1)}/L/d]`;
+  // Off and Manual control: no batch, as on the device ("N/B"; "no batch" or
+  // "Manual control"; no date, OG, SG, ABV, CO2; the volume is the fermenter's,
+  // sent by the Povoto). Off also has no targets.
+  const off = log.mode === MODE_OFF;
+  const noBatch = off || log.mode === MODE_MANUAL;
   return {
-    batchNumber: String(log.batch).padStart(4, '0'),
-    batchDate: batchDateShort(batch?.date ?? ''),
+    batchNumber: noBatch ? 'N/B' : String(log.batch).padStart(4, '0'),
+    batchDate: noBatch ? '' : batchDateShort(batch?.date ?? ''),
     povotoNum: String(num),
-    batchName: batch?.name ?? '',
-    ogLabel: `SG   [ OG=${fixed(batch?.og ?? null, 3, 'n/a')} ]`,
+    batchName: off ? 'no batch' : noBatch ? 'Manual control' : batch?.name ?? '',
+    ogLabel: noBatch ? '' : `SG   [ OG=${fixed(batch?.og ?? null, 3, 'n/a')} ]`,
     temperature: fixed(log.temp, 1, 'ERR'),
-    tempTarget: fixed(log.temp_sp, 1, 'n/a'),
-    slowTarget: fixed(log.temp_slow, 1, 'n/a'),
+    tempTarget: off ? '' : fixed(log.temp_sp, 1, 'n/a'),
+    slowTarget: off ? '' : fixed(log.temp_slow, 1, 'n/a'),
     pressure: fixed(log.press, 2, 'ERR'),
-    pressureTarget: log.press_sp ? log.press_sp.toFixed(2) : 'n/a',
-    co2Label,
-    co2Mass: fixed(log.co2_mass, 0, ''),
+    pressureTarget: off ? '' : log.press_sp ? log.press_sp.toFixed(2) : 'n/a',
+    co2Label: noBatch ? '' : co2Label,
+    co2Mass: noBatch ? '' : fixed(log.co2_mass, 0, ''),
     volume: fixed(log.volume, 0, ''),
-    sg: fixed(log.sg, 3, ''),
-    abv: fixed(log.abv, 2, ''),
+    sg: noBatch ? '' : fixed(log.sg, 3, ''),
+    abv: noBatch ? '' : fixed(log.abv, 2, ''),
     wifiText: '',
     updated: `Updated ${ageText(Math.max(0, nowLocal - log.epoch))}`,
     wifiBars: 0,
