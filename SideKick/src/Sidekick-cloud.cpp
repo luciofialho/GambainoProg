@@ -23,6 +23,9 @@ constexpr char SPOOL_DIR[] = "/cloud";
 constexpr char SPOOL_FILE[] = "/cloud/spool.txt";
 constexpr char OFFSET_FILE[] = "/cloud/sent";
 constexpr char NVS_NAMESPACE[] = "sk_cloud";
+// All production SideKicks post to this single public ingest route. The token
+// remains per SideKick/site and is the only cloud setting stored in NVS.
+constexpr char CLOUD_INGEST_URL[] = "https://public.brewtal.one/api/ingest";
 // ~1,300 records: more than a day of 4 Povotos every 5 min.
 constexpr size_t SPOOL_MAX_BYTES = 600UL * 1024UL;
 constexpr size_t RECORD_MAX_BYTES = 1024;
@@ -66,8 +69,7 @@ struct CloudState {
 };
 CloudState cloudStates[STATE_SLOTS];  // guarded by spoolMutex
 
-// Written by the web task, read by LogSend: copies under the mutex.
-String cloudUrl;
+// Written by the web task, read by LogSend under the mutex.
 String cloudToken;
 std::atomic<bool> cloudConfigured{false};
 // Bumped on every settings change: a whoami answer for older settings is dropped.
@@ -164,26 +166,24 @@ void updatePending() {
 void loadConfig() {
   Preferences store;
   if (!store.begin(NVS_NAMESPACE, true)) return;
-  cloudUrl = store.getString("url", "");
   cloudToken = store.getString("token", "");
   store.end();
-  cloudConfigured = cloudUrl.length() && cloudToken.length();
+  cloudConfigured = cloudToken.length();
 }
 
-// Connection settings fields (web task). key: "url" or "token".
-bool saveSetting(const char *key, const char *value, String &target) {
+// Connection settings field (web task): the token only. The endpoint is fixed.
+bool saveTokenSetting(const char *value) {
   String text(value);
   text.trim();
-  if (!strcmp(key, "url") && text.length() && !text.startsWith("https://")) return false;
   if (!spoolMutex || xSemaphoreTake(spoolMutex, pdMS_TO_TICKS(500)) != pdTRUE) return false;
   bool saved = true;
-  if (text != target) {
+  if (text != cloudToken) {
     Preferences store;
-    saved = store.begin(NVS_NAMESPACE, false) && store.putString(key, text) == text.length();
+    saved = store.begin(NVS_NAMESPACE, false) && store.putString("token", text) == text.length();
     store.end();
     if (saved) {
-      target = text;
-      cloudConfigured = cloudUrl.length() && cloudToken.length();
+      cloudToken = text;
+      cloudConfigured = cloudToken.length();
       ++cloudConfigGeneration;
       cloudSite = 0;
       lastWhoamiMs = 0;
@@ -193,12 +193,6 @@ bool saveSetting(const char *key, const char *value, String &target) {
   return saved;
 }
 
-void getUrlSetting(char *buf, size_t size) {
-  if (!spoolMutex || xSemaphoreTake(spoolMutex, pdMS_TO_TICKS(500)) != pdTRUE) return;
-  strlcpy(buf, cloudUrl.c_str(), size);
-  xSemaphoreGive(spoolMutex);
-}
-
 // The token itself never leaves the SideKick: the page only learns whether it is set.
 void getTokenSetting(char *buf, size_t size) {
   if (!spoolMutex || xSemaphoreTake(spoolMutex, pdMS_TO_TICKS(500)) != pdTRUE) return;
@@ -206,17 +200,15 @@ void getTokenSetting(char *buf, size_t size) {
   xSemaphoreGive(spoolMutex);
 }
 
-bool setUrlSetting(const char *value)   { return saveSetting("url", value, cloudUrl); }
-bool setTokenSetting(const char *value) { return saveSetting("token", value, cloudToken); }
+bool setTokenSetting(const char *value) { return saveTokenSetting(value); }
 
 // LogSend task: asks the cloud which site the token belongs to, while unknown.
 void refreshCloudSite() {
   if (cloudSite != 0) return;
   const unsigned long last = lastWhoamiMs;
   if (last && millis() - last < WHOAMI_RETRY_MS) return;
-  String url, token;
+  String url(CLOUD_INGEST_URL), token;
   if (xSemaphoreTake(spoolMutex, portMAX_DELAY) != pdTRUE) return;
-  url = cloudUrl;
   token = cloudToken;
   const uint32_t generation = cloudConfigGeneration;
   xSemaphoreGive(spoolMutex);
@@ -348,12 +340,11 @@ void sendCloudLog() {
   refreshCloudSite();
 
   // Copy the settings and the next records under the lock; post without it.
-  String url, token;
+  String url(CLOUD_INGEST_URL), token;
   String body;
   size_t count = 0;
   size_t nextOffset = 0;
   if (xSemaphoreTake(spoolMutex, portMAX_DELAY) != pdTRUE) return;
-  url = cloudUrl;
   token = cloudToken;
   size_t queued = 0;
   const unsigned long lastAttempt = lastPostAttemptMs;
@@ -545,6 +536,5 @@ void forwardCloudCommands() {
 }
 
 void registerCloudLogSettings() {
-  gambainoWiFiAddSettingsField({"cloudurl", "Cloud ingest URL", 200, getUrlSetting, setUrlSetting});
   gambainoWiFiAddSettingsField({"cloudtoken", "Cloud token (SideKick site)", 100, getTokenSetting, setTokenSetting, true});
 }

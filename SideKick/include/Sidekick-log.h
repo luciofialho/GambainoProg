@@ -9,13 +9,18 @@ void sendLogToGoogleSheets();
 void sendLogToBrewfather();
 char * getLogStatus(char * st);
 
-// Brewfather stream URL and Google Sheets (Apps Script) URL, kept in NVS and
-// set on the Connection settings page; no default in the code.
+// Brewfather stream URL, Google Sheets (Apps Script) URL and the Google log
+// destinations are kept in NVS and set on the Connection settings page.
 #define BREWFATHER_URL_MAXLEN 200
 #define SHEETS_URL_MAXLEN 200
+#define GOOGLE_LOG_FOLDER_MAXLEN 19
 void loadLogSettings();   // call in setup, before the LogSend task starts
 void getBrewfatherStreamURL(char *buf, size_t size);
 bool setBrewfatherStreamURL(const char *url);   // empty disables; false if invalid or not saved
 void getSheetsScriptURL(char *buf, size_t size);
 bool setSheetsScriptURL(const char *url);       // https only; empty disables
+void getGoogleLogProductionFolder(char *buf, size_t size);
+bool setGoogleLogProductionFolder(const char *folder);
+void getGoogleLogDebugFolder(char *buf, size_t size);
+bool setGoogleLogDebugFolder(const char *folder);
 #endif

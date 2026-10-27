@@ -3213,11 +3213,9 @@ void handleUserConfigPage(AsyncWebServerRequest *request) {
     "<label><input type='checkbox' name='googleLogEnabled' value='1'";
   html += FMTData.googleLogEnabled ? " checked" : "";
   html += "> Enable Google Sheets Datalog</label>"
-    "<label for='googleLogFolder'>Google Datalog Folder Name:</label>"
-    "<input type='text' id='googleLogFolder' name='googleLogFolder' maxlength='19' value='";
-  html += debugging ? String("GambainoDebug") : String(FMTData.googleLogFolder);
-  html += debugging ? "' readonly>" : "'>";
-  html += "<label for='dataLogIntervalSeconds'>Log interval:</label><select id='dataLogIntervalSeconds' name='dataLogIntervalSeconds'>";
+    "<small>Destination folder is managed by the SideKick ("
+    "debug or production according to this Povoto mode).</small>"
+    "<label for='dataLogIntervalSeconds'>Log interval:</label><select id='dataLogIntervalSeconds' name='dataLogIntervalSeconds'>";
   const int logIntervals[] = {30, 60, 120, 300, 600};
   const char *logIntervalLabels[] = {"30 seconds", "1 minute", "2 minutes", "5 minutes", "10 minutes"};
   for (uint8_t i = 0; i < sizeof(logIntervals) / sizeof(logIntervals[0]); ++i) {
@@ -3273,32 +3271,18 @@ void handleUserConfigUpdate(AsyncWebServerRequest *request) {
     return;
   }
   bool googleLogEnabled = FMTData.googleLogEnabled;
-  char googleLogFolder[sizeof(FMTData.googleLogFolder)];
-  strlcpy(googleLogFolder, FMTData.googleLogFolder, sizeof(googleLogFolder));
   if (request->hasParam("googleLogField", true)) {
     googleLogEnabled = request->hasParam("googleLogEnabled", true);
-    if (!debugging && request->hasParam("googleLogFolder", true)) {
-      String folder = request->getParam("googleLogFolder", true)->value();
-      folder.trim();
-      if (folder.isEmpty() || folder.length() >= sizeof(googleLogFolder)) {
-        request->send(400, "text/plain", "Google Datalog Folder Name must have 1 to 19 characters.");
-        return;
-      }
-      strlcpy(googleLogFolder, folder.c_str(), sizeof(googleLogFolder));
-    }
   }
   UserConfigurationData.screensaverTime = screensaverTime;
   UserConfigurationData.keypadPin = keypadPin;
   UserConfigurationData.displayBrightness = brightness;
   UserConfigurationData.ledBrightness = ledBrightness;
   writeUserConfigurationDataToNIV();
-  if (logInterval != FMTData.dataLogIntervalSeconds || googleLogEnabled != FMTData.googleLogEnabled ||
-      strcmp(googleLogFolder, FMTData.googleLogFolder) != 0) {
+  if (logInterval != FMTData.dataLogIntervalSeconds || googleLogEnabled != FMTData.googleLogEnabled) {
     FMTData.dataLogIntervalSeconds = logInterval;
     FMTData.googleLogEnabled = googleLogEnabled;
-    strlcpy(FMTData.googleLogFolder, googleLogFolder, sizeof(FMTData.googleLogFolder));
     writeFMTDataToNIV();
-    refreshDatalogFolder();
   }
   request->redirect("/menu");
 }

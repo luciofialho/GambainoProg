@@ -29,6 +29,13 @@
 #define CLOUDSTATEPACKET     'H'   // Povoto→SideKick: latest batch state for the cloud (JSON, not spooled)
 #define CLOUDCMDPACKET       'Q'   // SideKick→Povoto: one request from the cloud (JSON, Povoto/docs/cloud-log.md)
 
+// The Povoto sends one of these fixed-width folder values in Google datalog
+// records. The SideKick replaces it with its locally configured destination.
+// They are 19 characters, the maximum accepted folder name, so replacement
+// can never enlarge a MAXPACKETSIZE record.
+#define GOOGLE_LOG_FOLDER_PRODUCTION_MARKER "###################"
+#define GOOGLE_LOG_FOLDER_DEBUG_MARKER      "@@@@@@@@@@@@@@@@@@@"
+
 #define SERIAL2_SPEED 1000000
 #define SERIAL2TIMEOUT 100
 

@@ -47,7 +47,6 @@ struct FMTData_t {
   uint32_t nvsSchemaVersion;
   byte PovotoNum;
   bool googleLogEnabled; // Google Sheets datalog on/off (default on)
-  char googleLogFolder[20]; // Sheets folder outside debug mode (default Beers)
   bool debugMode; // bench board: simulated sensors, short timings (default true)
   float FMTVolume;
   float FMTAltitude;

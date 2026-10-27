@@ -350,6 +350,10 @@ void setup() {
   gambainoWiFiAddSettingsField({"mode", "Mode (operational or debug)", 12, getDebugModeSetting, setDebugModeSetting});
   gambainoWiFiAddSettingsField({"gsurl", "Google Sheets script URL (blank disables)", SHEETS_URL_MAXLEN,
                                 getSheetsScriptURL, setSheetsScriptURL});
+  gambainoWiFiAddSettingsField({"gsfolderprod", "Google datalog folder (production)", GOOGLE_LOG_FOLDER_MAXLEN,
+                                getGoogleLogProductionFolder, setGoogleLogProductionFolder});
+  gambainoWiFiAddSettingsField({"gsfolderdebug", "Google datalog folder (debug)", GOOGLE_LOG_FOLDER_MAXLEN,
+                                getGoogleLogDebugFolder, setGoogleLogDebugFolder});
   gambainoWiFiAddSettingsField({"bfurl", "Brewfather stream URL (blank disables)", BREWFATHER_URL_MAXLEN,
                                 getBrewfatherStreamURL, setBrewfatherStreamURL});
   loadPeers();

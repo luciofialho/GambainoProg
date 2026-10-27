@@ -19,7 +19,8 @@ void sendCloudLog();
 void forwardCloudCommands();
 // Appends the cloud status lines (HTML) to st.
 void appendCloudLogStatus(char *st, size_t size);
-// Worker URL and SideKick token as fields of the Connection settings page.
+// SideKick token as a field of the Connection settings page. The Worker URL is
+// fixed in the firmware.
 void registerCloudLogSettings();
 // Appends the "Site: <number> (<name>)" line of the token (the cloud defines it).
 void appendCloudSiteStatus(char *st, size_t size);

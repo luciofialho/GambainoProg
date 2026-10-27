@@ -10,6 +10,13 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 
+static_assert(sizeof(GOOGLE_LOG_FOLDER_PRODUCTION_MARKER) - 1 == GOOGLE_LOG_FOLDER_MAXLEN,
+              "production marker must reserve the whole folder field");
+static_assert(sizeof(GOOGLE_LOG_FOLDER_DEBUG_MARKER) - 1 == GOOGLE_LOG_FOLDER_MAXLEN,
+              "debug marker must reserve the whole folder field");
+constexpr char GOOGLE_LOG_PRODUCTION_FIELD[] = "\"folderName\":\"" GOOGLE_LOG_FOLDER_PRODUCTION_MARKER;
+constexpr char GOOGLE_LOG_DEBUG_FIELD[] = "\"folderName\":\"" GOOGLE_LOG_FOLDER_DEBUG_MARKER;
+
 namespace {
 // 2 KB each, taken from the heap that TLS needs (~50 KB per connection):
 // with 20 slots the Google and cloud handshakes ran out of memory.
@@ -78,15 +85,19 @@ bool initLogQueues() {
   return true;
 }
 
-// Brewfather stream URL and Google Sheets script URL: NVS only (no default in
-// the code), written from the Connection settings page and read by the LogSend
-// task (copied under the lock). Empty disables that destination.
+// Brewfather stream URL, Google Sheets script URL and the two Google log
+// folders, written from the Connection settings page and read under this lock.
+// Empty URLs disable their destination; folders always have defaults.
 #define SIDEKICK_NVS_NAMESPACE "sidekick"
 #define BREWFATHER_URL_KEY     "bf_url"
 #define SHEETS_URL_KEY         "gs_url"
+#define GOOGLE_PRODUCTION_FOLDER_KEY "gs_folder_prod"
+#define GOOGLE_DEBUG_FOLDER_KEY      "gs_folder_debug"
 static bool startsWithIgnoreCase(const char *value, const char *prefix);
 static char brewfatherStreamURL[BREWFATHER_URL_MAXLEN + 1] = "";
 static char sheetsScriptURL[SHEETS_URL_MAXLEN + 1] = "";
+static char googleProductionFolder[GOOGLE_LOG_FOLDER_MAXLEN + 1] = "Beers";
+static char googleDebugFolder[GOOGLE_LOG_FOLDER_MAXLEN + 1] = "GambainoDebug";
 static portMUX_TYPE logURLMux = portMUX_INITIALIZER_UNLOCKED;
 
 void loadLogSettings() {
@@ -102,6 +113,17 @@ void loadLogSettings() {
   if (store.isKey(SHEETS_URL_KEY)) store.getString(SHEETS_URL_KEY, url, sizeof(url));
   portENTER_CRITICAL(&logURLMux);
   strlcpy(sheetsScriptURL, url, sizeof(sheetsScriptURL));
+  portEXIT_CRITICAL(&logURLMux);
+  char folder[GOOGLE_LOG_FOLDER_MAXLEN + 1] = "Beers";
+  if (store.isKey(GOOGLE_PRODUCTION_FOLDER_KEY))
+    store.getString(GOOGLE_PRODUCTION_FOLDER_KEY, folder, sizeof(folder));
+  portENTER_CRITICAL(&logURLMux);
+  strlcpy(googleProductionFolder, folder[0] ? folder : "Beers", sizeof(googleProductionFolder));
+  portEXIT_CRITICAL(&logURLMux);
+  strlcpy(folder, "GambainoDebug", sizeof(folder));
+  if (store.isKey(GOOGLE_DEBUG_FOLDER_KEY)) store.getString(GOOGLE_DEBUG_FOLDER_KEY, folder, sizeof(folder));
+  portENTER_CRITICAL(&logURLMux);
+  strlcpy(googleDebugFolder, folder[0] ? folder : "GambainoDebug", sizeof(googleDebugFolder));
   portEXIT_CRITICAL(&logURLMux);
   store.end();
 }
@@ -143,6 +165,41 @@ bool setSheetsScriptURL(const char *url) {
   return setURL(SHEETS_URL_KEY, sheetsScriptURL, sizeof(sheetsScriptURL), url, "https://", nullptr);
 }
 
+static bool validGoogleFolder(const char *folder) {
+  if (!folder || !folder[0] || strlen(folder) > GOOGLE_LOG_FOLDER_MAXLEN) return false;
+  for (const char *c = folder; *c; ++c)
+    if ((unsigned char)*c < 0x20 || *c == '"' || *c == '\\') return false;
+  return true;
+}
+
+static bool setGoogleFolder(const char *key, char *target, const char *value) {
+  String folder(value ? value : "");
+  folder.trim();
+  if (!validGoogleFolder(folder.c_str())) return false;
+  char current[GOOGLE_LOG_FOLDER_MAXLEN + 1];
+  getURL(target, current, sizeof(current));
+  if (!strcmp(current, folder.c_str())) return true;
+  Preferences store;
+  if (!store.begin(SIDEKICK_NVS_NAMESPACE, false)) return false;
+  const bool saved = store.putString(key, folder) == folder.length();
+  store.end();
+  if (!saved) return false;
+  portENTER_CRITICAL(&logURLMux);
+  strlcpy(target, folder.c_str(), GOOGLE_LOG_FOLDER_MAXLEN + 1);
+  portEXIT_CRITICAL(&logURLMux);
+  Serial.printf("[LOG] %s changed to '%s'\n", key, folder.c_str());
+  return true;
+}
+
+void getGoogleLogProductionFolder(char *buf, size_t size) { getURL(googleProductionFolder, buf, size); }
+bool setGoogleLogProductionFolder(const char *folder) {
+  return setGoogleFolder(GOOGLE_PRODUCTION_FOLDER_KEY, googleProductionFolder, folder);
+}
+void getGoogleLogDebugFolder(char *buf, size_t size) { getURL(googleDebugFolder, buf, size); }
+bool setGoogleLogDebugFolder(const char *folder) {
+  return setGoogleFolder(GOOGLE_DEBUG_FOLDER_KEY, googleDebugFolder, folder);
+}
+
 static bool startsWithIgnoreCase(const char *value, const char *prefix) {
   if (!value || !prefix) return false;
   size_t i = 0;
@@ -171,6 +228,28 @@ void cashLogRequest(const char *logEntry) {
     return;
   }
   memcpy(record->payload, logEntry, length + 1);
+  // New Povotos send a fixed-width marker. Replacing it here makes the
+  // SideKick the single owner of both Google destinations. Old Povotos carry
+  // their real folder name and remain compatible without any rewriting.
+  constexpr size_t FOLDER_VALUE_OFFSET = sizeof("\"folderName\":\"") - 1;
+  const char *field = strstr(record->payload, GOOGLE_LOG_PRODUCTION_FIELD);
+  const char *marker = field ? field + FOLDER_VALUE_OFFSET : nullptr;
+  const char *replacement = nullptr;
+  if (marker) replacement = googleProductionFolder;
+  else {
+    field = strstr(record->payload, GOOGLE_LOG_DEBUG_FIELD);
+    marker = field ? field + FOLDER_VALUE_OFFSET : nullptr;
+    if (marker) replacement = googleDebugFolder;
+  }
+  if (marker) {
+    char folder[GOOGLE_LOG_FOLDER_MAXLEN + 1];
+    getURL(replacement, folder, sizeof(folder));
+    const size_t markerLength = GOOGLE_LOG_FOLDER_MAXLEN;
+    const size_t folderLength = strlen(folder);
+    char *at = const_cast<char *>(marker);
+    memmove(at + folderLength, at + markerLength, strlen(at + markerLength) + 1);
+    memcpy(at, folder, folderLength);
+  }
   if (xQueueSend(readyLogQueue, &record, 0) != pdTRUE) {
     // A checked-out pool record always has room in the ready queue.
     xQueueSend(freeLogQueue, &record, 0);

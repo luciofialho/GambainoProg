@@ -229,7 +229,11 @@ void setup() {
 
   povotoDataInit();
   debugModeProvider = []() { return FMTData.debugMode; };
-  datalogFolderProvider = []() -> const char * { return debugging ? "GambainoDebug" : FMTData.googleLogFolder; };
+  // The SideKick owns the actual Google destinations. Keep the producer's
+  // debug/production distinction in the record so it can route both safely.
+  datalogFolderProvider = []() -> const char * {
+    return debugging ? GOOGLE_LOG_FOLDER_DEBUG_MARKER : GOOGLE_LOG_FOLDER_PRODUCTION_MARKER;
+  };
   applyDebugMode(FMTData.debugMode);
   cloudLogBegin();
   cloudSyncBegin();
