@@ -22,6 +22,7 @@
 #include "ExpansionTank.h"
 #include "LeakHold.h"
 #include "HoldTest.h"
+#include "ZeroDrift.h"
 #include "Feedback.h"
 #include <esp_timer.h>
 #include <math.h>
@@ -2763,12 +2764,12 @@ void pressureRelief() {
 }
 
 bool calibrationRoutineActive() {
-  return sensorZeroActive() || ventingTestActive() || valveCleaningActive() || expansionTankActive() || leakHoldActive() || holdTestActive();
+  return sensorZeroActive() || ventingTestActive() || valveCleaningActive() || expansionTankActive() || leakHoldActive() || holdTestActive() || zeroDriftActive();
 }
 
 // Routines that drive the valve themselves: no automatic vent meanwhile.
 static bool valveRoutineActive() {
-  return ventingTestActive() || valveCleaningActive() || expansionTankActive() || leakHoldActive() || holdTestActive();
+  return ventingTestActive() || valveCleaningActive() || expansionTankActive() || leakHoldActive() || holdTestActive() || zeroDriftActive();
 }
 
 int64_t routineValve(bool open) {
@@ -2914,8 +2915,8 @@ void pressureControl() {
   if (beerSG == 0) {
     beerSG = BatchData.batchOG;
   }
-  // A debug board's routine simulates the pressure itself.
-  if (!(debugging && valveRoutineActive())) readPressure();
+  // A debug board's routine simulates the pressure itself (the zero drift test reads the sensor).
+  if (!(debugging && valveRoutineActive() && !zeroDriftActive())) readPressure();
   pressureDropFactor = 1.0f - FMTData.ventTargetDropPercent / 100.0f;
   if (valveRoutineActive()) {
     // The routine drives the valve itself: the Control page override is cancelled.
@@ -2926,6 +2927,7 @@ void pressureControl() {
     processExpansionTank();
     processLeakHold();
     processHoldTest();
+    processZeroDrift();
     return;
   }
   applyValveOverride();

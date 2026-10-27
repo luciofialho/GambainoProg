@@ -66,10 +66,10 @@ void checkFermTempTimeout() {
 
 void sendEnvTempPacket() {
   static unsigned long lastSentMs = 0;
-  if (lastSentMs != 0 && !MILLISDIFF(lastSentMs, 5*60UL*1000)) return;
+  if (lastSentMs != 0 && !MILLISDIFF(lastSentMs, 60UL*1000)) return; // the Povotos expire it after 10 min
   lastSentMs = millis();
   static const uint8_t broadcastMac[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
   char payload[16];
-  snprintf(payload, sizeof(payload), "%.1f", float(EnvironmentTemp));
+  snprintf(payload, sizeof(payload), "%.2f", float(EnvironmentTemp));
   sendEspNow(broadcastMac, 0, false, (uint8_t)ENVTEMPPACKET, payload);
 }

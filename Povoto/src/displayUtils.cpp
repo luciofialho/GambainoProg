@@ -9,6 +9,7 @@
 #include "PovotoData.h"
 #include "PressureControl.h"
 #include "HoldTest.h"
+#include "ZeroDrift.h"
 #include "PovotoTasks.h"
 #include "TemperatureControl.h"
 #include "PovotoAlarms.h"
@@ -1345,7 +1346,7 @@ void processTouch() {
   uint16_t raw_x, raw_y;
 
   // Tests and an active alarm keep the screen awake. The leak hold test lasts hours (up to 48 h): the screensaver works.
-  const bool testKeepsAwake = calibrationRoutineActive() && !holdTestActive();
+  const bool testKeepsAwake = calibrationRoutineActive() && !holdTestActive() && !zeroDriftActive();
   if (testKeepsAwake || activePovotoAlarm() != ALARM_NONE) {
     lastClick = millis();
     if (screenSaverActive) {

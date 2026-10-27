@@ -31,6 +31,7 @@
 #include "ExpansionTank.h"
 #include "LeakHold.h"
 #include "HoldTest.h"
+#include "ZeroDrift.h"
 #include "BuildId.h"
 #include "NucleationRecord.h"
 #include "AtmosphericPressure.h"
@@ -1458,7 +1459,52 @@ static String holdTestSectionHtml() {
   return html;
 }
 
+// Zero drift tab (docs/zero-drift.md).
+static String zeroDriftSectionHtml() {
+  const ZeroDriftResult r = getZeroDriftResult();
+  auto num = [](float v, int d) { return isfinite(v) ? String(v, d) : String("n/a"); };
+  String html = "<h2>Zero drift</h2><ul>"
+    "<li>With the fermenter open to the atmosphere the real pressure is zero: the change of the reading is the sensor.</li>"
+    "<li>Open the fermenter (mode OFF) and press Start. It logs once a minute until Stop, and fits the reading against the "
+    "ambient and the tank temperature.</li></ul>";
+  if (zeroDriftActive()) {
+    html += "<form action='/calibration/zerodrift/stop' method='POST'><button>Stop</button></form>";
+  } else {
+    html += "<form action='/calibration/zerodrift/start' method='POST'>"
+      "<label><input type='checkbox' name='open' value='1'> The fermenter is open to the atmosphere</label>"
+      "<button>Start</button></form>";
+  }
+  html += "<p><b>" + zeroDriftStatusText() + "</b></p>";
+  if (zeroDriftHasData())
+    html += "<p><a href='/calibration/zerodrift.csv'>" + String(zeroDriftActive() ? "Current run CSV" : "CSV") + "</a></p>";
+  if (!r.available) return html;
+  const uint32_t e = r.elapsedSeconds;
+  html += "<p>" + String(e / 3600UL) + " h " + String((e / 60UL) % 60UL) + " min logged, " + String(r.samples) +
+    " samples (one every " + String(r.intervalSeconds) + " s).</p>"
+    "<table class='grid'><tr><th></th><th>now</th><th>min</th><th>max</th></tr>"
+    "<tr><td>Ambient C</td><td>" + num(r.ambient, 2) + "</td><td>" + num(r.ambientMin, 2) + "</td><td>" + num(r.ambientMax, 2) + "</td></tr>"
+    "<tr><td>Tank C</td><td>" + num(r.gas, 2) + "</td><td>" + num(r.gasMin, 2) + "</td><td>" + num(r.gasMax, 2) + "</td></tr>"
+    "<tr><td>Chip C</td><td>" + num(r.chip, 1) + "</td><td></td><td></td></tr></table>"
+    "<p>Current " + num(r.current, 4) + " mA, reading " + num(r.pressure, 1) + " mbar (not clipped).</p>"
+    "<table class='grid'><tr><th>Fit against</th><th>n</th><th>range C</th><th>mbar/C</th><th>&plusmn;</th>"
+    "<th>zero at C</th><th>R&sup2;</th><th>sd mbar</th><th>over range mbar</th></tr>";
+  auto row = [&](const char *name, const ZeroDriftFit &f) {
+    html += String("<tr><td>") + name + "</td><td>" + String(f.samples) + "</td>";
+    if (!f.valid) {
+      html += "<td colspan='7'>needs 10 samples and a 0.5 C span</td></tr>";
+      return;
+    }
+    html += "<td>" + num(f.tMin, 1) + " to " + num(f.tMax, 1) + "</td><td>" + num(f.slope, 2) + "</td><td>" + num(f.slopeError, 2) +
+      "</td><td>" + num(f.zeroTemp, 1) + "</td><td>" + num(f.r2, 3) + "</td><td>" + num(f.residual, 2) + "</td><td>" + num(f.spread, 1) + "</td></tr>";
+  };
+  row("Ambient", r.byAmbient);
+  row("Tank", r.byGas);
+  html += "</table>";
+  return html;
+}
+
 // Tabs of the Calibration page: where each routine returns to.
+static const char *const CAL_TAB_DRIFT = "/calibration?tab=drift";
 static const char *const CAL_TAB_SENSOR = "/calibration?tab=sensor";
 static const char *const CAL_TAB_VOLUME = "/calibration?tab=volume";
 static const char *const CAL_TAB_VENT = "/calibration?tab=vent";
@@ -1586,6 +1632,24 @@ void handleHoldTestAbort(AsyncWebServerRequest *request) {
   request->redirect(CAL_TAB_LEAKS);
 }
 
+void handleZeroDriftStart(AsyncWebServerRequest *request) {
+  if (!request->hasParam("open", true)) {
+    sendCalibrationMessage(request, "Zero drift not started", "Confirm that the fermenter is open to the atmosphere.", CAL_TAB_DRIFT);
+    return;
+  }
+  char reason[100];
+  if (!startZeroDrift(reason, sizeof(reason))) {
+    sendCalibrationMessage(request, "Zero drift not started", reason, CAL_TAB_DRIFT);
+    return;
+  }
+  request->redirect(CAL_TAB_DRIFT);
+}
+
+void handleZeroDriftStop(AsyncWebServerRequest *request) {
+  stopZeroDrift();
+  request->redirect(CAL_TAB_DRIFT);
+}
+
 void handleSensorZeroAbort(AsyncWebServerRequest *request) {
   abortSensorZero();
   request->redirect(CAL_TAB_SENSOR);
@@ -1654,6 +1718,9 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
     ".btn-refresh { background: #ff9800; color: white; white-space: nowrap; text-decoration: none; display: inline-block; padding: 8px 14px; border-radius: 4px; font-size: 14px; }"
     ".current-badge { background: #e8f5e9; border: 1px solid #a5d6a7; border-radius: 6px; padding: 8px 14px; font-size: 1.1em; color: #2e7d32; }"
     ".current-row { display: flex; gap: 10px; align-items: center; margin-bottom: 18px; } .current-row .current-badge { flex: 1; }"
+    ".grid { width: 100%; border-collapse: collapse; font-size: 0.85em; margin: 8px 0; }"
+    ".grid th, .grid td { border: 1px solid #bbb; padding: 4px 6px; text-align: right; }"
+    ".grid th:first-child, .grid td:first-child { text-align: left; } .grid th { background: #eee; }"
     ".tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 2px solid #ddd; margin-bottom: 14px; }"
     ".tabs a { flex: 1; min-width: 64px; text-align: center; padding: 8px 4px; text-decoration: none; color: #555; background: #eee; border-radius: 6px 6px 0 0; }"
     ".tabs a.active { background: #4CAF50; color: white; font-weight: bold; }"
@@ -1662,9 +1729,9 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   // One tab at a time (?tab=): a smaller page, and the 10-s refresh of a running routine keeps the tab.
   // Fields of the other tabs are not posted: the update handler keeps the stored value of a missing field.
   const String requested = request->hasParam("tab") ? request->getParam("tab")->value() : String("sensor");
-  const char *const tabIds[] = {"sensor", "volume", "leaks", "vent", "physical", "feedback", "events"};
-  const char *const tabNames[] = {"Sensor", "Volume", "Leaks", "Vent", "Physical", "Feedback", "Events"};
-  constexpr uint8_t tabCount = 7;
+  const char *const tabIds[] = {"sensor", "volume", "leaks", "vent", "physical", "feedback", "drift", "events"};
+  const char *const tabNames[] = {"Sensor", "Volume", "Leaks", "Vent", "Physical", "Feedback", "Drift", "Events"};
+  constexpr uint8_t tabCount = 8;
   uint8_t tab = 0;
   for (uint8_t i = 0; i < tabCount; ++i)
     if (requested == tabIds[i]) tab = i;
@@ -1696,6 +1763,10 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   } else if (tab == 5) {
     page += feedbackTabHtml();
     running = true; // the leak window and the vents move on
+    editable = false;
+  } else if (tab == 6) {
+    page += zeroDriftSectionHtml();
+    running = zeroDriftActive();
     editable = false;
   } else {
     editable = false;

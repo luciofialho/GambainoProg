@@ -40,6 +40,7 @@
 #include "ExpansionTank.h"
 #include "LeakHold.h"
 #include "HoldTest.h"
+#include "ZeroDrift.h"
 #include "Feedback.h"
 #include "BuildId.h"
 #include <esp_system.h>
@@ -303,6 +304,9 @@ void setup() {
   server.on("/calibration/holdtest/start", HTTP_POST, handleHoldTestStart);
   server.on("/calibration/holdtest/abort", HTTP_POST, handleHoldTestAbort);
   server.on("/calibration/holdtest.csv", HTTP_GET, handleHoldTestCSV);
+  server.on("/calibration/zerodrift/start", HTTP_POST, handleZeroDriftStart);
+  server.on("/calibration/zerodrift/stop", HTTP_POST, handleZeroDriftStop);
+  server.on("/calibration/zerodrift.csv", HTTP_GET, handleZeroDriftCSV);
   server.on("/calibration/feedback/exponent", HTTP_POST, handleFeedbackUseExponent);
   server.on("/calibration/feedback/nucleation", HTTP_POST, handleFeedbackUseNucleation);
   server.on("/calibration", HTTP_GET, handleCalibrationDataPage);

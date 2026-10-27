@@ -40,6 +40,8 @@ void handleLeakHoldStart(AsyncWebServerRequest *request);
 void handleLeakHoldAbort(AsyncWebServerRequest *request);
 void handleHoldTestStart(AsyncWebServerRequest *request);
 void handleHoldTestAbort(AsyncWebServerRequest *request);
+void handleZeroDriftStart(AsyncWebServerRequest *request);
+void handleZeroDriftStop(AsyncWebServerRequest *request);
 
 void handleBatchDataPage(AsyncWebServerRequest *request);
 void handleBatchDataUpdate(AsyncWebServerRequest *request);
