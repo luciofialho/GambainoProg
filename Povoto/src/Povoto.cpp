@@ -62,6 +62,14 @@ static char webStatusBuffer[MAXSTATUSLEN + 1];
 bool soundAlarm = false;
 volatile uint8_t buzzerBeepRequest = 0;
 
+static constexpr unsigned long LOOP_SLOW_MS = 1000UL;
+static unsigned long loopPrevStart = 0;
+static unsigned long loopMaxMs = 0;
+static uint32_t loopMaxEpoch = 0;
+static uint32_t loopSlowCount = 0;
+static unsigned long loopLastSlowMs = 0;
+static uint32_t loopLastSlowEpoch = 0;
+
 char *getPovotoStatus(char *st);
 
 void handleResetDisplay(AsyncWebServerRequest *request) {
@@ -165,6 +173,20 @@ char * getPovotoStatus(char *st) {
       snprintf(buf, 199, "<b>Window end time:</b> %lu ms (expired)<br>", taskWindowEndTime);
     }
     strnncat(st, buf, MAXSTATUSLEN);
+  }
+
+  { // loop duration since boot
+    char maxWhen[20] = "", slowWhen[20] = "";
+    if (loopMaxEpoch) formatLocalEpochISO(loopMaxEpoch, maxWhen, sizeof(maxWhen));
+    if (loopLastSlowEpoch) formatLocalEpochISO(loopLastSlowEpoch, slowWhen, sizeof(slowWhen));
+    snprintf(buf, 199, "<br><b>Loop:</b> longest pass %lu ms (%s); %lu over %lu ms",
+             loopMaxMs, maxWhen[0] ? maxWhen : "-", (unsigned long)loopSlowCount, LOOP_SLOW_MS);
+    strnncat(st, buf, MAXSTATUSLEN);
+    if (loopSlowCount) {
+      snprintf(buf, 199, ", last %lu ms at %s", loopLastSlowMs, slowWhen);
+      strnncat(st, buf, MAXSTATUSLEN);
+    }
+    strnncat(st, "<br>", MAXSTATUSLEN);
   }
 
   // Estado atual dos pinos digitais
@@ -467,6 +489,22 @@ void setup() {
 }
 
 void loop() {
+  { // time between consecutive loop() starts: a slow pass delays every reading and alarm
+    const unsigned long t = millis();
+    if (loopPrevStart) {
+      const unsigned long d = t - loopPrevStart;
+      if (d > loopMaxMs) {
+        loopMaxMs = d;
+        loopMaxEpoch = NTPEpoch();
+      }
+      if (d > LOOP_SLOW_MS) {
+        ++loopSlowCount;
+        loopLastSlowMs = d;
+        loopLastSlowEpoch = NTPEpoch();
+      }
+    }
+    loopPrevStart = t;
+  }
   ElegantOTA.loop(); // required to actually reboot after a successful update
   povotoWiFiProcess();
   checkTaskExpiration();

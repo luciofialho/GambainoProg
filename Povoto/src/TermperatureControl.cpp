@@ -275,7 +275,7 @@ String describeFermenterThermometer() {
 }
 
 static void fermenterThermometerAlarm() {
-  static constexpr unsigned long INVALID_TOLERANCE_MS = 60000UL;
+  static constexpr unsigned long INVALID_TOLERANCE_MS = 120000UL;
   static unsigned long invalidSince = 0; // 0 = valid reading
   const unsigned long now = millis();
   // Debug mode: only the considered temperature counts (the debug page value
@@ -628,6 +628,8 @@ char *getTemperatureControlStatus(char *st) {
   }
   snprintf(buf, sizeof(buf), "Gas temperature: %.2f C (%s); fermenter thermometer alarm: %s<br>",
            gasTemperature(), gasTemperatureSource(), thermometerAlarmActive ? "ACTIVE" : "off");
+  strnncat(st, buf, 2048);
+  dallasFaultStatus(buf, sizeof(buf));
   strnncat(st, buf, 2048);
   DallasScanEntry scan[DALLAS_SCAN_MAX];
   const uint8_t scanned = getDallasScan(scan, DALLAS_SCAN_MAX);

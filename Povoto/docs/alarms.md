@@ -8,7 +8,7 @@ precedência e cuida da sinalização. Cada verificação fica no seu módulo.
 | 1 | Sensor de pressão (`checkPressureSensor()`, PressureControl.cpp) | Fermenting ou Conditioning, alvo de pressão definido, leitura inválida há 10 s | 4 |
 | 2 | Válvula presa aberta (`checkValveStuckOpen()`, PressureControl.cpp) | Fermenting: a pressão caiu mais de 5 mbar nos 30 s depois da leitura de fechamento de um vent | 6 |
 | 3 | Vent sem efeito (`evaluateVentCheck()`, PressureControl.cpp) | Fermenting: dois vents seguidos com razão < 0,8 (lado do fermentador / vazão; < 0,25 é rotulado `no-effect`) | 5 |
-| 4 | Termômetro do fermentador (`fermenterThermometerAlarm()`, TermperatureControl.cpp) | Fermenting ou Conditioning, alvo de temperatura definido, termômetro não atribuído ou sem leitura válida há 60 s | 3 |
+| 4 | Termômetro do fermentador (`fermenterThermometerAlarm()`, TermperatureControl.cpp) | Fermenting ou Conditioning, alvo de temperatura definido, termômetro não atribuído ou sem leitura válida há 2 min | 3 |
 
 Com mais de um ativo, sinaliza só o de maior precedência. O `/getstatus` mostra o
 estado de cada um ("Pressure sensor check", "Vent alarms: no effect ..., stuck
@@ -78,7 +78,7 @@ sobrescrito), para poder testá-los na bancada:
 - temperatura: dispara com 85 ou -127; qualquer outro valor não dispara
   (termômetro não atribuído não conta, já que o modo debug usa 18 °C fictícios).
 
-As tolerâncias (10 s e 60 s) são as mesmas. Não bipa; tela, LEDs e e-mails
+As tolerâncias (10 s e 2 min) são as mesmas. Não bipa; tela, LEDs e e-mails
 funcionam (o assunto do e-mail indica "debug mode").
 
 ## Sinalização do alarme ativo

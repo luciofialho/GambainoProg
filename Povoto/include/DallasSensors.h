@@ -26,6 +26,10 @@ bool dallasRoleAssigned(uint8_t role);
 // Environment / headspace: last valid reading, held for 60 s, else NOTaTEMP.
 float dallasRoleTemperature(uint8_t role);
 
+// Fermenter thermometer faults for /getstatus: count, last and longest, and
+// what the last retry saw (scratchpad, presence, VDD). Returns the length written.
+size_t dallasFaultStatus(char *out, size_t outSize);
+
 bool dallasOnBus(const uint8_t *address); // found by the last scan
 
 constexpr size_t DALLAS_ADDRESS_TEXT_SIZE = 24; // "XX-XX-XX-XX-XX-XX-XX-XX"

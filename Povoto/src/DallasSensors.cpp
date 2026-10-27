@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <math.h>
 #include <IOTK_Dallas.h>
+#include <IOTK_NTP.h>
+#include "datalog.h"
 #include "GambainoCommon.h"
 #include "PovotoCommon.h"
 #include "PovotoData.h"
@@ -158,6 +160,104 @@ void applyDallasRoles() {
   rolesChanged = true;
 }
 
+// Fermenter thermometer faults (85 = power-on value, -127 = no answer). The
+// control and the alarm already tolerate them (TermperatureControl.cpp); this
+// counts them, records what the sensor and the bus looked like and, after a few
+// seconds, retries the sensor without waiting for the alarm (docs/thermometers.md).
+static constexpr unsigned long FAULT_RECOVER_AFTER_MS = 4000UL;
+static constexpr unsigned long FAULT_RECOVER_EVERY_MS = 5000UL;
+static constexpr unsigned long FAULT_LOG_MIN_MS = 2000UL;
+
+static struct {
+  bool seenValid;      // ignores the boot, before the first reading
+  bool active;
+  unsigned long since; // millis
+  unsigned long lastAttempt;
+  uint16_t attempts;   // in the current fault
+  uint32_t events;
+  uint32_t startEpoch; // of the last fault (NTP, 0 = unknown)
+  unsigned long lastMs;
+  unsigned long longestMs;
+  uint16_t lastAttempts;
+  bool hasDiagnosis;
+  bool present;
+  bool crcOk;
+  bool parasite;       // VDD low at the sensor: it runs on the data line
+  uint8_t scratchpad[9];
+} fault;
+
+static void diagnoseFermenterThermometer(unsigned long now) {
+  const uint8_t *address = slotAddress[DALLAS_ROLE_FERMENTER];
+  fault.lastAttempt = now | 1;
+  ++fault.attempts;
+  memset(fault.scratchpad, 0, sizeof(fault.scratchpad));
+  fault.present = oneWire.reset();
+  fault.crcOk = fault.present && Dallas.readScratchPad(address, fault.scratchpad) &&
+                OneWire::crc8(fault.scratchpad, 8) == fault.scratchpad[8];
+  fault.parasite = fault.present && Dallas.readPowerSupply(address);
+  fault.hasDiagnosis = true;
+  // Rewrites the configuration register if the sensor lost it (12 bits).
+  if (fault.present) Dallas.setResolution(address, 12);
+  Serial.printf("[DALLAS] fermenter thermometer invalid for %lu s (attempt %u): presence=%d "
+                "scratchpad=%02X %02X %02X %02X %02X %02X %02X %02X %02X crc=%s vdd=%s\n",
+                (now - fault.since) / 1000UL, fault.attempts, fault.present,
+                fault.scratchpad[0], fault.scratchpad[1], fault.scratchpad[2], fault.scratchpad[3],
+                fault.scratchpad[4], fault.scratchpad[5], fault.scratchpad[6], fault.scratchpad[7],
+                fault.scratchpad[8], fault.crcOk ? "ok" : "BAD", fault.parasite ? "LOW" : "ok");
+}
+
+static void fermenterFaultProcess(unsigned long now) {
+  if (dallasAddressEmpty(slotAddress[DALLAS_ROLE_FERMENTER])) {
+    fault.active = false;
+    fault.seenValid = false;
+    return;
+  }
+  if (validReading(dallasTemperature)) {
+    fault.seenValid = true;
+    if (!fault.active) return;
+    fault.active = false;
+    fault.lastMs = now - fault.since;
+    fault.lastAttempts = fault.attempts;
+    if (fault.lastMs > fault.longestMs) fault.longestMs = fault.lastMs;
+    if (fault.lastMs >= FAULT_LOG_MIN_MS)
+      Serial.printf("[DALLAS] fermenter thermometer back after %lu ms (%u attempt(s))\n",
+                    fault.lastMs, fault.attempts);
+    return;
+  }
+  if (!fault.seenValid) return;
+  if (!fault.active) {
+    fault.active = true;
+    fault.since = now;
+    fault.attempts = 0;
+    fault.lastAttempt = 0;
+    ++fault.events;
+    fault.startEpoch = NTPEpoch();
+  }
+  if (now - fault.since >= FAULT_RECOVER_AFTER_MS &&
+      (fault.lastAttempt == 0 || now - fault.lastAttempt >= FAULT_RECOVER_EVERY_MS))
+    diagnoseFermenterThermometer(now);
+}
+
+size_t dallasFaultStatus(char *out, size_t outSize) {
+  char when[20] = "";
+  if (fault.startEpoch) formatLocalEpochISO(fault.startEpoch, when, sizeof(when));
+  int n = snprintf(out, outSize,
+                   "Dallas fermenter faults: %lu since boot%s; last %s%s (%.1f s, %u attempt(s)); longest %.1f s; now: %s<br>",
+                   (unsigned long)fault.events, fault.events ? "" : " (none)",
+                   fault.events ? "at " : "-", when,
+                   (fault.active ? millis() - fault.since : fault.lastMs) / 1000.0f,
+                   fault.active ? fault.attempts : fault.lastAttempts,
+                   fault.longestMs / 1000.0f, fault.active ? "FAULT" : "ok");
+  if (n > 0 && fault.hasDiagnosis && (size_t)n < outSize) {
+    const uint8_t *s = fault.scratchpad;
+    n += snprintf(out + n, outSize - n,
+                  "&nbsp;&nbsp;&nbsp;&nbsp;last diagnosis: presence=%s scratchpad=%02X %02X %02X %02X %02X %02X %02X %02X %02X crc=%s vdd=%s<br>",
+                  fault.present ? "yes" : "NO", s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7], s[8],
+                  fault.crcOk ? "ok" : "BAD", fault.parasite ? "LOW" : "ok");
+  }
+  return n > 0 ? (size_t)n : 0;
+}
+
 void dallasSensorsProcess() {
   if (scanRequested) {
     scanRequested = false;
@@ -170,6 +270,7 @@ void dallasSensorsProcess() {
     loadSlots();
   }
   const unsigned long now = millis();
+  fermenterFaultProcess(now);
   for (uint8_t role = DALLAS_ROLE_ENVIRONMENT; role < DALLAS_ROLE_COUNT; ++role) {
     if (validReading(slotReading[role])) {
       heldReading[role] = slotReading[role];

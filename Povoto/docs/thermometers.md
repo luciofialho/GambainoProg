@@ -18,9 +18,11 @@ Código: `DallasSensors.cpp`; resolução das temperaturas em
   falhar, outro sensor (o do ambiente, por exemplo) nunca assume o controle, o
   que poderia congelar a cerveja.
 - Alarme: em Fermenting ou Conditioning, com alvo de temperatura definido, sem
-  termômetro do fermentador (não atribuído, ou sem leitura válida há 60 s) o
-  controle fica parado e o Povoto alarma (3 bipes por minuto, tela vermelha,
-  LEDs; `docs/alarms.md`). Vale também no modo debug (os 18 °C fictícios
+  termômetro do fermentador (não atribuído, ou sem leitura válida há 2 min) o
+  Povoto alarma (3 bipes por minuto, tela vermelha,
+  LEDs; `docs/alarms.md`). Com 85 ou -127 por 60 s, a temperatura considerada
+  deixa de ser a última boa e o controle fica parado; o alarme vem aos 2 min.
+  Vale também no modo debug (os 18 °C fictícios
   esconderiam o problema); não toca com a temperatura sobrescrita na página de
   debug.
 - O remetente do `'V'` é reconhecido pelo MAC do peer SideKick; qualquer outro
@@ -66,6 +68,24 @@ ou inválida), que as regras de validade descartam.
 
 O `/getstatus` mostra cada papel (ID, OK / NO READING, leitura, se apareceu na
 última varredura) e os sensores da varredura sem papel.
+
+## Falhas do termômetro do fermentador
+
+Leitura 85 °C (valor de power-on do DS18B20) ou -127 °C (sem resposta). O
+controle segura a última leitura boa por 60 s e o alarme vem aos 2 min
+(`docs/alarms.md`). Em `DallasSensors.cpp`:
+
+- Conta cada falha (qualquer leitura inválida depois da primeira boa) e guarda
+  a última (horário), a duração dela e a maior desde o boot.
+- Após 4 s de falha, e a cada 5 s enquanto durar, diagnostica o sensor:
+  presença no barramento, bytes do scratchpad com CRC, e se o VDD caiu
+  (`readPowerSupply`: sensor vivendo da linha de dados). Reescreve a resolução
+  de 12 bits se o sensor a perdeu. Scratchpad `50 05 ...` = o sensor reiniciou
+  (VDD caiu); `FF 07 ...` = conversão falhou; sem presença = barramento ou fio.
+- `/getstatus`: "Dallas fermenter faults: ..." e a "last diagnosis"; serial:
+  `[DALLAS] fermenter thermometer invalid ...` e `... back after N ms`.
+- `/getstatus`, "Loop: ...": a maior passada do `loop()` desde o boot e quantas
+  passaram de 1 s, para separar um sensor ruim de um loop travado.
 
 ## Persistência
 
