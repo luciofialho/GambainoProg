@@ -109,6 +109,16 @@ t          = máx(mín(t_estimado, t_seg), 1,5 s)
   deram uma vazão ~5% mais rápida (k = 81,6; β = 0,88) e não entram no conjunto. Se a placa já tem uma curva
   gravada (qualquer "Save" da página grava a curva em uso), o padrão novo não a substitui: digite k e β na página.
   Ajuste: `python tests/venting_fit.py`.
+- **Restrição na saída da válvula** (fermentadores com headspace pequeno): um tubo curto na saída da
+  VT307 reduz a vazão por um fator ~constante na faixa de uso (estimativa por modelo de tubo com atrito, ±25%:
+  vale confirmar com o ensaio). Tubo de 20 mm de comprimento: 1,0 mm (0,79 mm²) → 5,7–6,5×; 1,25 mm → 4,0×;
+  1,38 mm (1,5 mm²) → 3,3×; 1,5 mm → 2,8×; 1,6 mm → 2,5×. A queda de 6% pede 0,3–1,4 s com 10–20 L e a
+  abertura mínima é 1,5 s: com o fator ≥ ~3 a abertura fica em 2–10 s e o erro do atraso da válvula (±8 ms)
+  cai de ~0,8% (1 s) para ≤ 0,3%. Escolhas: Aimbere (68 L), tubo de 1,0 mm; FMT1 (130 L), 1,5 mm se for
+  restringido (o ensaio de calibração precisa ser refeito; o padrão do firmware não muda). O ensaio sem
+  restrição do Aimbere (25/10/2026, 68,25 L, 37 liberações, 2,03–0,08 bar) deu k 87,84 s e β 0,613, com
+  tau 1,7% (1,9 bar) a 4,5% (0,3 bar) abaixo do FMT1; acima de 0,5 bar o ajuste é bom (qui-quadrado 2,8, resíduo de
+  forma 0,19%), abaixo ele piora (qui-quadrado 6,5, 0,85%: vazão real 1–2% mais lenta que o modelo).
 
 ## 4. Contagem
 

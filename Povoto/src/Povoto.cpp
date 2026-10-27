@@ -40,6 +40,7 @@
 #include "ExpansionTank.h"
 #include "LeakHold.h"
 #include "HoldTest.h"
+#include "Feedback.h"
 #include "BuildId.h"
 #include <esp_system.h>
 #include <esp_heap_caps.h>
@@ -89,7 +90,8 @@ const char *resetReasonToString(esp_reset_reason_t reason); // IOTK_ESPAsyncServ
 void handlePovotoStatus(AsyncWebServerRequest *request) {
   char uptime[16];
   snprintf(webStatusBuffer, sizeof(webStatusBuffer),
-    "Povoto<br>Network: %s<br>Signal strength: %d (uptime: %s)<br>Reset reason: %s<br>",
+    "Povoto<br>Build: %s<br>Network: %s<br>Signal strength: %d (uptime: %s)<br>Reset reason: %s<br>",
+    BUILD_ID,
     WiFi.status() == WL_CONNECTED ? WiFi.SSID().c_str() : "not connected",
     WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0, formatedUptime(uptime),
     resetReasonToString(esp_reset_reason()));
@@ -234,6 +236,7 @@ void setup() {
   ElegantOTA.onStart([]() {
     writeCountersDataToNIV();
     saveCO2Buffers(); // the CO2 windows continue after the update (docs/gco2-rate.md)
+    writeFeedbackToNIV(); // otherwise saved once per hour (docs/feedback.md)
   });
   //esp_register_shutdown_handler(writeCountersDataToNIV);
 
@@ -296,6 +299,8 @@ void setup() {
   server.on("/calibration/holdtest/start", HTTP_POST, handleHoldTestStart);
   server.on("/calibration/holdtest/abort", HTTP_POST, handleHoldTestAbort);
   server.on("/calibration/holdtest.csv", HTTP_GET, handleHoldTestCSV);
+  server.on("/calibration/feedback/exponent", HTTP_POST, handleFeedbackUseExponent);
+  server.on("/calibration/feedback/nucleation", HTTP_POST, handleFeedbackUseNucleation);
   server.on("/calibration", HTTP_GET, handleCalibrationDataPage);
   server.on("/calibration/refresh-current", HTTP_GET, handleCalibrationCurrentRefresh);
   server.on("/calibration/update", HTTP_POST, handleCalibrationDataUpdate);

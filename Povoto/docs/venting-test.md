@@ -23,7 +23,7 @@ Código: `src/VentingTest.cpp`; ajuste em `include/VentModel.h`
   11/10/2026).
 - Em cada patamar: aberturas de **2, 0,5, 8, 1, 4 e 2 s** (alternadas, para a
   duração não andar junto com a pressão; o 2 s nas duas pontas dá a deriva).
-- Entre patamares: uma abertura longa (3–90 s) que leva o P **assentado** ao patamar seguinte, calculada
+- Entre patamares: uma abertura longa (3–240 s) que leva o P **assentado** ao patamar seguinte, calculada
   com o **próprio modelo do ajuste**: t = k·S(β; P1, P_alvo, e), a mesma integral da seção 2, com a curva em
   uso e o expoente politrópico e do passo anterior (na falta dele, a mediana das liberações de 4 s ou mais do
   patamar; na falta delas, 1,22). Ela também entra no ajuste. O modelo prevê o tempo de abertura dos passos
@@ -89,6 +89,17 @@ Saídas (página, CSV e eventos de calibração):
 
 O desvio padrão dos resíduos das aberturas curtas (~15–45 ms com 0,15 mbar)
 mede o ruído da leitura: ele aparece só no script.
+
+### Fermentador com restrição na saída da válvula
+
+Para fermentadores com headspace pequeno (10–30 L) a vazão da válvula é alta demais: a abertura que dá a queda alvo
+(6%) fica abaixo do mínimo de 1,5 s (0,3–1,4 s com 10–20 L) e o firmware perde o alvo. Uma restrição na saída
+(tubo curto) reduz a vazão (docs/vent.md, seção 3). Com ela:
+- digite antes do ensaio uma curva inicial para a vazão restringida, só para os passos pousarem nos patamares
+  (Aimbere, tubo de 1,0 mm × 20 mm: k 590 s, β 0,09, faixa 0,1–2,1 bar); o ensaio mede a curva verdadeira;
+- o passo entre patamares chega a 100–175 s (teto de 240 s) e cada patamar de 6 aberturas derruba pouca pressão,
+  então a pressão desce principalmente pelos passos;
+- o teto de ventilação entre patamares do teste estanque é de 600 s (`docs/hold-test.md`).
 
 ### Qual curva usar (procedimento)
 

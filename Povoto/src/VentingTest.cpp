@@ -37,7 +37,8 @@ static constexpr float VT_NOISE_FLOOR_BAR = 0.00005f;
 static constexpr float VT_TIMING_NOISE_S = 0.002f;
 static constexpr float VT_MIN_START_PRESSURE = 0.8f;
 static constexpr float VT_LEVEL_MARGIN = 0.15f;     // a level must be this far below the start
-static constexpr float VT_STEP_MIN_SECONDS = 3.0f, VT_STEP_MAX_SECONDS = 90.0f;
+// The maximum of a step: with a flow restriction at the valve outlet (docs/vent.md) a step of 0.4 bar in 130 L takes 100-175 s.
+static constexpr float VT_STEP_MIN_SECONDS = 3.0f, VT_STEP_MAX_SECONDS = 240.0f;
 // Polytropic exponent used to plan the first step of a test (1.2-1.3 measured in the steps of 20-21/10/2026).
 static constexpr float VT_STEP_EXPONENT = 1.22f;
 // A wait ends when the slope of the pressure, a least-squares line over the last VT_SLOPE_WINDOW_MS, falls below the

@@ -9,6 +9,7 @@
 #include "TemperatureControl.h"
 #include "datalog.h"
 #include "GraphHistory.h"
+#include "Feedback.h"
 
 // FMT data
 
@@ -554,6 +555,8 @@ bool resetPovotoDataToFactoryDefaults() {
   saved = clearPovotoNamespace("pvt_counters") && saved;
   saved = clearPovotoNamespace("pvt_autosp") && saved;
   saved = clearPovotoNamespace("pvt_wifi") && saved;
+  saved = clearPovotoNamespace("pvt_feedback") && saved;
+  feedbackFactoryReset();
 
   saved = writeFMTDataToNIV() && saved;
   saved = writeUserConfigurationDataToNIV() && saved;
@@ -666,6 +669,8 @@ void povotoDataInit() {
     Serial.println("Counters data load failed, using defaults");
   else
     requestDerivedStateRestoreFromCounters();
+  if (!readFeedbackFromNIV())
+    Serial.println("Feedback data load failed, using defaults");
 
   if (!readAutoSetpointsFromEEPROM())
     Serial.println("Auto set point load failed, using defaults");
@@ -696,6 +701,7 @@ void resetCountersForNewBatch() {
   resetCO2DissolvedStateForNewBatch();
 
   writeCountersDataToNIV();
+  feedbackResetForNewBatch();
   resetAllAutoSetpointTriggers();
 }
 

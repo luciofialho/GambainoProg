@@ -30,7 +30,7 @@ static constexpr float HOLD_MIN_STEP_MINUTES = 1.0f;       // with more than one
 static constexpr float HOLD_RELIABLE_STEP_MINUTES = 20.0f; // below this the settling is shortened to a quarter of the step
 static constexpr uint16_t HOLD_MAX_SAMPLES = 2900;         // 72 h at 90 s = 2880
 static constexpr uint16_t HOLD_MIN_FIT_SAMPLES = 4;
-static constexpr float HOLD_VENT_MIN_SECONDS = 0.2f, HOLD_VENT_MAX_SECONDS = 300.0f; // halving 130 L takes about a minute or two
+static constexpr float HOLD_VENT_MIN_SECONDS = 0.2f, HOLD_VENT_MAX_SECONDS = 600.0f; // halving 130 L takes about a minute or two (2-6 min with a flow restriction at the valve outlet)
 // Skipped at the start of a step for its rate: the first step has no vent, the next ones recover from it
 // (time constant of 65-90 s, and the walls of the fermenter take longer to return to the ambient temperature).
 static unsigned long stepMs = 0; // the length of a step (declared here: the settling depends on it)

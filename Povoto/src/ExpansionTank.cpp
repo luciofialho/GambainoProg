@@ -28,8 +28,8 @@ static constexpr uint8_t TANK_CHECKPOINTS = 5;
 static constexpr unsigned long TANK_CHECKPOINT_S[TANK_CHECKPOINTS] = {30, 60, 120, 180, 300};
 // P1 is logged at these times after the valve closed (the wait of the fermenter starts then, during the vent of the tank):
 // only logged, the calculation uses the P1 at the end of the wait (docs/expansion-tank-volume.md)
-static constexpr uint8_t TANK_P1_CHECKPOINTS = 6;
-static constexpr unsigned long TANK_P1_CHECKPOINT_S[TANK_P1_CHECKPOINTS] = {60, 120, 180, 240, 300, 420};
+static constexpr uint8_t TANK_P1_CHECKPOINTS = 4;
+static constexpr unsigned long TANK_P1_CHECKPOINT_S[TANK_P1_CHECKPOINTS] = {60, 120, 180, 300};
 static unsigned long tankWaitMinMs() { return debugging ? 10000UL : 120000UL; }
 // P2 is read at a fixed time after the valve opens; longer waits only accumulate drift. The thermal
 // recovery after the opening has a time constant of 60-90 s, so at 300 s a tail of 0.3-1 mbar is left: P2 is the
@@ -61,6 +61,7 @@ struct TankRelief {
   uint16_t openSamples;
   float p2Fit, tail, tau; // asymptote of the checkpoints (bar), its distance from the 300 s value (bar), time constant (s); NAN without a fit
   float cp1P[TANK_P1_CHECKPOINTS], cp1Tf[TANK_P1_CHECKPOINTS]; // checkpoints of the P1 wait: 10-s mean pressure (gauge) and fermenter temperature (K)
+  float cal0Current, calBCurrent, calBBar; // the pressure line in use at the P1 (zero mA, point B mA and bar): documents what the readings mean
 };
 static void clearCheckpoints(TankRelief &k) {
   for (uint8_t i = 0; i < TANK_CHECKPOINTS; ++i) k.cpP[i] = k.cpTf[i] = k.cpTe[i] = NAN;
@@ -368,6 +369,9 @@ void processExpansionTank() {
       k.cp1Tf[i] = waitCpTf[i];
     }
     k.pMin = k.tMin = NAN;
+    k.cal0Current = FMTData.pressure0Current;
+    k.calBCurrent = FMTData.pressure1Current;
+    k.calBBar = FMTData.pressure1Bar;
     k.p2Fit = k.tail = k.tau = NAN;
     k.epoch = NTPEpoch();
     k.p1 = wait->mean(TANK_AVERAGE_MS);
@@ -434,26 +438,40 @@ void processExpansionTank() {
 
 static ExpansionTankResult resultFrom(const TankSnapshot &snap) {
   ExpansionTankResult r = {};
-  double sum = 0.0, squares = 0.0, simple = 0.0;
+  // Mean and deviation weighted by (P1 - P2)^2: the pressure noise gives each relief an error of 1/(P1 - P2),
+  // so the last reliefs (small drops) weigh little instead of being dropped by hand.
+  double sw = 0.0, swv = 0.0, sws = 0.0, sw2 = 0.0, maxW = 0.0;
   float low = INFINITY, high = -INFINITY;
   uint8_t n = 0;
   for (uint8_t i = 0; i < snap.count; ++i) {
     if (!reliefStable(snap.r[i])) continue; // unstable steps stay out of the mean and the deviation
+    const double drop = (double)snap.r[i].p1 - snap.r[i].p2, w = drop * drop;
     low = fminf(low, snap.r[i].volume);
     high = fmaxf(high, snap.r[i].volume);
-    sum += snap.r[i].volume;
-    squares += (double)snap.r[i].volume * snap.r[i].volume;
-    simple += snap.r[i].simpleVolume;
+    sw += w;
+    swv += w * snap.r[i].volume;
+    sws += w * snap.r[i].simpleVolume;
+    sw2 += w * w;
+    maxW = fmax(maxW, w);
     ++n;
   }
-  r.available = n > 0;
+  const double mean = sw > 0.0 ? swv / sw : NAN;
+  double spread = 0.0;
+  for (uint8_t i = 0; i < snap.count; ++i) {
+    if (!reliefStable(snap.r[i])) continue;
+    const double drop = (double)snap.r[i].p1 - snap.r[i].p2, d = snap.r[i].volume - mean;
+    spread += drop * drop * d * d;
+  }
+  const double denominator = sw - sw2 / sw; // unbiased for reliability weights
+  r.available = n > 0 && sw > 0.0;
   r.tankVolume = snap.tank;
   r.reliefs = n;
   r.total = snap.count;
   r.planned = snap.target;
-  r.mean = n ? float(sum / n) : NAN;
-  r.sd = n > 1 ? float(sqrt(fmax(0.0, (squares - sum * sum / n) / (n - 1)))) : NAN;
-  r.simpleMean = n ? float(simple / n) : NAN;
+  r.mean = float(mean);
+  r.sd = n > 1 && denominator > 0.0 ? float(sqrt(fmax(0.0, spread / denominator))) : NAN;
+  r.simpleMean = sw > 0.0 ? float(sws / sw) : NAN;
+  r.maxWeight = sw > 0.0 ? float(maxW / sw) : NAN;
   r.minVolume = n ? low : NAN;
   r.maxVolume = n ? high : NAN;
   r.fmtVolume = FMTData.FMTVolume;
@@ -491,16 +509,27 @@ bool saveExpansionTankAsFmtVolume(char *reason, size_t reasonSize) {
   return true;
 }
 
+// Sum of the weights (P1 - P2)^2 of the stable reliefs.
+static double stableWeightSum(const TankSnapshot &snap) {
+  double sum = 0.0;
+  for (uint8_t i = 0; i < snap.count; ++i)
+    if (reliefStable(snap.r[i])) sum += ((double)snap.r[i].p1 - snap.r[i].p2) * ((double)snap.r[i].p1 - snap.r[i].p2);
+  return sum;
+}
+
 String expansionTankRowsHtml() {
   TankSnapshot snap;
   takeSnapshot(snap);
+  const double weightSum = stableWeightSum(snap);
   String rows;
   for (uint8_t i = 0; i < snap.count; ++i) {
     const TankRelief &k = snap.r[i];
     rows += "<tr><td>" + String(i + 1) + "</td><td>" + String(k.p1, 4) + "</td><td>" + String(k.p2, 4) + "</td><td>" +
       String(k.fermenterK1 - 273.15f, 2) + " / " + String(k.fermenterK2 - 273.15f, 2) + "</td><td>" +
       (isfinite(k.tankK2) ? String(k.tankK2 - 273.15f, 2) : String("n/a")) + "</td><td>" + String(k.volume, 3) + "</td><td>" +
-      String(k.simpleVolume, 3) + "</td><td>" + (reliefStable(k) ? "yes" : "<b>no</b> (excluded)") + "</td></tr>";
+      String(k.simpleVolume, 3) + "</td><td>" +
+      (reliefStable(k) && weightSum > 0.0 ? String(100.0 * ((double)k.p1 - k.p2) * ((double)k.p1 - k.p2) / weightSum, 1) + "%" : String("0")) +
+      "</td><td>" + (reliefStable(k) ? "yes" : "<b>no</b> (excluded)") + "</td></tr>";
   }
   return rows;
 }
@@ -511,6 +540,7 @@ void handleExpansionTankCSV(AsyncWebServerRequest *request) {
   const bool running = expansionTankActive();
   TankSnapshot snap;
   takeSnapshot(snap);
+  const double weightSum = stableWeightSum(snap);
   String csv = "relief;date_time;tank_L;P1_bar;P2_bar;T_ferm1_C;T_ferm2_C;T_tank1_C;T_tank2_C;patm1_bar;patm2_bar;"
                "wait_P1_s;wait_P2_s;vent_s;settled_P1;settled_P2;V_fermenter_L;V_simple_L";
   // P2 wait checkpoints: pressure, fermenter and ambient temperature at 30, 60, 120, 180 and 300 s after opening
@@ -518,10 +548,10 @@ void handleExpansionTankCSV(AsyncWebServerRequest *request) {
   for (uint8_t c = 0; c < TANK_CHECKPOINTS; ++c) csv += ";Tferm_" + String(TANK_CHECKPOINT_S[c]) + "s_C";
   for (uint8_t c = 0; c < TANK_CHECKPOINTS; ++c) csv += ";Tenv_" + String(TANK_CHECKPOINT_S[c]) + "s_C";
   csv += ";Pmin_open_bar;t_Pmin_s;open_samples;P2_tail_mbar;P2_tau_s";
-  // P1 wait checkpoints: pressure and fermenter temperature at 60, 120, 180, 240, 300 and 420 s after the valve closed
+  // P1 wait checkpoints: pressure and fermenter temperature at 60, 120, 180 and 300 s after the valve closed
   for (uint8_t c = 0; c < TANK_P1_CHECKPOINTS; ++c) csv += ";P1_" + String(TANK_P1_CHECKPOINT_S[c]) + "s_bar";
   for (uint8_t c = 0; c < TANK_P1_CHECKPOINTS; ++c) csv += ";Tferm_P1_" + String(TANK_P1_CHECKPOINT_S[c]) + "s_C";
-  csv += ";build\n";
+  csv += ";p0_mA;pB_mA;pB_bar;weight;build\n"; // weight: share of (P1 - P2)^2 among the stable reliefs (0 = not in the mean)
   auto add = [&csv](float v, int d) {
     if (isfinite(v)) {
       String t(v, (unsigned int)d);
@@ -550,6 +580,8 @@ void handleExpansionTankCSV(AsyncWebServerRequest *request) {
     add(k.tail * 1000.0f, 2); add(k.tau, 0);
     for (uint8_t c = 0; c < TANK_P1_CHECKPOINTS; ++c) add(k.cp1P[c], 6);
     for (uint8_t c = 0; c < TANK_P1_CHECKPOINTS; ++c) add(k.cp1Tf[c] - 273.15f, 2);
+    add(k.cal0Current, 4); add(k.calBCurrent, 4); add(k.calBBar, 4);
+    add(reliefStable(k) && weightSum > 0.0 ? float(((double)k.p1 - k.p2) * ((double)k.p1 - k.p2) / weightSum) : 0.0f, 4);
     csv += BUILD_ID;
     csv += '\n';
   }

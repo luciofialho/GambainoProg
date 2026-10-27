@@ -25,6 +25,7 @@
 #include "DallasSensors.h"
 #include "SensorZero.h"
 #include "CalibrationEvents.h"
+#include "Feedback.h"
 #include "VentingTest.h"
 #include "ValveCleaning.h"
 #include "ExpansionTank.h"
@@ -1346,9 +1347,9 @@ static String volumeDeterminationSectionHtml() {
   }
   if (r.available) {
     html += "<ul><li>" + String(r.reliefs) + "/" + String(r.total) + " reliefs used</li>"
-      "<li>calculated: <b>" + String(r.mean, 2) + " L</b> (StdDev " +
+      "<li>calculated: <b>" + String(r.mean, 2) + " L</b>, weighted by (P1-P2)<sup>2</sup> (StdDev " +
       (isfinite(r.sd) ? String(100.0f * r.sd / r.mean, 2) + "%" : String("n/a")) + " - range " +
-      String(r.minVolume, 2) + " - " + String(r.maxVolume, 2) + ")</li>"
+      String(r.minVolume, 2) + " - " + String(r.maxVolume, 2) + "; largest weight " + String(100.0f * r.maxWeight, 0) + "%)</li>"
       "<li>configured FMT volume: " + String(r.fmtVolume, 2) + " L</li></ul>";
     if (r.canSave) {
       html += "<form action='/calibration/expansion/save' method='POST' onsubmit=\"return confirm('Save " + String(r.mean, 2) +
@@ -1362,7 +1363,7 @@ static String volumeDeterminationSectionHtml() {
   }
   if (r.total > 0) {
     html += "<table style='width:100%;font-size:0.85em'><tr><th>#</th><th>P1 bar</th><th>P2 bar</th><th>T ferm &deg;C</th>"
-      "<th>T tank &deg;C</th><th>V L</th><th>simple L</th><th>stable</th></tr>" + expansionTankRowsHtml() + "</table>";
+      "<th>T tank &deg;C</th><th>V L</th><th>simple L</th><th>weight</th><th>stable</th></tr>" + expansionTankRowsHtml() + "</table>";
   }
   return html;
 }
@@ -1653,17 +1654,17 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
     ".btn-refresh { background: #ff9800; color: white; white-space: nowrap; text-decoration: none; display: inline-block; padding: 8px 14px; border-radius: 4px; font-size: 14px; }"
     ".current-badge { background: #e8f5e9; border: 1px solid #a5d6a7; border-radius: 6px; padding: 8px 14px; font-size: 1.1em; color: #2e7d32; }"
     ".current-row { display: flex; gap: 10px; align-items: center; margin-bottom: 18px; } .current-row .current-badge { flex: 1; }"
-    ".tabs { display: flex; gap: 4px; border-bottom: 2px solid #ddd; margin-bottom: 14px; }"
-    ".tabs a { flex: 1; text-align: center; padding: 8px 4px; text-decoration: none; color: #555; background: #eee; border-radius: 6px 6px 0 0; }"
+    ".tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 2px solid #ddd; margin-bottom: 14px; }"
+    ".tabs a { flex: 1; min-width: 64px; text-align: center; padding: 8px 4px; text-decoration: none; color: #555; background: #eee; border-radius: 6px 6px 0 0; }"
     ".tabs a.active { background: #4CAF50; color: white; font-weight: bold; }"
     "</style></head><body><div class='container'><h1>Calibration</h1>"
     "<form id='calForm' action='/calibration/update' method='POST'></form>";
   // One tab at a time (?tab=): a smaller page, and the 10-s refresh of a running routine keeps the tab.
   // Fields of the other tabs are not posted: the update handler keeps the stored value of a missing field.
   const String requested = request->hasParam("tab") ? request->getParam("tab")->value() : String("sensor");
-  const char *const tabIds[] = {"sensor", "volume", "leaks", "vent", "physical", "events"};
-  const char *const tabNames[] = {"Sensor", "Volume", "Leaks", "Vent", "Physical", "Events"};
-  constexpr uint8_t tabCount = 6;
+  const char *const tabIds[] = {"sensor", "volume", "leaks", "vent", "physical", "feedback", "events"};
+  const char *const tabNames[] = {"Sensor", "Volume", "Leaks", "Vent", "Physical", "Feedback", "Events"};
+  constexpr uint8_t tabCount = 7;
   uint8_t tab = 0;
   for (uint8_t i = 0; i < tabCount; ++i)
     if (requested == tabIds[i]) tab = i;
@@ -1692,6 +1693,10 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   } else if (tab == 4) {
     page += physicalParametersHtml();
     page += dissolvedCO2SectionHtml();
+  } else if (tab == 5) {
+    page += feedbackTabHtml();
+    running = true; // the leak window and the vents move on
+    editable = false;
   } else {
     editable = false;
     const String events = calibrationEventsHtmlRows(30);

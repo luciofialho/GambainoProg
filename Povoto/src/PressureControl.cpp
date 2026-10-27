@@ -22,6 +22,7 @@
 #include "ExpansionTank.h"
 #include "LeakHold.h"
 #include "HoldTest.h"
+#include "Feedback.h"
 #include <esp_timer.h>
 #include <math.h>
 #include <algorithm>
@@ -2554,6 +2555,16 @@ void processPressure(bool afterRelief) {
     }
 
     CountersData.totalReliefCount += 1;
+    FeedbackVent feedback;
+    feedback.reliefNumber = CountersData.totalReliefCount;
+    feedback.pOnGauge = isfinite(pressureOnReliefExtrap) ? pressureOnReliefExtrap : pressureOnReliefMeas;
+    feedback.pAfterGauge = adjustedPressureAfterRelief;
+    feedback.gasKelvin = float(ventGasK);
+    feedback.counted = ventCountsCO2() && !skipTaskWindow && !noEffect;
+    feedback.ratioEvaluated = reliefCheckResult != RELIEF_CHECK_SKIPPED;
+    feedback.ratio = ventResult.ratio;
+    feedback.apparentHeadspace = ventResult.apparentHeadspace;
+    feedbackVent(feedback);
     polytropicReferenceCloseMillis = reliefValveClosedMillis;
     polytropicReferenceReliefNumber = CountersData.totalReliefCount;
     polytropicReferencePressureBefore = pressureOnReliefMeas;
@@ -2668,6 +2679,7 @@ bool processReliefCycle() {
         if (!pressureAcquisitionValid || inPressureNoiseWindow() ||
             (int32_t)(pressureAcquiredMillis - timeToStartRelief) < 0) return true;
         estimatePreviousReliefPolytropicExponent();
+        feedbackExponent(polytropicEstimatedExponent, polytropicFitRMSEBar, polytropicSourceReliefNumber);
         pressureOnReliefMeas = ControlData.pressure;
         pressureOnReliefMeasuredMillis = pressureAcquiredMillis;
         currentOnReliefMeasured = currentReading;
@@ -2943,6 +2955,7 @@ void pressureControl() {
 
   collectPolytropicPressureSample();
   checkValveStuckOpen();
+  processFeedback();
 
   if (inTheMiddleOfRelief()) return;
   // Above the maximum security pressure the relief runs whatever the Valve override

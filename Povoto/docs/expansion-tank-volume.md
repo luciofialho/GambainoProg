@@ -22,7 +22,7 @@ volume da época do TE com um tanque simples (sem pesagem), sem os tempos fixos
      mostra a inclinação atual e o limite), mínimo 2 min, máximo 15 min (ao bater o máximo, segue e
      marca "stable: no"). P1 = média dos últimos 10 s; T_F1 (Dallas do
      fermentador), T_E1 (ambiente: o tanque acompanha o ambiente), Patm1. Durante a espera registra, aos 60, 120,
-     180, 240, 300 e 420 s depois do fechamento, a pressão (média de 10 s) e a temperatura do fermentador
+     180 e 300 s depois do fechamento, a pressão (média de 10 s) e a temperatura do fermentador
      (colunas `P1_*s_bar` e `Tferm_P1_*s_C` do CSV): só registro, para avaliar a recuperação do P1; o cálculo
      continua usando o P1 do fim da espera.
   2. **Abre a válvula** (fermentador → tanque) e lê P2 num **tempo fixo de 5 min** (sem critério
@@ -64,11 +64,23 @@ Erro por relief (±0,5 mbar), fermentador de 130 L: 2,5% com 2 L, 0,31% com
 19 L, 0,16% com 50 L. Os níveis de pressão devem dar o mesmo volume dentro de
 ~0,3–0,5%.
 
+### Média do ensaio: ponderada por (P1 − P2)²
+
+O resultado é a média dos reliefs estáveis **ponderada por (P1 − P2)²** (manométricas), o mesmo critério para
+qualquer ensaio, sem descartar nenhum relief à mão. O erro de um relief que vem do ruído da pressão vai com
+1/(P1 − P2): a 1,8 bar a queda é de ~230 mbar e a 0,5 bar é de ~65 mbar, então um erro de 1 mbar vale 0,4% num
+e 1,5% no outro. O peso é o inverso da variância desse erro, e o primeiro relief pesa cerca de 26% enquanto o último pesa
+~2%. O desvio padrão também é ponderado (pesos de confiabilidade, `Σw(V − V̄)² / (Σw − Σw²/Σw)`). A página mostra a
+média, o desvio, a faixa e o peso do maior relief; o CSV traz a coluna `weight` (parte de cada relief, 0 para os
+instáveis). Nos três ensaios de 23/10 e 26/10 (referência pesada: 130,925 kg = 131,312 L) a média ponderada deu
+131,28, 130,65 e 131,72 L, em média 131,21 L (−0,07%), com desvio de 0,54 L entre os ensaios; a média simples dava
+130,98 L (−0,25%) e a média sem o último relief, 131,11 L.
+
 ## Saídas e gravação
 
 - Reliefs que não estabilizaram (`settled1`/`settled2` falsos, "stable: no") ficam na tabela e
   no CSV, mas **fora da média e do desvio padrão**. A página mostra "n of m reliefs used",
-  o FMT volume configurado ao lado do resultado e o volume por relief.
+  o FMT volume configurado ao lado do resultado, o volume e o peso por relief.
 - O botão **Save as new FMT volume** só aparece com a rotina parada e **pelo menos 2 reliefs
   estáveis**; pede confirmação no navegador, grava o `FMTVolume` e um evento de calibração
   `fmt-volume-saved` (volume anterior e novo, desvio, reliefs usados, tanque). Antes, o

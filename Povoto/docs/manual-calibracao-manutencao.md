@@ -27,12 +27,14 @@ Regras gerais:
   limite), Maximum pressure setpoint (até 2,0 bar e abaixo da pressão de segurança; nenhum setpoint de
   pressão, nem de regra ou da nuvem, passa dele), Target drop of the gauge pressure per vent (1–15%), altitude, Cooling cycle, Heating cycle,
   Thermometers, Backup settings / Restore settings from backups. **User Configuration** — screensaver,
-  PIN, brilho, Log interval e "Accept new setpoints and triggered actions from cloud". **Calibration**, em seis abas: **Sensor** (pontos A e B, reta; Point B reading, Sensor
+  PIN, brilho, Log interval e "Accept new setpoints and triggered actions from cloud". **Calibration**, em sete abas: **Sensor** (pontos A e B, reta; Point B reading, Sensor
   zero), **Volume** (o campo do volume do tanque de expansão, o Leak test e a Volume determination, na ordem de execução; um só campo e um botão Start para cada rotina),
   **Leaks** (teste estanque de 1 min a 72 h, com 1 a 4 patamares de pressão, `docs/hold-test.md`), **Vent** (Venting test e a curva τ(P) (k e β) com a faixa medida, editáveis e com o botão "Use last test curve", que só preenche os campos; vale com Save, entre lotes; a abertura
   mínima de 1,5 s e a queda de segurança de 2× a alvo são fixas) e **Physical** (Flow level factor, Effective Venting
-  Exponent e Dissolved CO2 dynamics: Nucleation window) e **Events** (os eventos de calibração, 30 mais recentes). Só a aba aberta é montada e enviada; o Save/Cancel
-  no fim da aba grava os campos editáveis dela (o valor de um campo de outra aba não é tocado); as abas Volume
+  Exponent e Dissolved CO2 dynamics: Nucleation window), **Feedback** (valores aferidos no lote: expoente politrópico medido,
+  estimativa da janela de nucleação, razão lado do fermentador / vazão, Vh aparente e o indicador de possível vazamento, com
+  botões "Use" para o expoente e a janela; `docs/feedback.md`) e **Events** (os eventos de calibração, 30 mais recentes). Só a aba aberta é montada e enviada; o Save/Cancel
+  no fim da aba grava os campos editáveis dela (o valor de um campo de outra aba não é tocado); as abas Volume, Feedback
   e Events só têm o botão Menu. O **Valve cleaning** fica na página **Control**, junto com o **Valve** (Auto / Open / Closed:
   Open segura a válvula aberta por até 10 min, Closed suspende os reliefs automáticos, mas nunca o de
   segurança) e o **Relief once** (recusado durante rotinas de calibração, com o Valve fora de Auto ou com
@@ -696,8 +698,10 @@ de estabilidade). O resultado é a média dos reliefs estáveis.
 | Pmin_open_bar | Menor pressão lida com a válvula aberta (cada leitura nova, já filtrada pela mediana e depois dos 400 ms de ruído da solenoide) |
 | t_Pmin_s | Instante dessa menor leitura, em segundos depois de abrir |
 | open_samples | Quantas leituras novas entraram nessa conta |
-| P1_60s_bar … P1_420s_bar / Tferm_P1_*s_C | Pressão (média de 10 s) e temperatura do fermentador do P1 do relief, aos 60, 120, 180, 240, 300 e 420 s depois de fechar a válvula do relief anterior (a espera do P1 conta desde esse instante, durante a ventilação do tanque; vazio nos instantes que a espera não alcançou). Só registro: o cálculo usa o P1 do fim da espera |
+| P1_60s_bar … P1_300s_bar / Tferm_P1_*s_C | Pressão (média de 10 s) e temperatura do fermentador do P1 do relief, aos 60, 120, 180 e 300 s depois de fechar a válvula do relief anterior (a espera do P1 conta desde esse instante, durante a ventilação do tanque; vazio nos instantes que a espera não alcançou). Só registro: o cálculo usa o P1 do fim da espera |
 | P2_tail_mbar / P2_tau_s | Cauda que faltava aos 300 s (assíntota do ajuste exponencial menos a leitura aos 300 s) e a constante de tempo do ajuste. `P2_bar` é a assíntota (vazio nas duas colunas = sem ajuste, `P2_bar` é a média dos últimos 10 s) |
+| p0_mA / pB_mA / pB_bar | A reta do sensor de pressão em uso no P1 do relief: corrente do ponto A (zero), corrente e pressão do ponto B. Mostram se o zero ou o ponto B mudaram entre ensaios (a corrente bruta de cada leitura se recupera por `I = p0 + P · (pB_mA − p0) / pB_bar`) |
+| weight | Peso do relief na média do ensaio: (P1 − P2)² dividido pela soma desses valores nos reliefs estáveis (0 = fora da média). A média e o desvio da página e o "Save as new FMT volume" usam essa ponderação (`docs/expansion-tank-volume.md`) |
 | build | Identificação do firmware que gerou a linha: `aammdd-hhmm-xxxxxxxx` (data e hora da última alteração dos fontes e hash dos fontes). Dois arquivos com o mesmo valor vêm do mesmo código. Aparece também nos CSVs do teste de perda e do teste de ventilação, nos eventos de calibração (`[build ...]`), na página Calibration (rodapé, com o commit do git) e na serial ao ligar (`[BUILD]`) |
 
 Como ler `Pmin_open_bar`: com a válvula aberta a pressão do fermentador cai de forma
@@ -712,5 +716,6 @@ primeiros 400 ms depois de abrir e a mediana atenua vales de poucas dezenas de m
 
 Calibration → aba Events → "all". Texto, uma linha por evento: `hora local;tipo;detalhes`. Tipos:
 `sensor-zero`, `sensor-point-b`, `fermenter-volume`, `venting-test`, `flow-curve-saved`,
-`reference-curve-saved`, `flow-curve-edited`, `valve-cleaning` e `nucleation-estimate`. Os detalhes trazem os
+`reference-curve-saved`, `flow-curve-edited`, `valve-cleaning`, `nucleation-estimate`, `exponent-from-feedback` e
+`nucleation-from-feedback` (botões "Use" da aba Feedback: valor antigo e novo). Os detalhes trazem os
 números do que foi gravado ou medido.
