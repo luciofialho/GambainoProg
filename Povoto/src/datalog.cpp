@@ -436,7 +436,6 @@ void doReliefDataLog(const ReliefLogData &data) {
     GLogAddData("FlowLevelFactor");
     GLogAddData("VentFlowMols");
     GLogAddData("VentFermenterSideMols"); // settled drop x reference headspace / RT
-    GLogAddData("VentOutOfRange");        // above / below the flow curve range, or empty
     GLogAddData("VentCounted");           // flow, fermenter-side or none
     GLogAddData("VentDropPercent");
     GLogAddData("VentTargetDropPercent");
@@ -502,7 +501,6 @@ void doReliefDataLog(const ReliefLogData &data) {
   GLogAddData(data.flowLevelFactor, 4);
   GLogAddData(data.ventFlowMoles, 6);
   GLogAddData(data.ventFermenterSideMoles, 6);
-  GLogAddData(data.ventOutOfRange ? data.ventOutOfRange : "");
   GLogAddData(data.ventCounted ? data.ventCounted : "");
   GLogAddData(data.ventDropPercent, 3);
   GLogAddData(data.ventTargetDropPercent, 2);

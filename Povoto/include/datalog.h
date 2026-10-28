@@ -44,7 +44,6 @@ struct ReliefLogData {
   float flowLevelFactor;
   float ventFlowMoles;             // flow model, total moles (CO2 + vapor)
   float ventFermenterSideMoles;    // settled drop x reference headspace / RT
-  const char *ventOutOfRange;      // "above" / "below" the range of the flow curve, or ""
   const char *ventCounted;         // "flow", "fermenter-side" or "none"
   float ventDropPercent;           // settled drop / pressure at opening
   float ventTargetDropPercent;

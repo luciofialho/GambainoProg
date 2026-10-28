@@ -354,11 +354,12 @@ inline Curve defaultCurve() {
   return {82.8f, 1.06f, 0.18f, 2.10f, 0};
 }
 
+// tau is checked over the working pressures (0.1 to 2.3 bar), not over the measured range (only a record).
 inline bool validCurve(const Curve &c) {
   if (!(c.pMax > c.pMin) || !(c.pMin >= 0.0f) || !(c.pMax <= 4.0f)) return false;
   if (!(c.k > 1.0f && c.k < 10000.0f) || !(c.beta > 1e-3f && c.beta < 1000.0f)) return false;
   for (int i = 0; i <= 10; ++i) {
-    const double tau = tauRef(c, c.pMin + (c.pMax - c.pMin) * i / 10.0, 0.93);
+    const double tau = tauRef(c, 0.1 + 2.2 * i / 10.0, 0.93);
     if (!(tau > 1.0 && tau < 100000.0)) return false;
   }
   return true;

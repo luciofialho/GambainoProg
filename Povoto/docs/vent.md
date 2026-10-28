@@ -61,8 +61,10 @@ t          = máx(mín(t_estimado, t_seg), 1,5 s)
     de uso o bocal nunca chega a ser sônico (r ≈ 0,55–0,95); por isso a curva é quase plana acima
     de ~1 bar e sobe em pressão baixa.
   - **sem faixa**: vale em qualquer pressão acima de 5 mbar manométricos (`TAU_MIN_GAUGE`);
-    `pMin`–`pMax` só dizem onde o ensaio mediu (informativos, e usados para marcar vents fora
-    da faixa medida).
+    `pMin`–`pMax` só registram onde o ensaio mediu: aparecem com os resultados do ensaio, não são
+    editáveis e não entram em nenhuma conta (decisão de 27/10/2026; o aviso de vent fora da faixa
+    e a coluna `VentOutOfRange` saíram). A checagem de sanidade da curva (`validCurve`) avalia τ
+    de 0,1 a 2,3 bar.
   - Escolha entre 10 famílias nos dois primeiros ensaios de 20–21/10/2026 (48 e 41 liberações, com o
     silenciador): com um fator de escala livre por ensaio (o de 21/10 saiu 2,6% mais rápido), a
     válvula + saída quadrática (2 parâmetros) ficou no mesmo resíduo (70 ms ponderados) do
@@ -168,13 +170,9 @@ mols  = C_ar(P̄)·razão(P̄)/√Z(P̄)·nível · P̄/√T_gás · fator · t_
   da média de 24 h no Dump e a limpeza dela no Liquid / Dry Hopping / Dynamic
   Hopping continuam valendo; sem eles, uma adição de líquido daria razão ~0,83
   por até 24 h.
-- **Fora da faixa calibrada**: se `P_on` passa da pressão máxima do ensaio
-  (`pMax` da curva) ou a leitura de fechamento fica abaixo da mínima (`pMin`),
-  com 5 mbar de tolerância, a curva usou o valor da ponta (acima) ou a
-  extrapolação pelo bocal (abaixo; seção 3): coluna `VentOutOfRange`
-  (`above` / `below`) e contagem em `/ventstatus`. Na ponta alta o erro é pequeno
-  (sônico); na baixa o erro cresce com a distância de `pMin` (a escala não inclui
-  a variação do coeficiente de descarga): refazer o ensaio cobrindo a faixa (manual, P5).
+- **Fora da faixa do ensaio**: o modelo é físico e vale em qualquer pressão
+  (seção 3); nada é marcado. O ensaio P5 desce a 0,25 bar, o que cobre os
+  setpoints usuais.
 - **Bench** (`python tests/vent_bench.py`): contra uma simulação com o gás real
   expandindo pelo politrópico que define o 1,29 e a vazão instantânea, a
   contagem erra ≤ 0,11% a 0,5 / 1,0 / 1,9 bar com Vh de 20 / 30 / 50 L. Com uma
@@ -251,13 +249,12 @@ biblioteca, com o buffer na pilha, não é usado pelo Povoto), e a página fica
 com ≥ 10% de folga (`tests/check_status_sizes.py`). Aumentar o `MAXSTATUSLEN`
 custaria RAM estática no Povoto e pilha da task web nos firmwares que usam o
 handler da biblioteca. Mostra os parâmetros e as curvas, a Patm e a
-T_gás em uso, o próximo vent (tempo, Vh, Vh mínimo plausível, aviso de fora da
-faixa), o último vent (tempos estimado/segurança/planejado/real, pressões,
-P̄, resfriamento, constante de vazão, as duas contagens e a razão, o que foi
-contado, Vh aparente, queda, fora da faixa), as verificações (razão, alarme,
-válvula presa aberta, vents fora da faixa desde o boot) e o estágio do ciclo da
-válvula. Atualiza a cada 10 s. O `/getstatus` fica com uma linha: os dois
-alarmes do vent e a contagem de vents fora da faixa.
+T_gás em uso, o próximo vent (tempo, Vh, Vh mínimo plausível), o último vent
+(tempos estimado/segurança/planejado/real, pressões, P̄, resfriamento,
+constante de vazão, as duas contagens e a razão, o que foi contado, Vh
+aparente, queda), as verificações (razão, alarme, válvula presa aberta) e o
+estágio do ciclo da válvula. Atualiza a cada 10 s. O `/getstatus` fica com uma
+linha: os dois alarmes do vent.
 
 ## 8. Parâmetros (páginas Settings e Calibration)
 
@@ -266,7 +263,7 @@ alarmes do vent e a contagem de vents fora da faixa.
 | Queda alvo (%) — página Settings | `ventDrop` | 6 |
 | Fator de nível — Calibration | `flowLevel` | 1,0 |
 | Expoente efetivo de ventilação — Calibration | `ventExponent` | 1,29 |
-| Curva de vazão k, β (blob de 20 bytes; editável na página Calibration, entre lotes, ou pelo "Save curve" do ensaio) | `ventFlow2` | ensaios de 22/10 (k 82,8; β 1,06) |
+| Curva de vazão k, β (blob de 20 bytes, com a faixa medida e a data só como registro; k e β editáveis na página Calibration, entre lotes, ou pelo "Save curve" do ensaio) | `ventFlow2` | ensaios de 22/10 (k 82,8; β 1,06) |
 | Curva de referência (blob) | `ventFlowRef2` | nenhuma |
 
 A abertura mínima (1,5 s) e a queda de segurança (2 × a alvo) são fixas no código. As chaves antigas
@@ -278,10 +275,10 @@ O nome da planilha continua **Relief**. Colunas novas: `GasTemperature`,
 `GasTemperatureSource`, `VentEstimatedSeconds`, `VentSafetySeconds`,
 `VentPlannedSeconds`, `VentLimit`, `VentHeadspaceForTime`, `VentRealSeconds`,
 `VentMeanPressure`, `VentCoolingFactor`, `VentFlowConstant`,
-`FlowLevelFactor`, `VentFlowMols`, `VentFermenterSideMols`, `VentOutOfRange`,
+`FlowLevelFactor`, `VentFlowMols`, `VentFermenterSideMols`,
 `VentCounted`, `VentDropPercent`, `VentVaporFraction` (no lugar de `LiquidMassInGasVentingPercent`),
 `VentTargetDropPercent`, `HeadSpaceApparent`. `EjectedMolsWithVaporAtLog` são os mols contados
-do vent com o vapor (`EjectedMolsAtLog` é só o CO2).
+do vent com o vapor (`EjectedMolsAtLog` é só o CO2). A coluna `VentOutOfRange` saiu em 27/10/2026.
 
 ## 10. Válvula: Valve da página Control e Relief once
 

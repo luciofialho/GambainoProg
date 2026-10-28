@@ -26,7 +26,7 @@ static unsigned long sampleMs() { return debugging ? 5000UL : 60000UL; }
 struct DriftSample {
   uint32_t seconds;  // since the start
   float current, currentMin, currentMax; // mA, mean, minimum and maximum of the readings of the interval
-  float ta, tg, tc;  // C: ambient, fermenter gas, chip (NAN when missing)
+  float ta, tg;      // C: ambient, fermenter gas (NAN when missing)
 };
 
 static bool running = false;
@@ -34,9 +34,9 @@ static DriftSample *samples = nullptr; // PSRAM
 static uint16_t sampleCount = 0;
 static unsigned long startMillis = 0, lastReading = 0, intervalIndex = 0;
 static uint32_t runEpoch = 0;
-static double accI = 0, accTa = 0, accTg = 0, accTc = 0;
+static double accI = 0, accTa = 0, accTg = 0;
 static float minI = NAN, maxI = NAN;
-static uint16_t accN = 0, accA = 0, accG = 0, accC = 0;
+static uint16_t accN = 0, accA = 0, accG = 0;
 static float lineP0 = NAN, lineB = NAN, lineBBar = NAN; // the pressure line when the test started
 static portMUX_TYPE driftLock = portMUX_INITIALIZER_UNLOCKED;
 static volatile bool stopRequested = false;
@@ -105,7 +105,7 @@ ZeroDriftResult getZeroDriftResult() {
   r.samples = count;
   r.capacity = DRIFT_MAX_SAMPLES;
   r.intervalSeconds = (uint16_t)(sampleMs() / 1000UL);
-  r.ambient = r.gas = r.chip = r.ambientMin = r.ambientMax = r.gasMin = r.gasMax = NAN;
+  r.ambient = r.gas = r.ambientMin = r.ambientMax = r.gasMin = r.gasMax = NAN;
   if (!count) return r;
   for (uint16_t i = 0; i < count; ++i) {
     const DriftSample &s = samples[i];
@@ -122,7 +122,6 @@ ZeroDriftResult getZeroDriftResult() {
   r.elapsedSeconds = last.seconds;
   r.ambient = last.ta;
   r.gas = last.tg;
-  r.chip = last.tc;
   r.current = last.current;
   r.pressure = readingMbar(last.current);
   r.byAmbient = fit(count, true);
@@ -204,8 +203,8 @@ bool startZeroDrift(char *reason, size_t reasonSize) {
   lineB = FMTData.pressure1Current;
   lineBBar = FMTData.pressure1Bar;
   intervalIndex = 0;
-  accI = accTa = accTg = accTc = 0;
-  accN = accA = accG = accC = 0;
+  accI = accTa = accTg = 0;
+  accN = accA = accG = 0;
   minI = maxI = NAN;
   lastReading = 0;
   routineValve(false); // de-energized: the fermenter stays closed from the expansion tank
@@ -237,10 +236,9 @@ void processZeroDrift() {
       maxI = isfinite(maxI) ? max(maxI, currentReading) : currentReading;
       ++accN;
     }
-    const float ta = environmentCelsius(), tg = gasCelsius(), tc = temperatureRead();
+    const float ta = environmentCelsius(), tg = gasCelsius();
     if (isfinite(ta)) { accTa += ta; ++accA; }
     if (isfinite(tg)) { accTg += tg; ++accG; }
-    if (isfinite(tc)) { accTc += tc; ++accC; }
   }
   const unsigned long elapsed = now - startMillis;
   if (elapsed >= (intervalIndex + 1) * sampleMs()) {
@@ -253,14 +251,13 @@ void processZeroDrift() {
       s.currentMax = maxI;
       s.ta = accA ? float(accTa / accA) : NAN;
       s.tg = accG ? float(accTg / accG) : NAN;
-      s.tc = accC ? float(accTc / accC) : NAN;
       portENTER_CRITICAL(&driftLock);
       samples[sampleCount] = s;
       ++sampleCount;
       portEXIT_CRITICAL(&driftLock);
     }
-    accI = accTa = accTg = accTc = 0;
-    accN = accA = accG = accC = 0;
+    accI = accTa = accTg = 0;
+    accN = accA = accG = 0;
     minI = maxI = NAN;
     if (sampleCount >= DRIFT_MAX_SAMPLES) {
       finish("Completed");
@@ -297,18 +294,17 @@ void handleZeroDriftCSV(AsyncWebServerRequest *request) {
             cursor->used = 0;
             if (!cursor->headerSent) {
               cursor->used = snprintf(cursor->line, sizeof(cursor->line),
-                                      "date_time;t_s;T_amb_C;T_gas_C;T_chip_C;I_mA;I_min_mA;I_max_mA;P_bar;p0_mA;pB_mA;pB_bar;build\n");
+                                      "date_time;t_s;T_amb_C;T_gas_C;I_mA;I_min_mA;I_max_mA;P_bar;p0_mA;pB_mA;pB_bar;build\n");
               cursor->headerSent = true;
             } else if (cursor->next < cursor->count) {
               const DriftSample &s = samples[cursor->next++];
               char when[24] = "";
               if (epoch >= 1600000000UL) formatLocalEpochISO(epoch + s.seconds, when, sizeof(when));
-              char ta[12] = "", tg[12] = "", tc[12] = "";
+              char ta[12] = "", tg[12] = "";
               if (isfinite(s.ta)) snprintf(ta, sizeof(ta), "%.2f", s.ta);
               if (isfinite(s.tg)) snprintf(tg, sizeof(tg), "%.2f", s.tg);
-              if (isfinite(s.tc)) snprintf(tc, sizeof(tc), "%.1f", s.tc);
-              cursor->used = snprintf(cursor->line, sizeof(cursor->line), "%s;%lu;%s;%s;%s;%.4f;%.4f;%.4f;%.6f;%.4f;%.4f;%.4f;%s\n", when,
-                                      (unsigned long)s.seconds, ta, tg, tc, s.current, s.currentMin, s.currentMax,
+              cursor->used = snprintf(cursor->line, sizeof(cursor->line), "%s;%lu;%s;%s;%.4f;%.4f;%.4f;%.6f;%.4f;%.4f;%.4f;%s\n", when,
+                                      (unsigned long)s.seconds, ta, tg, s.current, s.currentMin, s.currentMax,
                                       convertCurrentToPressureUnclipped(s.current), p0, pb, pbBar, BUILD_ID);
               for (size_t i = 0; i < cursor->used; ++i)
                 if (cursor->line[i] == '.') cursor->line[i] = ','; // decimal comma, as the other calibration files

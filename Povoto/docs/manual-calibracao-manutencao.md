@@ -29,7 +29,7 @@ Regras gerais:
   Thermometers, Backup settings / Restore settings from backups. **User Configuration** — screensaver,
   PIN, brilho, Log interval e "Accept new setpoints and triggered actions from cloud". **Calibration**, em sete abas: **Sensor** (pontos A e B, reta; Point B reading, Sensor
   zero), **Volume** (o campo do volume do tanque de expansão, o Leak test e a Volume determination, na ordem de execução; um só campo e um botão Start para cada rotina),
-  **Leaks** (teste estanque de 1 min a 72 h, com 1 a 4 patamares de pressão, `docs/hold-test.md`), **Vent** (Venting test e a curva τ(P) (k e β) com a faixa medida, editáveis e com o botão "Use last test curve", que só preenche os campos; vale com Save, entre lotes; a abertura
+  **Leaks** (teste estanque de 1 min a 72 h, com 1 a 4 patamares de pressão, `docs/hold-test.md`), **Vent** (Venting test e a curva τ(P) (k e β), editáveis e com o botão "Use last test curve", que só preenche os campos; vale com Save, entre lotes; a abertura
   mínima de 1,5 s e a queda de segurança de 2× a alvo são fixas) e **Physical** (Flow level factor, Effective Venting
   Exponent e Dissolved CO2 dynamics: Nucleation window), **Feedback** (valores aferidos no lote: expoente politrópico medido,
   estimativa da janela de nucleação, razão lado do fermentador / vazão, Vh aparente e o indicador de possível vazamento, com
@@ -237,12 +237,8 @@ mudança na saída (garrafa, silenciador); qualquer suspeita sobre a válvula.
    referência ("Save as reference curve"). Manutenção: não grave nada; o
    histórico é o resultado.
 
-**Faixa calibrada.** A curva só vale entre a maior e a menor pressão do ensaio.
-Um vent fora dessa faixa usa o valor da ponta e fica marcado no log. Na ponta
-alta o erro é pequeno (no sônico o τ varia devagar); na ponta baixa (abaixo de
-~0,4 bar, regime subsônico) o τ cresce rápido e o valor da ponta superestima a
-vazão. Se for fermentar fora da faixa calibrada, refaça o P5 cobrindo-a antes do
-lote.
+**Faixa medida.** A maior e a menor pressão do ensaio aparecem com o resultado,
+só como registro: o modelo é físico e vale fora delas, e nada é marcado no log.
 
 A conversão ar → CO2 (teórica, em função da pressão) e o fator de
 compressibilidade do CO2 são aplicados pelo firmware; não há ensaio com CO2.
@@ -353,7 +349,6 @@ Não use soda nem Vanish em pó (corpo de alumínio). Não molhe a bobina.
 | P4b: dispersão entre reliefs > 0,5% | pressão não estabilizada | esperar mais antes de P1/P2 |
 | P5: deriva maior que 2× o seu erro padrão | solenoide ou fonte da bobina instável | conferir a tensão; trocar a válvula |
 | P5: resíduo de forma > 1% | leituras sem estabilizar, ou forma diferente | repetir com espera maior; mandar para análise (com ruído de leitura normal, ~0,15 mbar, ele fica em ~0,5%) |
-| Vents marcados fora da faixa calibrada no log | fermentação acima ou abaixo das pressões do último P5 | refazer o P5 cobrindo a faixa (topo ≥ setpoint máximo + 3%; base abaixo do menor setpoint) |
 | P5: curva > 3% abaixo da referência | sujeira na válvula ou no silenciador | P9 e P10 e repetir; se não voltar, trocar a válvula e registrar `new-valve` |
 | P5: perda < 3% mas volta só com a limpeza | sujeira por lote | manter P10 em todo fim de lote |
 | Líquido na garrafa testemunha | krausen chegando à válvula | registrar; avaliar separador antes da válvula; P10 |
@@ -463,8 +458,7 @@ que define o valor.
 | Parâmetro | O que representa | Origem |
 |---|---|---|
 | Target drop per vent (%) (Settings) | Queda alvo da pressão manométrica em cada relief; define o dente de serra em torno do setpoint (relief em setpoint/√(1 − queda)) | Decisão de projeto, padrão 6% |
-| Flow curve: k, beta | Curva τ(P) = k/ψ_ef(P) (s) da válvula e da sua saída em série: k é a capacidade do bocal da válvula e β a resistência a jusante dele (válvula, conexões; o silenciador pesa ≤ ~3–4%, ensaio sem silenciador de 21/10/2026; docs/vent.md). τ é a constante de tempo da pressão absoluta de 100 L de ar a 20 °C, P manométrica; o firmware escala ao volume do headspace e à temperatura do gás. A faixa "measured" só diz onde o ensaio mediu | Ensaio de ventilação (botão "Use last test curve" só preenche os campos; vale com Save, entre lotes) |
-| Flow curve: measured from / to (bar) | Faixa de pressão coberta pelo ensaio; só informativa: o modelo é físico e vale fora dela (vents fora da faixa continuam marcados) | Ensaio de ventilação (pressão mais alta e mais baixa medidas) |
+| Flow curve: k, beta | Curva τ(P) = k/ψ_ef(P) (s) da válvula e da sua saída em série: k é a capacidade do bocal da válvula e β a resistência a jusante dele (válvula, conexões; o silenciador pesa ≤ ~3–4%, ensaio sem silenciador de 21/10/2026; docs/vent.md). τ é a constante de tempo da pressão absoluta de 100 L de ar a 20 °C, P manométrica; o firmware escala ao volume do headspace e à temperatura do gás. A faixa de pressão medida aparece só no resultado do ensaio | Ensaio de ventilação (botão "Use last test curve" só preenche os campos; vale com Save, entre lotes) |
 | Reference curve | Curva fixa de comparação, para medir a perda de vazão (sujeira) em 1,8 / 1,2 / 0,8 bar | Primeiro ensaio de calibração, "Save as reference curve" |
 | Flow level factor | Multiplicador (1,0 = teoria) da vazão molar de CO2 calculada. Representa o desvio entre a vazão real de CO2 e a teórica (conversão ar → CO2 do bocal ideal, Z do CO2 e curva medida com ar) | Ajustado entre lotes pela SG desgaseificada medida (P6 e P7) |
 | Effective Venting Exponent | Expoente politrópico n da expansão do gás durante a abertura (1 = isotérmico, 1,29 ≈ adiabático do CO2); entra no resfriamento durante o vent e na pressão assentada logo após o fechamento | Ajustado nos dados do lote 160 (recuperação medida na média diária, τ ≈ 30 s); padrão 1,29, não mudar sem dados novos |
@@ -592,7 +586,6 @@ O nome ficou "Relief" por compatibilidade. Detalhes do ciclo e do modelo: docs/v
 | FlowLevelFactor | Fator de nível em uso |
 | VentFlowMols | Mols pelo modelo de vazão (CO2 mais vapor) |
 | VentFermenterSideMols | Mols pelo lado do fermentador (queda assentada de P/Z × headspace de referência ÷ RT) |
-| VentOutOfRange | `above` ou `below` quando a pressão saiu da faixa da curva; vazio dentro |
 | VentCounted | O que foi contado: `flow`, `fermenter-side` ou `none` (fora de Fermenting) |
 | VentDropPercent | Queda assentada em % da pressão de abertura |
 | VentTargetDropPercent | Queda alvo configurada (%) |

@@ -358,16 +358,11 @@ struct VentResult {
   float ratio;             // fermenter side / flow model (= measured / expected drop)
   float countedMoles;      // flow model, or fermenter side when the ratio is below 0.5
   const char *counted;     // "flow", "fermenter-side" or "none" (not Fermenting)
-  const char *outOfRange;  // "above" / "below" the pressure range of the flow curve, or 
   float apparentHeadspace; // flow moles / isothermal drop (NAN = not available)
   float dropPercent;       // isothermal drop / P_on extrapolated
   float vaporFraction;     // y: vapor of the liquid in the vented gas
 };
-static VentResult ventResult = {NAN, NAN, NAN, NAN, NAN, NAN, NAN, "none", "", NAN, NAN, 0.0f};
-// Vents outside the pressure range of the flow curve since the boot (status).
-static uint32_t ventOutOfRangeCount = 0;
-static uint32_t ventOutOfRangeLastEpoch = 0;
-static const char *ventOutOfRangeLastSide = "";
+static VentResult ventResult = {NAN, NAN, NAN, NAN, NAN, NAN, NAN, "none", NAN, NAN, 0.0f};
 
 static float ventGasKelvin() {
   float t = gasTemperature();
@@ -2471,15 +2466,6 @@ void processPressure(bool afterRelief) {
     const double fermenterSide = fermenterSideMoles(ventGasK);
     ventResult.fermenterSideMoles = fermenterSide;
     ventResult.ratio = (isfinite(fermenterSide) && count.moles > 0.0) ? float(fermenterSide / count.moles) : NAN;
-    // Outside the pressure range measured by the test the (physical) curve is extrapolated (docs/vent.md).
-    const VentModel::Curve &curve = FMTData.ventCurve;
-    ventResult.outOfRange = pressureOnReliefMeas > curve.pMax + 0.005f ? "above"
-                          : pressureAfterRelief < curve.pMin - 0.005f ? "below" : "";
-    if (ventResult.outOfRange[0] && ventCountsCO2()) {
-      ++ventOutOfRangeCount;
-      ventOutOfRangeLastEpoch = NTPEpoch();
-      ventOutOfRangeLastSide = ventResult.outOfRange;
-    }
     const bool skipTaskWindow = reliefOpenedDuringTask || taskWindowType != 0;
     reliefCheckResult = evaluateVentCheck(ventResult.ratio, skipTaskWindow);
     const bool noEffect = reliefCheckResult == RELIEF_CHECK_NO_EFFECT || reliefCheckResult == RELIEF_CHECK_PARTIAL;
@@ -2616,7 +2602,6 @@ void processPressure(bool afterRelief) {
     reliefLog.flowLevelFactor = FMTData.flowLevelFactor;
     reliefLog.ventFlowMoles = ventResult.flowMoles;
     reliefLog.ventFermenterSideMoles = ventResult.fermenterSideMoles;
-    reliefLog.ventOutOfRange = ventResult.outOfRange;
     reliefLog.ventCounted = ventResult.counted;
     reliefLog.ventDropPercent = ventResult.dropPercent;
     reliefLog.ventTargetDropPercent = FMTData.ventTargetDropPercent;
@@ -3087,9 +3072,9 @@ char *getPressureControlStatus(char *st) {
            pressureSensorAlarm ? "ACTIVE" : "off");
   strnncat(st, tmp, PRESSURE_STATUS_SIZE);
   // The vent diagnostics are on /ventstatus (getVentStatusHtml).
-  snprintf(tmp, sizeof(tmp), "Vent alarms: no effect %s, stuck open %s; %lu out of range (/ventstatus)<br>",
+  snprintf(tmp, sizeof(tmp), "Vent alarms: no effect %s, stuck open %s (/ventstatus)<br>",
            reliefCheckAlarmActive() ? "ON" : "off",
-           valveStuckOpenAlarmActive() ? "ON" : "off", (unsigned long)ventOutOfRangeCount);
+           valveStuckOpenAlarmActive() ? "ON" : "off");
   strnncat(st, tmp, PRESSURE_STATUS_SIZE);
 
   return st;
@@ -3106,7 +3091,7 @@ String getVentStatusHtml() {
     if (!VentModel::validCurve(c)) return String("none");
     char when[20];
     formatLocalEpochISO(c.epoch, when, sizeof(when));
-    return "k " + num(c.k, 3) + " s, beta " + num(c.beta, 4) + ", " + num(c.pMin, 3) + "-" + num(c.pMax, 3) + " bar, " +
+    return "k " + num(c.k, 3) + " s, beta " + num(c.beta, 4) + ", " +
            (when[0] ? String(when) : String("default (tests of 22/10/2026)"));
   };
   const unsigned long now = millis();
@@ -3132,9 +3117,7 @@ String getVentStatusHtml() {
             num(VentModel::ventSeconds(curve, FMTData.flowLevelFactor, headspace, threshold,
                 threshold * (1.0 - FMTData.ventTargetDropPercent / 100.0), Patm, tK,
                 FMTData.FMTEffectiveVentingExponent), 3) +
-            " s with Vh " + num(headspace, 2) + " L (smallest plausible " + num(ventSmallestHeadspace(), 2) + " L)" +
-            (threshold > curve.pMax || threshold * (1.0 - FMTData.ventTargetDropPercent / 100.0) < curve.pMin
-                 ? String("; <b>outside the pressure range of the flow curve</b>") : String("")) + "</p>";
+            " s with Vh " + num(headspace, 2) + " L (smallest plausible " + num(ventSmallestHeadspace(), 2) + " L)</p>";
   }
   html += "<h3>Last vent</h3><p>Opening: estimated " + num(ventPlan.estimatedSeconds, 3) + " s, safety " +
           num(ventPlan.safetySeconds, 3) + " s, planned " + num(ventPlan.plannedSeconds, 3) + " s (" + ventPlan.limit +
@@ -3147,10 +3130,7 @@ String getVentStatusHtml() {
           " mol, ratio <b>" + num(ventResult.ratio, 3) + "</b>; counted " + num(ventResult.countedMoles, 5) + " mol (" +
           ventResult.counted + ")<br>Apparent headspace " + num(ventResult.apparentHeadspace, 3) + " L; drop " +
           num(ventResult.dropPercent, 3) + "% (target " + num(FMTData.ventTargetDropPercent, 2) + "%); headspace update: " +
-          ventHeadspaceStatus + (ventResult.outOfRange[0] ? String("; <b>") + ventResult.outOfRange +
-                                 " the range of the flow curve</b>" : String("")) + "</p>";
-  char when[20];
-  formatLocalEpochISO(ventOutOfRangeLastEpoch, when, sizeof(when));
+          ventHeadspaceStatus + "</p>";
   html += "<h3>Checks</h3><p>Vent check: last " +
           String(reliefCheckLast == RELIEF_CHECK_SKIPPED ? "none" : reliefCheckLabel(reliefCheckLast)) + ", drop " +
           num(reliefCheckMeasuredDrop, 5) + " / expected " + num(reliefCheckExpectedDrop, 5) + " bar (ratio " +
@@ -3158,9 +3138,7 @@ String getVentStatusHtml() {
           String(reliefCheckRun) + ", alarm " + (reliefCheckAlarmActive() ? "ON" : "off") +
           "<br>Valve stuck open: " + (valveStuckOpenAlarmActive() ? "<b>ALARM</b>" : "no") + " (last fall " +
           num(stuckOpenLastFall, 5) + " bar in " + String(STUCK_OPEN_CHECK_MS / 1000UL) + " s; alarm above " +
-          num(STUCK_OPEN_FALL_BAR, 3) + ")<br>Vents outside the curve range since boot: " +
-          String(ventOutOfRangeCount) + (ventOutOfRangeCount ? String(", last ") + ventOutOfRangeLastSide + " at " +
-                                         (when[0] ? String(when) : String("no time")) : String("")) + "</p>";
+          num(STUCK_OPEN_FALL_BAR, 3) + ")</p>";
   html += "<h3>Valve cycle</h3><p>";
   if (!inTheMiddleOfRelief()) {
     html += "Idle";

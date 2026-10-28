@@ -33,7 +33,6 @@ Uma amostra por minuto, média das leituras de 1 s do intervalo:
 | t_s | Segundos desde o início |
 | T_amb_C | Temperatura ambiente (Dallas, SideKick ou BrewCore: a fonte usada pelo ensaio de volume) |
 | T_gas_C | Temperatura do gás do fermentador (com o fermentador vazio é o ar; o termômetro do líquido, se não houver o do headspace) |
-| T_chip_C | Temperatura do chip do ESP32, só para registro (aquecida pelo próprio chip) |
 | I_mA, I_min_mA, I_max_mA | Corrente filtrada do INA226: média, mínimo e máximo das leituras do intervalo |
 | P_bar | Leitura sem corte (negativa abaixo do zero calibrado), a partir da corrente média |
 | p0_mA, pB_mA, pB_bar | A reta do sensor no início do ensaio |

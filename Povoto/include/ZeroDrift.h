@@ -28,7 +28,7 @@ struct ZeroDriftResult {
   uint16_t capacity;
   uint32_t elapsedSeconds;      // of the last sample
   uint16_t intervalSeconds;
-  float ambient, gas, chip;     // C, of the last sample (NAN when missing)
+  float ambient, gas;           // C, of the last sample (NAN when missing)
   float current, pressure;      // mA and mbar (not clipped), of the last sample
   float ambientMin, ambientMax; // C, whole run
   float gasMin, gasMax;

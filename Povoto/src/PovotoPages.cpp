@@ -1025,7 +1025,7 @@ static String curveText(const VentModel::Curve &curve) {
   char when[20];
   formatLocalEpochISO(curve.epoch, when, sizeof(when));
   return String("tau(P) = k / psi(P), k ") + String(curve.k, 3) + " s, beta " + String(curve.beta, 4) +
-    " (100 L of air, 20 &deg;C), measured " + String(curve.pMin, 2) + "-" + String(curve.pMax, 2) + " bar, " +
+    " (100 L of air, 20 &deg;C), " +
     (when[0] ? String("test of ") + when : String("default: tests of 22/10/2026"));
 }
 
@@ -1055,17 +1055,13 @@ static String flowCurveFieldsHtml() {
   formatLocalEpochISO(c.epoch, source, sizeof(source));
 
   String html = "<div class='form-group'><label>Flow curve</label><div style='" + row + "'>tau(P) = k / psi(P): k " +
-    curveInput("ventK", c.k, 3, 100) + " s, beta " + curveInput("ventBeta", c.beta, 4, 100) + "</div>"
-    "<div style='" + row + "'>measured from " + curveInput("ventPMin", c.pMin, 3, 70) + " to " +
-    curveInput("ventPMax", c.pMax, 3, 70) + " bar</div>";
+    curveInput("ventK", c.k, 3, 100) + " s, beta " + curveInput("ventBeta", c.beta, 4, 100) + "</div>";
   if (last) {
     html += "<div style='" + row + "'><small>Last test (" + (when[0] ? when : "no time") + "): k " + num(s.curve.k, 3) +
       " s, beta " + num(s.curve.beta, 4) + ", " + num(s.curve.pMin, 3) + "-" + num(s.curve.pMax, 3) + " bar</small>"
       "<button type='button' class='btn-use' onclick=\"" +
       "document.getElementById('ventK').value='" + num(s.curve.k, 3) + "';" +
-      "document.getElementById('ventBeta').value='" + num(s.curve.beta, 4) + "';" +
-      "document.getElementById('ventPMin').value='" + num(s.curve.pMin, 3) + "';" +
-      "document.getElementById('ventPMax').value='" + num(s.curve.pMax, 3) + "'\">Use last test curve</button></div>";
+      "document.getElementById('ventBeta').value='" + num(s.curve.beta, 4) + "'\">Use last test curve</button></div>";
   }
   html += "</div><ul>"
     "<li>tau(P) is the time constant of the absolute pressure of 100 L of air at 20 &deg;C, with P in bar (gauge): "
@@ -1228,7 +1224,6 @@ static String ventingTestSectionHtml() {
     "<li>After the start pressure, it repeats at 1.9 (when at least 0.15 bar below the start), 1.5, 1.1, 0.8, 0.5 and "
     "0.25 bar; a long opening steps down between levels.</li>"
     "<li>It takes about 2 h 15 min.</li>"
-    "<li>Vents outside the pressure range of the saved curve are flagged.</li>"
     "<li>Result: flow curve of the valve and its outlet (k, beta).</li></ul>";
   if (ventingTestActive()) {
     html += "<p><b>" + ventingTestProgressText() + "</b></p><form action='/calibration/venting/abort' method='POST'>"
@@ -1483,8 +1478,7 @@ static String zeroDriftSectionHtml() {
     " samples (one every " + String(r.intervalSeconds) + " s).</p>"
     "<table class='grid'><tr><th></th><th>now</th><th>min</th><th>max</th></tr>"
     "<tr><td>Ambient C</td><td>" + num(r.ambient, 2) + "</td><td>" + num(r.ambientMin, 2) + "</td><td>" + num(r.ambientMax, 2) + "</td></tr>"
-    "<tr><td>Tank C</td><td>" + num(r.gas, 2) + "</td><td>" + num(r.gasMin, 2) + "</td><td>" + num(r.gasMax, 2) + "</td></tr>"
-    "<tr><td>Chip C</td><td>" + num(r.chip, 1) + "</td><td></td><td></td></tr></table>"
+    "<tr><td>Tank C</td><td>" + num(r.gas, 2) + "</td><td>" + num(r.gasMin, 2) + "</td><td>" + num(r.gasMax, 2) + "</td></tr></table>"
     "<p>Current " + num(r.current, 4) + " mA, reading " + num(r.pressure, 1) + " mbar (not clipped).</p>"
     "<table class='grid'><tr><th>Fit against</th><th>n</th><th>range C</th><th>mbar/C</th><th>&plusmn;</th>"
     "<th>zero at C</th><th>R&sup2;</th><th>sd mbar</th><th>over range mbar</th></tr>";
@@ -1818,13 +1812,17 @@ void handleCalibrationDataUpdate(AsyncWebServerRequest *request) {
     const float postedK = value("ventK", curve.k), postedBeta = value("ventBeta", curve.beta);
     if (moved(curve.k, postedK, 6e-4f)) { curve.k = postedK; curveChanged = true; }
     if (moved(curve.beta, postedBeta, 6e-5f)) { curve.beta = postedBeta; curveChanged = true; }
-    const float postedMin = value("ventPMin", curve.pMin), postedMax = value("ventPMax", curve.pMax);
-    if (moved(curve.pMin, postedMin, 6e-4f)) { curve.pMin = postedMin; curveChanged = true; }
-    if (moved(curve.pMax, postedMax, 6e-4f)) { curve.pMax = postedMax; curveChanged = true; }
     if (curveChanged) {
+      // The measured range is only a record of the test: it comes with the last test's k and beta
+      // ("Use last test curve"); a typed curve keeps the range it had.
+      VentingTestSummary s;
+      if (ventingTestHistoryCount() > 0 && getVentingTestSummary(0, s) && s.fitted && VentModel::validCurve(s.curve) &&
+          !moved(s.curve.k, curve.k, 6e-4f) && !moved(s.curve.beta, curve.beta, 6e-5f)) {
+        curve.pMin = s.curve.pMin;
+        curve.pMax = s.curve.pMax;
+      }
       if (!VentModel::validCurve(curve)) {
-        request->send(400, "text/plain", "Invalid flow curve: k between 1 and 10000 s, beta between 0.001 and 1000, "
-                      "the measured range 0 to 4 bar (upper above lower).");
+        request->send(400, "text/plain", "Invalid flow curve: k between 1 and 10000 s, beta between 0.001 and 1000.");
         return;
       }
       if (SetPointData.mode == MODE_FERMENTING) {
@@ -1845,8 +1843,7 @@ void handleCalibrationDataUpdate(AsyncWebServerRequest *request) {
   if (curveChanged) {
     FMTData.ventCurve = curve;
     char details[160];
-    snprintf(details, sizeof(details), "typed on the page: k %.3f s, beta %.4f, %.3f-%.3f bar", curve.k,
-             curve.beta, curve.pMin, curve.pMax);
+    snprintf(details, sizeof(details), "typed on the page: k %.3f s, beta %.4f", curve.k, curve.beta);
     calibrationEventAppend("flow-curve-edited", details);
   }
   if (request->hasParam("nucleationWindow", true)) {
