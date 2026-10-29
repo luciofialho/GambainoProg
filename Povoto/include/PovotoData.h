@@ -76,6 +76,7 @@ struct FMTData_t {
   float maxSetPointPressure;   // highest pressure set point accepted (NVS maxSetPress)
   float lastExpTankVolume;     // last expansion tank volume typed on the fermenter volume routine (NVS lastExpTankVol)
   int   nucleationWindow;
+  bool adaptiveTemperature; // Optional anticipatory control; learned state is RAM-only.
   HeaterCycle_t heater;
   CoolingCyclePoint_t coolingCycle[3]; // Fixed rows: 20, 10 and 0 degrees C.
   // ROM address of the Dallas thermometer of each role (DALLAS_ROLE_*),

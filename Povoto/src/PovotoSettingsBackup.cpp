@@ -79,6 +79,7 @@ String savePovotoSettingsBackup() {
   appendNumber(json, "maxSetPointPressure", FMTData.maxSetPointPressure, 6);
   appendNumber(json, "lastExpTankVolume", FMTData.lastExpTankVolume, 6);
   appendNumber(json, "nucleationWindow", FMTData.nucleationWindow, 0);
+  appendBool(json, "adaptiveTemperature", FMTData.adaptiveTemperature);
   appendBool(json, "heaterEnabled", FMTData.heater.enabled);
   appendNumber(json, "heaterOnMinutes", FMTData.heater.onMinutes, 6);
   appendNumber(json, "heaterOffMinutes", FMTData.heater.offMinutes, 6);
@@ -262,6 +263,7 @@ bool loadPovotoSettingsBackup(const String &settings) {
       !isValidMaxSetPointPressure(loadedFmt.maxSetPointPressure, loadedFmt.maximumPressure) ||
       !(loadedFmt.lastExpTankVolume > 0.0f)) return false;
   READ_BACKUP_INT("nucleationWindow", loadedFmt.nucleationWindow);
+  READ_BACKUP_BOOL("adaptiveTemperature", loadedFmt.adaptiveTemperature);
   READ_BACKUP_BOOL("heaterEnabled", loadedFmt.heater.enabled);
   READ_BACKUP_FLOAT("heaterOnMinutes", loadedFmt.heater.onMinutes);
   READ_BACKUP_FLOAT("heaterOffMinutes", loadedFmt.heater.offMinutes);

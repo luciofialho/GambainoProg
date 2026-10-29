@@ -470,6 +470,7 @@ que define o valor.
 |---|---|---|
 | Thermometers: fermentador, ambiente, headspace | Qual sonda Dallas tem cada papel; a do headspace é opcional | "Rescan bus" e atribuição; intercalibração das sondas (P2) |
 | Cooling cycle: tempo ligado e de descanso em 20, 10 e 0 °C | Cadência do chiller conforme a temperatura | Ajustado ao equipamento e à instalação |
+| Adaptive temperature control | Antecipa acionamento/corte do frio em °C, respeitando cortes e tempos originais; reaprende a cada alvo; diagnóstico `/temperaturestatus` | Opcional, desabilitado por padrão; [controle adaptativo](adaptive-temperature.md) |
 | Heating cycle: habilitar, tempo ligado e de descanso | Cadência do aquecedor | Ajustado ao equipamento e à instalação |
 
 ### CO2 dissolvido (Calibration)

@@ -9,6 +9,9 @@
 #include "GambainoCommon.h"
 #include "PressureControl.h"
 #include "DallasSensors.h"
+#include "AdaptiveTemperature.h"
+
+static AdaptiveTemperature::Controller adaptiveTemperature;
 
 
 
@@ -105,6 +108,7 @@ unsigned long int holdPressureDueToTemperatureRelays() {
 }
 
 void resetChillHeatCycle() {
+  adaptiveTemperature.reset(true);
   mode = FMTIDLE;
   ChillHeatMode = FMTIDLE;
   lastModeChange = 1; // 1 is to avoid immediate mode change at startup due to invalid initial value
@@ -394,6 +398,18 @@ void temperatureControl() {
   updateTemperatureStability();
 
 
+  const bool adaptiveEligible =
+      (SetPointData.mode == MODE_FERMENTING || SetPointData.mode == MODE_CONDITIONING ||
+       SetPointData.mode == MODE_MANUAL) && SetPointData.setPointSlowTemp == NOTaTEMP &&
+      ControlData.chillerOverride == 0 && ControlData.heaterOverride == 0 &&
+      isfinite(dallasTemperature) && dallasTemperature != NOTaTEMP &&
+      dallasTemperature != 85 && dallasTemperature != -127 &&
+      SetPointData.setPointTemp != NOTaTEMP;
+  const auto relayState = digitalRead(PINHEATER) ? AdaptiveTemperature::Heating :
+      digitalRead(PINCHILLER) ? AdaptiveTemperature::Cooling : AdaptiveTemperature::Idle;
+  adaptiveTemperature.observe(millis(), ControlData.temperature, SetPointData.setPointTemp,
+      FMTData.adaptiveTemperature, adaptiveEligible, relayState, interruptedCooling);
+  bool anticipatedStop = false;
   newMode = mode;
 
   if (ControlData.temperature == NOTaTEMP || SetPointData.setPointTemp == NOTaTEMP) {
@@ -414,9 +430,11 @@ void temperatureControl() {
     if (SetPointData.setPointSlowTemp != NOTaTEMP && ControlData.temperature > SetPointData.setPointSlowTemp)
       minTarget -= FMTOFFSET;
     
+    const float adaptiveUpper = adaptiveTemperature.onThreshold(maxTarget, minTarget);
+    const float adaptiveLower = adaptiveTemperature.offThreshold(minTarget, maxTarget);
     switch (mode) {
       case FMTIDLE: {
-        if (ControlData.temperature > maxTarget  || (ControlData.temperature>minTarget && interruptedCooling)) {
+        if (ControlData.temperature > adaptiveUpper  || (ControlData.temperature>minTarget && interruptedCooling)) {
           if (!millisOverflowWindow && MILLISPAST(nextModeChange)) {
             newMode = FMTCHILL;
           }
@@ -438,7 +456,8 @@ void temperatureControl() {
         const float heatRestartThreshold = SetPointData.setPointTemp -
             heatRestartAlpha * FMTOFFSET;
         if (newMode != FMTCHILL && FMTData.heater.enabled &&
-            ControlData.temperature < heatRestartThreshold) {
+            ControlData.temperature < heatRestartThreshold &&
+            adaptiveTemperature.allowHeat(millis(), ControlData.temperature, SetPointData.setPointTemp)) {
           if (lastModeChange==0 || (!millisOverflowWindow && MILLISPAST(nextModeChange))) // anti boucing Constante
             newMode = FMTHEAT; 
         }
@@ -446,7 +465,8 @@ void temperatureControl() {
       }
 
       case FMTCHILL: 
-        if (ControlData.temperature <= minTarget) {
+        if (ControlData.temperature <= adaptiveLower) {
+          anticipatedStop = ControlData.temperature > minTarget;
           newMode = FMTIDLE;
           interruptedCooling = false;
         }
@@ -475,6 +495,8 @@ void temperatureControl() {
   }
 
   if (newMode != mode) {
+    if (mode == FMTCHILL && newMode == FMTIDLE)
+      adaptiveTemperature.coolingStopped(millis(), anticipatedStop);
     ;Serial.print(millis()); Serial.print(": Mode change from "); Serial.print(mode==FMTIDLE ? "IDLE" : (mode==FMTCHILL ? "CHILL" : "HEAT")); Serial.print(" to "); Serial.println(newMode==FMTIDLE ? "IDLE" : (newMode==FMTCHILL ? "CHILL" : "HEAT"));
     if (newMode == FMTCHILL || newMode == FMTHEAT) {
       interruptedCooling = false;
@@ -575,6 +597,20 @@ void temperatureControl() {
     else
       digitalWrite(PINLEDHEATER, LOW);
   }
+}
+
+void getAdaptiveTemperatureStatus(char *out, size_t size) {
+  snprintf(out, size,
+      "Adaptive temperature control: %s\nState: %s\n"
+      "Learned residual drop: %.3f C (%u observations)\n"
+      "Learned startup rise: %.3f C (%u observations)\n"
+      "Center correction: %.3f C\nTrend: %s (%.4f C/min)\n"
+      "A target change discards learning. Existing cooling cutoffs and rest times remain limits.\n",
+      FMTData.adaptiveTemperature ? "enabled" : "disabled",
+      adaptiveTemperature.active() ? (adaptiveTemperature.learning() ? "learning" : "regulating") : "waiting",
+      adaptiveTemperature.drop(), unsigned(adaptiveTemperature.dropSamples()),
+      adaptiveTemperature.rise(), unsigned(adaptiveTemperature.riseSamples()), adaptiveTemperature.center(),
+      adaptiveTemperature.trendKnown() ? "confirmed" : "unknown", adaptiveTemperature.velocity());
 }
 
 char *getTemperatureControlStatus(char *st) {

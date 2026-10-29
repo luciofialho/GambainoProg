@@ -4,6 +4,11 @@ Each read...FromEEPROM/write...ToNIV function directly calls Preferences
 get/put methods. Each independent value has its own key. There are no field
 registration tables or access dispatch functions.
 
+`FMTData.adaptiveTemperature` is the boolean key `adaptiveTemp` in pvt_settings
+(default false). JSON backup field: `adaptiveTemperature`; an older backup
+keeps the current option. Learned response, center and trend are RAM-only,
+never an NVS blob. See docs/adaptive-temperature.md.
+
 FMTData.heater contains enabled, onMinutes and offMinutes and is stored as one
 blob. FMTData.coolingCycle is also one blob. Counters are individual values;
 totalMolsEjected and CO2InSolution use getDouble/putDouble (8 bytes).

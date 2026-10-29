@@ -424,6 +424,11 @@ void setup() {
   server.on("/factoryreset", HTTP_POST, handleFactoryReset);
   server.on("/getstatus", HTTP_GET, handlePovotoStatus);
   server.on("/ventstatus", HTTP_GET, handleVentStatus);
+  server.on("/temperaturestatus", HTTP_GET, [](AsyncWebServerRequest *request) {
+    char status[768];
+    getAdaptiveTemperatureStatus(status, sizeof(status));
+    request->send(200, "text/plain; charset=utf-8", status);
+  });
   server.on("/restart", HTTP_GET, ESPRestart);
   povotoWiFiRegisterRoutes();
 

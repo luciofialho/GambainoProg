@@ -36,6 +36,7 @@ FMTData_t FMTData = {
   .maxSetPointPressure = 2.0f,
   .lastExpTankVolume = 2.0f,
   .nucleationWindow = 30,
+  .adaptiveTemperature = false,
   .heater = {true, 0.5f, 2.0f},
   .coolingCycle = {{30.0f, 15.0f}, {20.0f, 10.0f}, {5.0f, 8.0f}},
   .dallasAddress = {}
@@ -154,6 +155,7 @@ bool readFMTDataFromEEPROM() {
   if (!isValidPovotoNumber(FMTData.PovotoNum)) FMTData.PovotoNum = defaultFMTData.PovotoNum;
   FMTData.googleLogEnabled = store.getBool("gLogOn", defaultFMTData.googleLogEnabled);
   FMTData.debugMode = store.getBool("debugMode", defaultFMTData.debugMode);
+  FMTData.adaptiveTemperature = store.getBool("adaptiveTemp", defaultFMTData.adaptiveTemperature);
   FMTData.FMTVolume = store.getFloat("volume", defaultFMTData.FMTVolume);
   if (!isfinite(FMTData.FMTVolume)) FMTData.FMTVolume = defaultFMTData.FMTVolume;
   FMTData.FMTAltitude = store.getFloat("altitude", defaultFMTData.FMTAltitude);
@@ -222,6 +224,7 @@ bool writeFMTDataToNIV() {
   saved = (store.putUChar("number", FMTData.PovotoNum) == sizeof(FMTData.PovotoNum)) && saved;
   saved = (store.putBool("gLogOn", FMTData.googleLogEnabled) == sizeof(uint8_t)) && saved;
   saved = (store.putBool("debugMode", FMTData.debugMode) == sizeof(uint8_t)) && saved;
+  saved = (store.putBool("adaptiveTemp", FMTData.adaptiveTemperature) == sizeof(uint8_t)) && saved;
   saved = (store.putFloat("volume", FMTData.FMTVolume) == sizeof(FMTData.FMTVolume)) && saved;
   saved = (store.putFloat("altitude", FMTData.FMTAltitude) == sizeof(FMTData.FMTAltitude)) && saved;
   saved = (store.putInt("logInterval", FMTData.dataLogIntervalSeconds) == sizeof(FMTData.dataLogIntervalSeconds)) && saved;

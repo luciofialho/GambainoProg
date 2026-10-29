@@ -811,6 +811,12 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
     strncat(html, buffer, BUFFER_SIZE - strlen(html) - 1);
   }
   strncat(html, "</tbody></table>", BUFFER_SIZE - strlen(html) - 1);
+  strncat(html, "<input type='hidden' name='adaptiveConfig' value='1'>"
+    "<p><label><input type='checkbox' name='adaptiveTemperature' value='1'", BUFFER_SIZE - strlen(html) - 1);
+  if (FMTData.adaptiveTemperature) strncat(html, " checked", BUFFER_SIZE - strlen(html) - 1);
+  strncat(html, "> Adaptive temperature control</label><br>"
+    "Learns temperature overshoot at each target. Keeps the existing cooling cutoffs and rest times."
+    " <a href='/temperaturestatus'>Learning status</a></p>", BUFFER_SIZE - strlen(html) - 1);
   strncat(html, "<hr><h2>Heating cycle</h2><input type='hidden' name='heaterConfig' value='1'>"
     "<table style='width:100%;table-layout:fixed'><tbody><tr><td style='text-align:center'>"
     "<label><input type='checkbox' name='enableHeater' value='1'",
@@ -932,6 +938,9 @@ void handleFMTDataUpdate(AsyncWebServerRequest *request) {
   if (request->hasParam("heaterConfig", true))
     FMTData.heater.enabled = request->hasParam("enableHeater", true) &&
       request->getParam("enableHeater", true)->value() == "1";
+  if (request->hasParam("adaptiveConfig", true))
+    FMTData.adaptiveTemperature = request->hasParam("adaptiveTemperature", true) &&
+      request->getParam("adaptiveTemperature", true)->value() == "1";
   FMTData.heater.onMinutes = heaterOn;
   FMTData.heater.offMinutes = heaterOff;
   memcpy(FMTData.coolingCycle, cooling, sizeof(cooling));

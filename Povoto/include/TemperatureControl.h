@@ -15,6 +15,7 @@ float headspaceTemperature(); // NAN without a valid headspace thermometer
 bool fermenterThermometerAlarmActive(); // target set, no fermenter thermometer (docs/thermometers.md)
 String describeFermenterThermometer();  // several lines, for the alarm e-mail
 void resetChillHeatCycle();
+void getAdaptiveTemperatureStatus(char *out, size_t size);
 char *getTemperatureModeLabel();
 char *getTemperatureControlStatus(char *st);
 unsigned long int holdPressureDueToTemperatureRelays();
