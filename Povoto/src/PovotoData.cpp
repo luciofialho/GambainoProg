@@ -29,6 +29,9 @@ FMTData_t FMTData = {
   .pressure0Current = 4.5,
   .pressure1Bar = 0.5,
   .pressure1Current = 8.5,
+  .pressure0Celsius = NAN,
+  .pressure1Celsius = NAN,
+  .pressureDriftSlope = 0.0f,
   .maximumPressure = 2.3f,
   .maxSetPointPressure = 2.0f,
   .lastExpTankVolume = 2.0f,
@@ -130,6 +133,12 @@ bool readFMTDataFromEEPROM() {
   if (!isfinite(FMTData.pressure1Bar)) FMTData.pressure1Bar = defaultFMTData.pressure1Bar;
   FMTData.pressure1Current = store.getFloat("p1Current", defaultFMTData.pressure1Current);
   if (!isfinite(FMTData.pressure1Current)) FMTData.pressure1Current = defaultFMTData.pressure1Current;
+  FMTData.pressure0Celsius = store.getFloat("p0Celsius", NAN);
+  if (!isValidPressureCelsius(FMTData.pressure0Celsius)) FMTData.pressure0Celsius = NAN;
+  FMTData.pressure1Celsius = store.getFloat("p1Celsius", NAN);
+  if (!isValidPressureCelsius(FMTData.pressure1Celsius)) FMTData.pressure1Celsius = NAN;
+  FMTData.pressureDriftSlope = store.getFloat("driftSlope", 0.0f);
+  if (!isValidPressureDriftSlope(FMTData.pressureDriftSlope)) FMTData.pressureDriftSlope = 0.0f;
   FMTData.maximumPressure = store.getFloat("maxPressure", defaultFMTData.maximumPressure);
   if (!isValidMaximumPressure(FMTData.maximumPressure)) FMTData.maximumPressure = defaultFMTData.maximumPressure;
   FMTData.maxSetPointPressure = store.getFloat("maxSetPress", defaultFMTData.maxSetPointPressure);
@@ -225,6 +234,9 @@ bool writeFMTDataToNIV() {
   saved = (store.putFloat("p0Current", FMTData.pressure0Current) == sizeof(FMTData.pressure0Current)) && saved;
   saved = (store.putFloat("p1Bar", FMTData.pressure1Bar) == sizeof(FMTData.pressure1Bar)) && saved;
   saved = (store.putFloat("p1Current", FMTData.pressure1Current) == sizeof(FMTData.pressure1Current)) && saved;
+  saved = (store.putFloat("p0Celsius", FMTData.pressure0Celsius) == sizeof(FMTData.pressure0Celsius)) && saved;
+  saved = (store.putFloat("p1Celsius", FMTData.pressure1Celsius) == sizeof(FMTData.pressure1Celsius)) && saved;
+  saved = (store.putFloat("driftSlope", FMTData.pressureDriftSlope) == sizeof(FMTData.pressureDriftSlope)) && saved;
   saved = (store.putFloat("maxPressure", FMTData.maximumPressure) == sizeof(FMTData.maximumPressure)) && saved;
   saved = (store.putFloat("maxSetPress", FMTData.maxSetPointPressure) == sizeof(FMTData.maxSetPointPressure)) && saved;
   saved = (store.putFloat("lastExpTankVol", FMTData.lastExpTankVolume) == sizeof(FMTData.lastExpTankVolume)) && saved;

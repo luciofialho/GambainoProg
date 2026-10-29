@@ -1,3 +1,4 @@
+#include "PovotoAttention.h"
 #include "UI.h"
 #include "ProcVar.h"
 //#include <WiFi.h>
@@ -932,6 +933,7 @@ char * getGambainoStatus(char *st) {
   snprintf(buf,199,"<br>SPIFFS use: %i/%i bytes<br>",SPIFFS.usedBytes(),SPIFFS.totalBytes());
   strnncat(st,buf,MAXSTATUSLEN);
 
+  povotoAttentionStatus(st, MAXSTATUSLEN);
   strnncat(st, getRecentAlertsHtml(smallBuf, sizeof(smallBuf)), MAXSTATUSLEN);
 
   yield();
@@ -1289,10 +1291,7 @@ void sound_Attention()
     beep(eH, 130);  
     delay(5);
     beep(aH, 40);  
-    if (!Led2.asBoolean()) {
-      Led2 = ON;
-      Led2.setWithDelay(OFF,3);    
-    }
+    requestAttentionLed(3000, true);
   }
 }
 

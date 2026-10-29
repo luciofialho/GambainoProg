@@ -25,6 +25,8 @@ static unsigned long startMillis = 0, durationMs = 0, lastSampleMillis = 0, last
 static float *sampleCurrent = nullptr;
 static uint32_t *sampleMillis = nullptr; // since the start
 static uint16_t sampleCapacity = 0, sampleCount = 0, rejectedSamples = 0;
+static double celsiusSum = 0.0;  // ambient temperature of the samples that have it
+static uint16_t celsiusCount = 0;
 static SensorZeroResult resultZero = {};
 static SensorZeroResult resultB = {};
 
@@ -101,6 +103,8 @@ static bool startRoutine(RoutineKind routine, float minutes, float reference, ch
   lastSampleMillis = 0;
   lastAcquisition = pressureAcquisitionMillis();
   sampleCount = rejectedSamples = 0;
+  celsiusSum = 0.0;
+  celsiusCount = 0;
   (routine == KIND_POINT_B ? resultB : resultZero) = {};
   abortRequested = false;
   active = true;
@@ -195,12 +199,17 @@ static void finishSensorZero() {
     result.sdCurrent = float(sqrt(fmax(0.0, (sumSquares - sum * mean) / (n - 1.0))));
     result.blockAmplitude = blockMax - blockMin;
     result.trend = float(slopePerMinute * result.minutes);
-    result.storedCurrent = kind == KIND_POINT_B ? FMTData.pressure1Current : FMTData.pressure0Current;
+    // Ambient temperature: the mean, when at least half of the samples have it.
+    result.celsius = celsiusCount * 2 >= sampleCount ? float(celsiusSum / celsiusCount) : NAN;
+    // The stored point moved to that temperature by the drift compensation (as stored without it).
+    result.storedCurrent = kind == KIND_POINT_B
+        ? FMTData.pressure1Current + pressureThermalShiftMilliamp(FMTData.pressure1Celsius, result.celsius)
+        : FMTData.pressure0Current + pressureThermalShiftMilliamp(FMTData.pressure0Celsius, result.celsius);
     result.difference = result.meanCurrent - result.storedCurrent;
     result.barPerMilliamp = barPerMilliamp();
     if (kind == KIND_POINT_B) {
       result.referenceBar = referenceBar;
-      result.readingBar = convertCurrentToPressureUnclipped(result.meanCurrent);
+      result.readingBar = convertCurrentToPressureAt(result.meanCurrent, result.celsius);
     }
     const float mbar = result.barPerMilliamp * 1000.0f;
     result.stable = rejectedSamples <= sampleCount / 20 &&
@@ -241,6 +250,11 @@ void processSensorZero() {
       sampleCurrent[sampleCount] = currentReading;
       sampleMillis[sampleCount] = now - startMillis;
       ++sampleCount;
+      const float t = pressureCompensationCelsius();
+      if (isfinite(t)) {
+        celsiusSum += t;
+        ++celsiusCount;
+      }
     } else {
       ++rejectedSamples;
     }
@@ -259,10 +273,16 @@ bool saveSensorZero(char *reason, size_t reasonSize) {
     snprintf(reason, reasonSize, "Mode must be OFF");
     return false;
   }
-  // An offset of the transmitter or of the shunt is additive: every
-  // calibration current moves by the same amount and the gain is kept.
-  const float shift = result.meanCurrent - FMTData.pressure0Current;
-  FMTData.pressure0Current += shift;
+  if (pressureCompensationConfigured() && !isfinite(result.celsius)) {
+    snprintf(reason, reasonSize, "No ambient temperature during the test (the drift compensation needs it)");
+    return false;
+  }
+  // An offset of the transmitter or of the shunt is additive: every calibration current moves by
+  // the same amount and the gain is kept. The difference is that left after the drift compensation;
+  // point A becomes the mean current at the temperature of the test.
+  const float shift = result.difference;
+  FMTData.pressure0Current = result.meanCurrent;
+  FMTData.pressure0Celsius = result.celsius;
   FMTData.pressure1Current += shift;
   if (!writeFMTDataToNIV()) {
     snprintf(reason, reasonSize, "Could not save to NVS");
@@ -271,8 +291,8 @@ bool saveSensorZero(char *reason, size_t reasonSize) {
   result.saved = true;
   result.canSave = false;
   char details[160];
-  snprintf(details, sizeof(details), "shift %+.4f mA (%+.2f mbar); sd %.2f mbar; trend %+.2f mbar; %.1f min",
-           shift, shift * result.barPerMilliamp * 1000.0f, result.sdCurrent * result.barPerMilliamp * 1000.0f,
+  snprintf(details, sizeof(details), "shift %+.4f mA (%+.2f mbar) at %.2f C; sd %.2f mbar; trend %+.2f mbar; %.1f min",
+           shift, shift * result.barPerMilliamp * 1000.0f, result.celsius, result.sdCurrent * result.barPerMilliamp * 1000.0f,
            result.trend * result.barPerMilliamp * 1000.0f, result.minutes);
   calibrationEventAppend("sensor-zero", details);
   return true;
@@ -293,13 +313,20 @@ bool saveSensorPointB(char *reason, size_t reasonSize) {
     snprintf(reason, reasonSize, "Point B needs a current above point A and a reference above 0.5 bar and below the security pressure");
     return false;
   }
-  // The reference manometer defines point B: its pressure and the mean current.
+  if (pressureCompensationConfigured() && !isfinite(result.celsius)) {
+    snprintf(reason, reasonSize, "No ambient temperature during the test (the drift compensation needs it)");
+    return false;
+  }
+  // The reference manometer defines point B: its pressure, the mean current and the temperature.
   const float previousBar = FMTData.pressure1Bar, previousCurrent = FMTData.pressure1Current;
+  const float previousCelsius = FMTData.pressure1Celsius;
   FMTData.pressure1Bar = result.referenceBar;
   FMTData.pressure1Current = result.meanCurrent;
+  FMTData.pressure1Celsius = result.celsius;
   if (!writeFMTDataToNIV()) {
     FMTData.pressure1Bar = previousBar;
     FMTData.pressure1Current = previousCurrent;
+    FMTData.pressure1Celsius = previousCelsius;
     snprintf(reason, reasonSize, "Could not save to NVS");
     return false;
   }
@@ -307,8 +334,8 @@ bool saveSensorPointB(char *reason, size_t reasonSize) {
   result.canSave = false;
   char details[200];
   snprintf(details, sizeof(details),
-           "B %.4f mA at %.3f bar (was %.4f mA at %.3f bar; line read %+.2f mbar); sd %.2f mbar; trend %+.2f mbar; %.1f min",
-           result.meanCurrent, result.referenceBar, previousCurrent, previousBar,
+           "B %.4f mA at %.3f bar, %.2f C (was %.4f mA at %.3f bar; line read %+.2f mbar); sd %.2f mbar; trend %+.2f mbar; %.1f min",
+           result.meanCurrent, result.referenceBar, result.celsius, previousCurrent, previousBar,
            (result.readingBar - result.referenceBar) * 1000.0f, result.sdCurrent * result.barPerMilliamp * 1000.0f,
            result.trend * result.barPerMilliamp * 1000.0f, result.minutes);
   calibrationEventAppend("sensor-point-b", details);

@@ -107,3 +107,12 @@ Schema 2 merges calibration fields into FMTData/pvt_settings. The retired
 pvt_calib namespace is cleared on schema change, with no migration. The
 pressure conversion is a straight line through points A and B; the keys `p2Bar` and `p2Current` of the former third
 point are no longer read or written and stay in NVS, unused.
+The zero drift compensation adds `p0Celsius` and `p1Celsius` (reference
+temperatures of points A and B, NAN = unknown) and `driftSlope` (mbar/C, 0 =
+off); missing keys read as unknown and off (docs/pressure-sensor-zero.md).
+
+External health monitoring uses the separate namespace `pvt_health`: `boot`
+(uint32) is incremented once per startup and is never reset by ordinary mode
+or batch changes. SideKick and BrewCore keep their own monitoring snapshots in
+`sk_health` and `pvt_attention`; see [sidekick-health.md](sidekick-health.md).
+Erasing this boot counter requires reconciling the SideKick record before reuse.

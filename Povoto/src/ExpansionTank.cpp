@@ -24,19 +24,20 @@ static constexpr float TANK_STABLE_SLOPE_BAR_PER_MIN = 0.0003f; // 0.3 mbar/min
 static constexpr unsigned long TANK_SLOPE_WINDOW_MS = 120000UL;
 static constexpr unsigned long TANK_AVERAGE_MS = 10000UL;
 // P2 is logged at these times after the valve opens (pressure, fermenter and ambient temperature)
-static constexpr uint8_t TANK_CHECKPOINTS = 5;
-static constexpr unsigned long TANK_CHECKPOINT_S[TANK_CHECKPOINTS] = {30, 60, 120, 180, 300};
+static constexpr uint8_t TANK_CHECKPOINTS = 6;
+static constexpr unsigned long TANK_CHECKPOINT_S[TANK_CHECKPOINTS] = {30, 60, 120, 180, 300, 480};
 // P1 is logged at these times after the valve closed (the wait of the fermenter starts then, during the vent of the tank):
 // only logged, the calculation uses the P1 at the end of the wait (docs/expansion-tank-volume.md)
 static constexpr uint8_t TANK_P1_CHECKPOINTS = 4;
 static constexpr unsigned long TANK_P1_CHECKPOINT_S[TANK_P1_CHECKPOINTS] = {60, 120, 180, 300};
 static unsigned long tankWaitMinMs() { return debugging ? 10000UL : 120000UL; }
 // P2 is read at a fixed time after the valve opens; longer waits only accumulate drift. The thermal
-// recovery after the opening has a time constant of 60-90 s, so at 300 s a tail of 0.3-1 mbar is left: P2 is the
-// asymptote of an exponential fitted to the checkpoints (docs/expansion-tank-volume.md). The relief is not stable if
-// that tail is above TANK_OPEN_TAIL_BAR or if the pressure fell by more than TANK_OPEN_DRIFT_BAR between 180 s and 300 s.
-static constexpr unsigned long TANK_OPEN_WAIT_MS = 300000UL;
-static constexpr float TANK_OPEN_TAIL_BAR = 0.001f;
+// recovery after the opening has a time constant of 55-85 s (a tail of 0.5-1 mbar was left at 300 s), so P2 is read at
+// 480 s: the asymptote of an exponential fitted to the checkpoints (docs/expansion-tank-volume.md). The relief is not
+// stable if that tail is above TANK_OPEN_TAIL_BAR or if the pressure fell by more than TANK_OPEN_DRIFT_BAR between the
+// last two checkpoints (300 s and 480 s).
+static constexpr unsigned long TANK_OPEN_WAIT_MS = 480000UL;
+static constexpr float TANK_OPEN_TAIL_BAR = 0.0003f;
 static constexpr float TANK_OPEN_DRIFT_BAR = 0.001f;
 static constexpr float TANK_OPEN_MAX_TAIL_BAR = 0.003f; // a larger tail is not believed: the fit is not used
 static unsigned long tankWaitMaxMs() { return debugging ? 30000UL : 900000UL; }
@@ -59,9 +60,10 @@ struct TankRelief {
   // solenoid noise window), when it happened (s after opening) and how many were seen.
   float pMin, tMin;
   uint16_t openSamples;
-  float p2Fit, tail, tau; // asymptote of the checkpoints (bar), its distance from the 300 s value (bar), time constant (s); NAN without a fit
+  float p2Fit, tail, tau; // asymptote of the checkpoints (bar), its distance from the last checkpoint (bar), time constant (s); NAN without a fit
   float cp1P[TANK_P1_CHECKPOINTS], cp1Tf[TANK_P1_CHECKPOINTS]; // checkpoints of the P1 wait: 10-s mean pressure (gauge) and fermenter temperature (K)
   float cal0Current, calBCurrent, calBBar; // the pressure line in use at the P1 (zero mA, point B mA and bar): documents what the readings mean
+  float calDriftMbar; // zero drift taken off the readings at the P1 by the compensation (0 = none)
 };
 static void clearCheckpoints(TankRelief &k) {
   for (uint8_t i = 0; i < TANK_CHECKPOINTS; ++i) k.cpP[i] = k.cpTf[i] = k.cpTe[i] = NAN;
@@ -255,7 +257,7 @@ static bool fitOpenAsymptote(TankRelief &k) {
   for (double tau = 20.0; tau <= 300.0; tau += 5.0) {
     double sx = 0, sxx = 0, sy = 0, sxy = 0;
     for (uint8_t i = 0; i < TANK_CHECKPOINTS; ++i) {
-      const double x = exp(-(double)TANK_CHECKPOINT_S[i] / tau), y = (k.cpP[i] - ref) * 1000.0; // mbar around the 300 s value
+      const double x = exp(-(double)TANK_CHECKPOINT_S[i] / tau), y = (k.cpP[i] - ref) * 1000.0; // mbar around the last checkpoint
       sx += x; sxx += x * x; sy += y; sxy += x * y;
     }
     const double n = TANK_CHECKPOINTS, den = n * sxx - sx * sx;
@@ -270,7 +272,7 @@ static bool fitOpenAsymptote(TankRelief &k) {
     if (sse < bestSse) { bestSse = sse; bestA = a; bestTau = tau; }
   }
   if (!isfinite(bestSse)) return false;
-  const float tail = float(bestA / 1000.0); // asymptote minus the 300 s value
+  const float tail = float(bestA / 1000.0); // asymptote minus the last checkpoint
   if (!(tail >= 0.0f && tail <= TANK_OPEN_MAX_TAIL_BAR)) return false;
   k.tail = tail;
   k.tau = (float)bestTau;
@@ -278,14 +280,14 @@ static bool fitOpenAsymptote(TankRelief &k) {
   return true;
 }
 
-// P2: fixed wait (bench boards keep the short slope wait of the simulation). Stable: the tail left at 300 s is small
-// (or, without a fit, the pressure moved little between 180 s and 300 s) and the pressure did not fall.
+// P2: fixed wait (bench boards keep the short slope wait of the simulation). Stable: the tail left at the last checkpoint is small
+// (or, without a fit, the pressure moved little between the last two checkpoints) and the pressure did not fall.
 static bool openWaitDone(TankRelief &k, bool &settled) {
   if (debugging) return waitDone(settled);
   settled = false;
   if (wait->count == 0 || wait->lastSampleElapsed() < TANK_OPEN_WAIT_MS) return false;
-  const bool haveCheckpoints = isfinite(k.cpP[3]) && isfinite(k.cpP[4]);
-  const float change = haveCheckpoints ? k.cpP[4] - k.cpP[3] : NAN;
+  const bool haveCheckpoints = isfinite(k.cpP[TANK_CHECKPOINTS - 2]) && isfinite(k.cpP[TANK_CHECKPOINTS - 1]);
+  const float change = haveCheckpoints ? k.cpP[TANK_CHECKPOINTS - 1] - k.cpP[TANK_CHECKPOINTS - 2] : NAN;
   if (fitOpenAsymptote(k)) settled = k.tail <= TANK_OPEN_TAIL_BAR && change > -TANK_OPEN_DRIFT_BAR;
   else settled = haveCheckpoints && fabsf(change) < TANK_OPEN_DRIFT_BAR;
   return true;
@@ -372,6 +374,9 @@ void processExpansionTank() {
     k.cal0Current = FMTData.pressure0Current;
     k.calBCurrent = FMTData.pressure1Current;
     k.calBBar = FMTData.pressure1Bar;
+    const float driftCelsius = pressureCompensationCelsius();
+    k.calDriftMbar = pressureCompensationConfigured() && isfinite(driftCelsius)
+        ? FMTData.pressureDriftSlope * (driftCelsius - FMTData.pressure0Celsius) : 0.0f;
     k.p2Fit = k.tail = k.tau = NAN;
     k.epoch = NTPEpoch();
     k.p1 = wait->mean(TANK_AVERAGE_MS);
@@ -543,7 +548,7 @@ void handleExpansionTankCSV(AsyncWebServerRequest *request) {
   const double weightSum = stableWeightSum(snap);
   String csv = "relief;date_time;tank_L;P1_bar;P2_bar;T_ferm1_C;T_ferm2_C;T_tank1_C;T_tank2_C;patm1_bar;patm2_bar;"
                "wait_P1_s;wait_P2_s;vent_s;settled_P1;settled_P2;V_fermenter_L;V_simple_L";
-  // P2 wait checkpoints: pressure, fermenter and ambient temperature at 30, 60, 120, 180 and 300 s after opening
+  // P2 wait checkpoints: pressure, fermenter and ambient temperature at 30, 60, 120, 180, 300 and 480 s after opening
   for (uint8_t c = 0; c < TANK_CHECKPOINTS; ++c) csv += ";P2_" + String(TANK_CHECKPOINT_S[c]) + "s_bar";
   for (uint8_t c = 0; c < TANK_CHECKPOINTS; ++c) csv += ";Tferm_" + String(TANK_CHECKPOINT_S[c]) + "s_C";
   for (uint8_t c = 0; c < TANK_CHECKPOINTS; ++c) csv += ";Tenv_" + String(TANK_CHECKPOINT_S[c]) + "s_C";
@@ -551,7 +556,8 @@ void handleExpansionTankCSV(AsyncWebServerRequest *request) {
   // P1 wait checkpoints: pressure and fermenter temperature at 60, 120, 180 and 300 s after the valve closed
   for (uint8_t c = 0; c < TANK_P1_CHECKPOINTS; ++c) csv += ";P1_" + String(TANK_P1_CHECKPOINT_S[c]) + "s_bar";
   for (uint8_t c = 0; c < TANK_P1_CHECKPOINTS; ++c) csv += ";Tferm_P1_" + String(TANK_P1_CHECKPOINT_S[c]) + "s_C";
-  csv += ";p0_mA;pB_mA;pB_bar;weight;build\n"; // weight: share of (P1 - P2)^2 among the stable reliefs (0 = not in the mean)
+  // weight: share of (P1 - P2)^2 among the stable reliefs (0 = not in the mean); drift_mbar: calDriftMbar
+  csv += ";p0_mA;pB_mA;pB_bar;weight;drift_mbar;build\n";
   auto add = [&csv](float v, int d) {
     if (isfinite(v)) {
       String t(v, (unsigned int)d);
@@ -582,6 +588,7 @@ void handleExpansionTankCSV(AsyncWebServerRequest *request) {
     for (uint8_t c = 0; c < TANK_P1_CHECKPOINTS; ++c) add(k.cp1Tf[c] - 273.15f, 2);
     add(k.cal0Current, 4); add(k.calBCurrent, 4); add(k.calBBar, 4);
     add(reliefStable(k) && weightSum > 0.0 ? float(((double)k.p1 - k.p2) * ((double)k.p1 - k.p2) / weightSum) : 0.0f, 4);
+    add(k.calDriftMbar, 2);
     csv += BUILD_ID;
     csv += '\n';
   }

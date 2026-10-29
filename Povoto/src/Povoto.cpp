@@ -9,6 +9,8 @@
 #include "displayUtils.h"
 #include "Povoto_UI.h"
 #include "GambainoCommon.h"
+#include "HealthProtocol.h"
+#include "PovotoHealth.h"
 #include <user_setup.h>
 #include "PovotoData.h"
 #include "PovotoPages.h"
@@ -99,7 +101,7 @@ const char *resetReasonToString(esp_reset_reason_t reason); // IOTK_ESPAsyncServ
 void handlePovotoStatus(AsyncWebServerRequest *request) {
   char uptime[16];
   snprintf(webStatusBuffer, sizeof(webStatusBuffer),
-    "Povoto<br>Build: %s<br>Network: %s<br>Signal strength: %d (uptime: %s)<br>Reset reason: %s<br>",
+    "Povoto<br>Build: %s<br>Network: %s<br>RSSI: %d (uptime: %s)<br>Reset: %s<br>",
     BUILD_ID,
     WiFi.status() == WL_CONNECTED ? WiFi.SSID().c_str() : "not connected",
     WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0, formatedUptime(uptime),
@@ -112,10 +114,10 @@ char * getPovotoStatus(char *st) {
   char smallBuf[100] = "Implementar";
   NTPFormatedDateTime(smallBuf);
   
-  snprintf(buf,199,"<BR>System time: %s<BR>",smallBuf);
+  snprintf(buf,199,"<BR>Time: %s<BR>",smallBuf);
   strnncat(st,buf,MAXSTATUSLEN);
 
-  snprintf(buf,199,"<BR>Debugging mode: %s<br>",debugging ? "ON" : "OFF");
+  snprintf(buf,199,"<BR>Debug: %s<br>",debugging ? "ON" : "OFF");
   strnncat(st,buf,MAXSTATUSLEN);
 
   const size_t webTotal = povotoWebFS().totalBytes();
@@ -123,10 +125,10 @@ char * getPovotoStatus(char *st) {
   const size_t dataTotal = povotoDataFS().totalBytes();
   const size_t dataUsed = povotoDataFS().usedBytes();
   snprintf(buf, sizeof(buf),
-           "<b>LittleFS web:</b> %u / %u bytes used (%u free)<br>"
-           "<b>LittleFS data:</b> %u / %u bytes used (%u free)%s<br>"
-           "<b>PSRAM:</b> %u / %u bytes used (%u free; largest free block %u)<br>"
-           "<b>Graph history:</b> %u points<br>",
+           "FS web: %u / %u B used (%u free)<br>"
+           "FS data: %u / %u B used (%u free)%s<br>"
+           "PSRAM: %u / %u B used (%u free; largest block %u)<br>"
+           "Graph: %u points<br>",
            unsigned(webUsed), unsigned(webTotal), unsigned(webTotal >= webUsed ? webTotal - webUsed : 0),
            unsigned(dataUsed), unsigned(dataTotal), unsigned(dataTotal >= dataUsed ? dataTotal - dataUsed : 0),
            povotoHasSeparateDataFS() ? "" : " (shared with web)",
@@ -155,22 +157,22 @@ char * getPovotoStatus(char *st) {
 
   // Window type and end time
   if (taskWindowType == 0) {
-    strnncat(st, "<br><b>Window:</b> none<br>", MAXSTATUSLEN);
+    strnncat(st, "<br>Window: none<br>", MAXSTATUSLEN);
   } else {
     static const char *taskLabels[] = { "", "Dump", "Gas venting/injection", "Liquid addition", "Dry hopping", "Dynamic hopping" };
     const char *label = (taskWindowType <= 5) ? taskLabels[taskWindowType] : "Unknown";
-    snprintf(buf, 199, "<br><b>Window type:</b> %d (%s)<br>", taskWindowType, label);
+    snprintf(buf, 199, "<br>Window: %d (%s)<br>", taskWindowType, label);
     strnncat(st, buf, MAXSTATUSLEN);
   }
   if (taskWindowEndTime == 0) {
-    strnncat(st, "<b>Window end time:</b> 0 (expired)<br>", MAXSTATUSLEN);
+    strnncat(st, "Window end: 0 (expired)<br>", MAXSTATUSLEN);
   } else {
     unsigned long now = millis();
     if (taskWindowEndTime > now) {
       long secsLeft = (long)((taskWindowEndTime - now) / 1000UL);
-      snprintf(buf, 199, "<b>Window end time:</b> %lu ms (in %ld s)<br>", taskWindowEndTime, secsLeft);
+      snprintf(buf, 199, "Window end: %lu ms (in %ld s)<br>", taskWindowEndTime, secsLeft);
     } else {
-      snprintf(buf, 199, "<b>Window end time:</b> %lu ms (expired)<br>", taskWindowEndTime);
+      snprintf(buf, 199, "Window end: %lu ms (expired)<br>", taskWindowEndTime);
     }
     strnncat(st, buf, MAXSTATUSLEN);
   }
@@ -179,7 +181,7 @@ char * getPovotoStatus(char *st) {
     char maxWhen[20] = "", slowWhen[20] = "";
     if (loopMaxEpoch) formatLocalEpochISO(loopMaxEpoch, maxWhen, sizeof(maxWhen));
     if (loopLastSlowEpoch) formatLocalEpochISO(loopLastSlowEpoch, slowWhen, sizeof(slowWhen));
-    snprintf(buf, 199, "<br><b>Loop:</b> longest pass %lu ms (%s); %lu over %lu ms",
+    snprintf(buf, 199, "<br><b>Loop:</b> max %lu ms (%s); %lu over %lu ms",
              loopMaxMs, maxWhen[0] ? maxWhen : "-", (unsigned long)loopSlowCount, LOOP_SLOW_MS);
     strnncat(st, buf, MAXSTATUSLEN);
     if (loopSlowCount) {
@@ -188,6 +190,9 @@ char * getPovotoStatus(char *st) {
     }
     strnncat(st, "<br>", MAXSTATUSLEN);
   }
+
+  povotoHealthStatus(buf, 199);
+  strnncat(st, buf, MAXSTATUSLEN);
 
   // Estado atual dos pinos digitais
   snprintf(buf, 199,
@@ -200,7 +205,10 @@ char * getPovotoStatus(char *st) {
 }
 
 static void handlePovotoEspNow(char type, const char *payload) {
-  if (type == TRANSFERSTARTPACKET) {
+  if (type == HEALTH_ACK_PACKET) {
+    povotoHealthAck(payload, espNowSenderMac());
+  }
+  else if (type == TRANSFERSTARTPACKET) {
     // payload: "batchNum,inoculationTemp"
     char buf[32];
     strncpy(buf, payload, 31);
@@ -567,6 +575,7 @@ void loop() {
     resetDisplayHardware();
   }
 
+  povotoHealthProcess(); // Main control loop progress, never a background heartbeat.
   processPovotoAlarms(); // sensor alarms: beeps, error screen, LEDs (docs/alarms.md)
 
   { // buzzer do alarme: liga por 1s a cada acionamento de soundAlarm;

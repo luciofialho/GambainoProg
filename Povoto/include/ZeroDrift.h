@@ -7,7 +7,7 @@
 // Thermal drift of the pressure sensor zero (docs/zero-drift.md): with the fermenter open to the atmosphere
 // the real gauge pressure is zero, so any change of the reading is the sensor. The test logs the INA226 current
 // and the temperatures once a minute, in the PSRAM, until it is stopped or the memory is full (7 days), and
-// fits the reading against the ambient temperature and against the fermenter gas temperature (least squares).
+// fits the reading against the ambient temperature (least squares). The fermenter gas temperature is only in the CSV.
 
 struct ZeroDriftFit {
   bool valid;         // enough samples and temperature span
@@ -28,11 +28,10 @@ struct ZeroDriftResult {
   uint16_t capacity;
   uint32_t elapsedSeconds;      // of the last sample
   uint16_t intervalSeconds;
-  float ambient, gas;           // C, of the last sample (NAN when missing)
+  float ambient;                // C, of the last sample (NAN when missing)
   float current, pressure;      // mA and mbar (not clipped), of the last sample
   float ambientMin, ambientMax; // C, whole run
-  float gasMin, gasMax;
-  ZeroDriftFit byAmbient, byGas;
+  ZeroDriftFit byAmbient;
 };
 
 bool startZeroDrift(char *reason, size_t reasonSize);

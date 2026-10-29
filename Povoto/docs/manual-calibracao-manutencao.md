@@ -22,7 +22,7 @@ Regras gerais:
 - Navegação: `http://<ip>/menu` é o menu (o antigo `/config` redireciona para ele; o ícone de menu do
   dashboard e o QR da TFT abrem o menu). Toda página aberta do menu volta para o menu em Save e em Cancel;
   as ações de rotina da Calibration (Start, Abort, Save zero, Save curve, Save as new FMT volume)
-  voltam para a aba da própria rotina (`/calibration?tab=sensor|volume|vent|physical`).
+  voltam para a aba da própria rotina (`/calibration?tab=pressure|volume|vent|physical`).
 - Onde ficam os campos: **Fermenter settings** (botão "Fermenter Settings" do menu) — FMT volume, Povoto Number (0–99), Maximum security pressure (acima de 2,0 e até 2,3 bar; o sensor lê bem até esse
   limite), Maximum pressure setpoint (até 2,0 bar e abaixo da pressão de segurança; nenhum setpoint de
   pressão, nem de regra ou da nuvem, passa dele), Target drop of the gauge pressure per vent (1–15%), altitude, Cooling cycle, Heating cycle,
@@ -225,7 +225,7 @@ mudança na saída (garrafa, silenciador); qualquer suspeita sobre a válvula.
 5. O ensaio alterna durações (2, 0,5, 8, 1, 4, 2 s) em patamares do topo até
    **abaixo da menor pressão de fermentação usada** (com fermentações a 0,3 bar,
    o último patamar fica em ~0,25 bar), com uma abertura longa entre eles; mede o tempo real
-   de cada abertura e grava cada liberação no histórico (~55–65 min). Não mexa
+   de cada abertura e grava cada liberação no histórico (~90–100 min). Não mexa
    no equipamento. Durante o ensaio, "Current test CSV" baixa as liberações já concluídas
    (arquivo `Incomplete-...`).
 6. Resultado: curva τ(P) = k/ψ_ef(P) (válvula + saída), resíduo de forma, deriva
@@ -683,18 +683,19 @@ de estabilidade). O resultado é a média dos reliefs estáveis.
 | patm1_bar / patm2_bar | Pressão atmosférica em P1 e em P2 |
 | wait_P1_s / wait_P2_s | Espera até a pressão estabilizar antes de P1 e de P2 |
 | vent_s | Tempo ventilando o tanque depois do relief |
-| settled_P1 / settled_P2 | `yes` se a pressão estava estável: em P1, inclinação < 0,3 mbar/min (mínimo de 2 min); em P2, cauda da recuperação térmica estimada aos 300 s depois de abrir a válvula ≤ 1 mbar e sem queda de mais de 1 mbar entre 180 s e 300 s. `no` exclui o relief da média |
+| settled_P1 / settled_P2 | `yes` se a pressão estava estável: em P1, inclinação < 0,3 mbar/min (mínimo de 2 min); em P2, cauda da recuperação térmica estimada aos 480 s depois de abrir a válvula ≤ 0,3 mbar e sem queda de mais de 1 mbar entre 300 s e 480 s. `no` exclui o relief da média |
 | V_fermenter_L | Volume do fermentador pelo balanço completo de mols |
 | V_simple_L | Pela fórmula simples V = V_tanque · P2/(P1 − P2), com a razão de temperaturas |
-| P2_30s_bar … P2_300s_bar | Pressão (média de 10 s) aos 30, 60, 120, 180 e 300 s depois de abrir a válvula |
+| P2_30s_bar … P2_480s_bar | Pressão (média de 10 s) aos 30, 60, 120, 180, 300 e 480 s depois de abrir a válvula |
 | Tferm_*s_C / Tenv_*s_C | Temperatura do fermentador e ambiente nos mesmos instantes |
 | Pmin_open_bar | Menor pressão lida com a válvula aberta (cada leitura nova, já filtrada pela mediana e depois dos 400 ms de ruído da solenoide) |
 | t_Pmin_s | Instante dessa menor leitura, em segundos depois de abrir |
 | open_samples | Quantas leituras novas entraram nessa conta |
 | P1_60s_bar … P1_300s_bar / Tferm_P1_*s_C | Pressão (média de 10 s) e temperatura do fermentador do P1 do relief, aos 60, 120, 180 e 300 s depois de fechar a válvula do relief anterior (a espera do P1 conta desde esse instante, durante a ventilação do tanque; vazio nos instantes que a espera não alcançou). Só registro: o cálculo usa o P1 do fim da espera |
-| P2_tail_mbar / P2_tau_s | Cauda que faltava aos 300 s (assíntota do ajuste exponencial menos a leitura aos 300 s) e a constante de tempo do ajuste. `P2_bar` é a assíntota (vazio nas duas colunas = sem ajuste, `P2_bar` é a média dos últimos 10 s) |
+| P2_tail_mbar / P2_tau_s | Cauda que faltava aos 480 s (assíntota do ajuste exponencial menos a leitura aos 480 s) e a constante de tempo do ajuste. `P2_bar` é a assíntota (vazio nas duas colunas = sem ajuste, `P2_bar` é a média dos últimos 10 s) |
 | p0_mA / pB_mA / pB_bar | A reta do sensor de pressão em uso no P1 do relief: corrente do ponto A (zero), corrente e pressão do ponto B. Mostram se o zero ou o ponto B mudaram entre ensaios (a corrente bruta de cada leitura se recupera por `I = p0 + P · (pB_mA − p0) / pB_bar`) |
 | weight | Peso do relief na média do ensaio: (P1 − P2)² dividido pela soma desses valores nos reliefs estáveis (0 = fora da média). A média e o desvio da página e o "Save as new FMT volume" usam essa ponderação (`docs/expansion-tank-volume.md`) |
+| drift_mbar | Deriva térmica do zero tirada das leituras no P1 pela compensação (0 = sem compensação; `docs/pressure-sensor-zero.md`) |
 | build | Identificação do firmware que gerou a linha: `aammdd-hhmm-xxxxxxxx` (data e hora da última alteração dos fontes e hash dos fontes). Dois arquivos com o mesmo valor vêm do mesmo código. Aparece também nos CSVs do teste de perda e do teste de ventilação, nos eventos de calibração (`[build ...]`), na página Calibration (rodapé, com o commit do git) e na serial ao ligar (`[BUILD]`) |
 
 Como ler `Pmin_open_bar`: com a válvula aberta a pressão do fermentador cai de forma

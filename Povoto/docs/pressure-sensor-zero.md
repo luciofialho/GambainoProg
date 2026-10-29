@@ -1,6 +1,6 @@
 # Zero do sensor de pressão
 
-Código: `src/SensorZero.cpp`; página Calibration, seção "Sensor zero".
+Código: `src/SensorZero.cpp`; página Calibration, aba **Pressure**, seção "Sensor zero".
 Procedimento de operação: `docs/manual-calibracao-manutencao.md`, P1.
 
 ## Por que pela corrente
@@ -35,8 +35,13 @@ mesma curva de calibração sem o corte.
 - Aquecimento (transmissor e INA226): a página orienta manter a placa ligada há pelo menos 30 min.
   O firmware não mede nem exige: quem calibra é responsável por isso (um reinício por OTA não
   esfria a placa, e o relógio de boot não saberia).
-- **"Save zero"** desloca `pressure0Current` e `pressure1Current` pela mesma diferença (um desvio de zero do
-  transmissor ou do shunt é aditivo: o ganho fica). Nada é gravado sem o botão;
+- A rotina registra a média da temperatura ambiente (a da compensação, abaixo; vazia se menos da metade das
+  amostras a tiver). Com a compensação ativa, o zero gravado é levado a essa temperatura antes da diferença:
+  a diferença mostrada é só o que a deriva térmica não explica.
+- **"Save zero"**: `pressure0Current` passa a ser a corrente média e `pressure0Celsius` a temperatura média;
+  `pressure1Current` se desloca pela mesma diferença (um desvio de zero do transmissor ou do shunt é aditivo:
+  o ganho fica; `pressure1Celsius` não muda). Com a compensação ativa e sem temperatura no ensaio, não grava.
+  Nada é gravado sem o botão;
   o mesmo resultado não é gravado duas vezes. A gravação entra nos eventos de
   calibração.
 
@@ -56,12 +61,35 @@ pressão sem corte ficam no `/getstatus`. O ponto B se mede com a rotina "Point 
   ligada há pelo menos 30 min: orientação na página, sem bloqueio.
 - Resultado: corrente média, desvio, amplitude, tendência, a pressão que a reta gravada lê nessa
   corrente contra a referência (mbar) e a diferença da corrente em relação ao ponto B gravado.
-- **"Save point B"**: a pressão de referência e a corrente média passam a ser `pressure1Bar` e
-  `pressure1Current` (exige corrente acima do ponto A e referência acima de 0,5 bar e abaixo da pressão
+- **"Save point B"**: a pressão de referência, a corrente média e a temperatura ambiente média passam a ser
+  `pressure1Bar`, `pressure1Current` e `pressure1Celsius` (exige corrente acima do ponto A e referência acima de 0,5 bar e abaixo da pressão
   de segurança). Nada é gravado sem o botão; o mesmo resultado não é gravado duas vezes; evento
   `sensor-point-b`. Faça o zero antes: o Save zero desloca os dois pontos.
 - A incerteza do ganho passa a ser a do manômetro de referência. Um ganho constante também é absorvido
   pela curva do ensaio de ventilação e pela SG.
+
+## Compensação da deriva térmica do zero
+
+Última seção da aba Pressure. O zero do sensor deriva com a temperatura ambiente (FMT1, 27/10: −7,5 mbar/°C,
+desvio dos resíduos 0,8 mbar, sem atraso mensurável: deslocar ou filtrar a temperatura só piora o ajuste).
+O ganho não é compensado.
+
+- Campos: temperatura de referência dos pontos A e B (`pressure0Celsius`, `pressure1Celsius`; vazio =
+  desconhecida), na terceira coluna ao lado da corrente, e a deriva `pressureDriftSlope` (mbar/°C, 0 = sem
+  compensação). Os três são editáveis; as rotinas de zero e de ponto B gravam as temperaturas, e o botão
+  "Use test slope" copia a inclinação do ensaio de deriva (`docs/zero-drift.md`) para o campo (grava com Save).
+- Conversão (`convertCurrentToPressureAt`): cada ponto é levado da sua temperatura de referência à
+  temperatura ambiente T, deslocando a corrente em `s / 1000 × (I_B − I_A) / P_B × (T − T_ponto)` mA; a
+  reta passa pelos dois pontos deslocados. Com os pontos em temperaturas diferentes o ganho sai dos dois
+  levados à mesma temperatura.
+- Ativa só com a deriva diferente de 0 e as duas temperaturas de referência. O Save recusa deriva sem as duas.
+- T é a temperatura ambiente (Dallas, SideKick ou BrewCore); a última válida vale por 10 min e depois disso a
+  conversão usa a reta gravada (sem compensação) e a página avisa.
+- O alarme do sensor (faixa de corrente) usa a reta gravada: a margem de 1,5 mA cobre a deriva.
+- "Use test slope" só aparece com o ensaio parado, faixa de temperatura ≥ 2 °C, R² ≥ 0,8 e |inclinação| ≥ 3
+  erros-padrão. O erro-padrão supõe resíduos independentes, e as amostras de 1 min são correlacionadas: a
+  faixa e o R² são os critérios que pesam.
+- Mudanças digitadas entram nos eventos (`drift-compensation-edited`).
 
 ## Casas decimais
 

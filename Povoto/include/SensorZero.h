@@ -19,8 +19,9 @@ struct SensorZeroResult {
   float sdCurrent;       // mA
   float blockAmplitude;  // mA, range of the 10-s block means
   float trend;           // mA over the measurement (least-squares slope x duration)
-  float storedCurrent;   // FMTData.pressure0Current (zero) or pressure1Current (point B) at the end
-  float difference;      // mean - stored current, mA
+  float celsius;         // mean ambient temperature, NAN when fewer than half of the samples have it
+  float storedCurrent;   // stored point A (zero) or B current at the end, moved to celsius by the drift compensation
+  float difference;      // mean - stored current, mA (what the drift compensation does not explain)
   float barPerMilliamp;  // slope of the calibration line
   float referenceBar;    // point B: pressure on the reference manometer
   float readingBar;      // point B: pressure of the stored line at the mean current, no clipping
@@ -39,9 +40,9 @@ void processSensorZero();           // main loop, from pressureControl()
 float sensorZeroProgressMinutes();  // elapsed while running
 SensorZeroResult getSensorZeroResult();
 SensorZeroResult getSensorPointBResult();
-// Shifts the two calibration currents by the measured difference (gain kept).
+// Point A := the mean current and temperature; point B moves by the difference (gain kept).
 bool saveSensorZero(char *reason, size_t reasonSize);
-// Point B := the reference pressure and the mean current.
+// Point B := the reference pressure, the mean current and the temperature.
 bool saveSensorPointB(char *reason, size_t reasonSize);
 
 #endif

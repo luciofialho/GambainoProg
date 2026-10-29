@@ -1856,19 +1856,51 @@ static void resetCurrentMedianFilter() {
 
 // Calibration curve without the clipping at zero: below the zero current the
 // result is negative (sensor zero check, docs/pressure-sensor-zero.md).
-float convertCurrentToPressureUnclipped(float current) {
-  float pressure = 0.0f;
-  // Straight line through point A (0 bar at pressure0Current) and point B.
-  const float denom = FMTData.pressure1Current - FMTData.pressure0Current;
-  if (fabsf(denom) > 0.000001f) {
-    float ratio = (current - FMTData.pressure0Current) / denom;
-    pressure = ratio * FMTData.pressure1Bar;
+static constexpr unsigned long PRESSURE_COMPENSATION_HOLD_MS = 600000UL;
+static float compensationCelsius = NAN;
+static unsigned long compensationCelsiusMillis = 0;
+
+// Main loop (readPressure).
+static void updateCompensationCelsius() {
+  const float t = environmentTemp;
+  if (isfinite(t) && t != NOTaTEMP && t > -20.0f && t < 60.0f) {
+    compensationCelsius = t;
+    compensationCelsiusMillis = millis();
+  } else if (isfinite(compensationCelsius) && millis() - compensationCelsiusMillis > PRESSURE_COMPENSATION_HOLD_MS) {
+    compensationCelsius = NAN;
   }
-  return pressure;
+}
+
+float pressureCompensationCelsius() {
+  return compensationCelsius;
+}
+
+bool pressureCompensationConfigured() {
+  return FMTData.pressureDriftSlope != 0.0f && isfinite(FMTData.pressureDriftSlope) &&
+         isfinite(FMTData.pressure0Celsius) && isfinite(FMTData.pressure1Celsius);
+}
+
+// The zero moves by the slope (mbar/C) as current, at the gain of the stored line.
+float pressureThermalShiftMilliamp(float fromCelsius, float toCelsius) {
+  const float span = FMTData.pressure1Current - FMTData.pressure0Current;
+  if (!pressureCompensationConfigured() || !isfinite(fromCelsius) || !isfinite(toCelsius) || !(span > 0.0f) ||
+      !(FMTData.pressure1Bar > 0.0f)) return 0.0f;
+  return FMTData.pressureDriftSlope / 1000.0f * span / FMTData.pressure1Bar * (toCelsius - fromCelsius);
+}
+
+float convertCurrentToPressureAt(float current, float celsius) {
+  // Straight line through point A (0 bar) and point B, each moved from its temperature to celsius.
+  const float zero = FMTData.pressure0Current + pressureThermalShiftMilliamp(FMTData.pressure0Celsius, celsius);
+  const float pointB = FMTData.pressure1Current + pressureThermalShiftMilliamp(FMTData.pressure1Celsius, celsius);
+  const float denom = pointB - zero;
+  return fabsf(denom) > 0.000001f ? (current - zero) / denom * FMTData.pressure1Bar : 0.0f;
+}
+
+float convertCurrentToPressureUnclipped(float current) {
+  return convertCurrentToPressureAt(current, compensationCelsius);
 }
 
 float convertCurrentToPressure(float current) {
-  if (current <= FMTData.pressure0Current) return 0.0f;
   const float pressure = convertCurrentToPressureUnclipped(current);
   return pressure < 0.0f ? 0.0f : pressure;
 }
@@ -1909,6 +1941,7 @@ void readPressure() {
       }
 
       if (!simulatedPressure && !(debugging && currentReading == 0.0f)) {
+        updateCompensationCelsius();
         ControlData.pressure = convertCurrentToPressure(currentReading);
         pressureAcquiredMillis = lastCurrentMedianSampleMillis;
         pressureAcquisitionValid = isfinite(ControlData.pressure);

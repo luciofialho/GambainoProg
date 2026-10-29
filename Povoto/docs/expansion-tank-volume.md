@@ -25,18 +25,19 @@ volume da época do TE com um tanque simples (sem pesagem), sem os tempos fixos
      180 e 300 s depois do fechamento, a pressão (média de 10 s) e a temperatura do fermentador
      (colunas `P1_*s_bar` e `Tferm_P1_*s_C` do CSV): só registro, para avaliar a recuperação do P1; o cálculo
      continua usando o P1 do fim da espera.
-  2. **Abre a válvula** (fermentador → tanque) e lê P2 num **tempo fixo de 5 min** (sem critério
+  2. **Abre a válvula** (fermentador → tanque) e lê P2 num **tempo fixo de 8 min** (sem critério
      de inclinação). Depois do mínimo de pressão (10–27 mbar abaixo do valor final, a ~17–27 s) a pressão
      se recupera com constante de tempo de 65–87 s (ensaio de 23/10, sem vazamento; em 21/10 a perda de gás
      escondia a cauda); esperas mais longas só acumulam deriva (reliefs de 766 e 888 s em 21/10).
-     **P2 é a assíntota** de uma exponencial `P(t) = P∞ − A·exp(−t/τ)` ajustada aos 5 checkpoints
-     (30, 60, 120, 180 e 300 s; mínimos quadrados para P∞ e A em cada τ de 20 a 300 s, e o melhor τ):
-     aos 300 s ainda faltam 0,3–1 mbar (0,2–0,9% de volume por mbar, pela amplificação de ~7,7×).
+     **P2 é a assíntota** de uma exponencial `P(t) = P∞ − A·exp(−t/τ)` ajustada aos 6 checkpoints
+     (30, 60, 120, 180, 300 e 480 s; mínimos quadrados para P∞ e A em cada τ de 20 a 300 s, e o melhor τ):
+     aos 300 s ainda faltavam 0,5–1 mbar (28/10, τ de 55–85 s), por isso a leitura passou para 480 s, onde a cauda estimada fica abaixo de 0,1 mbar
+     (0,2–0,9% de volume por mbar, pela amplificação de ~7,7×).
      Sem ajuste possível (checkpoint ausente, A ≤ 0 ou cauda acima de 3 mbar) usa a média dos últimos 10 s.
-     O relief fica "stable: no" (fora da média) se a cauda estimada passar de 1 mbar, ou se a pressão
-     tiver caído mais de 1 mbar entre 180 s e 300 s (sinal de perda). No ensaio de 20/10 a espera de ~2 min
+     O relief fica "stable: no" (fora da média) se a cauda estimada passar de 0,3 mbar, ou se a pressão
+     tiver caído mais de 1 mbar entre 300 s e 480 s (sinal de perda). No ensaio de 20/10 a espera de ~2 min
      (limite de 0,3 mbar/min) subestimava o volume em 1,3–2%. P2, T_F2, T_E2, Patm2. Durante a
-     espera registra, aos 30, 60, 120, 180 e 300 s, a pressão (média de 10 s), a temperatura do
+     espera registra, aos 30, 60, 120, 180, 300 e 480 s, a pressão (média de 10 s), a temperatura do
      fermentador e a ambiente (colunas `P2_*s_bar`, `Tferm_*s_C`, `Tenv_*s_C` do CSV). Registra também a menor pressão lida com a válvula aberta, o instante
      dela e o número de leituras (`Pmin_open_bar`, `t_Pmin_s`, `open_samples`), para avaliar se a
      liberação turbulenta cria uma zona de baixa pressão no sensor.

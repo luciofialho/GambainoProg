@@ -1,12 +1,14 @@
 # Deriva térmica do zero do sensor de pressão
 
-Aba **Drift** da página Calibration. Código: `src/ZeroDrift.cpp`.
+Página Calibration, aba **Pressure**, seção "Temperature drift compensation". Código: `src/ZeroDrift.cpp`.
+A compensação que usa o resultado está em `docs/pressure-sensor-zero.md`.
 
 ## Para que serve
 
 Com o fermentador aberto à atmosfera a pressão manométrica real é zero, então qualquer variação da leitura é do sensor
 (e do laço de 4–20 mA). O ensaio mede essa leitura ao longo de um ou mais dias, com a temperatura variando de verdade,
-e ajusta a leitura contra a temperatura. Na página, a temperatura do gás do fermentador aparece como "Tank" (no CSV é `T_gas_C`). O resultado decide se vale compensar a deriva no firmware e com que entrada.
+e ajusta a leitura, sem a compensação, contra a temperatura ambiente. A temperatura do gás do fermentador fica só
+no CSV (`T_gas_C`). A inclinação pode ir para a compensação ("Use test slope").
 
 Os ensaios de volume de 26/10 pediram, para chegar a 131,312 L, um erro de leitura de −6, +3, +13 e +35 mbar com a
 temperatura ambiente em 20,9, 20,5, 19,6 e 16,8 °C (cerca de 9 mbar/°C), e os quatro pontos medidos em 27/10 deram
@@ -40,8 +42,7 @@ Uma amostra por minuto, média das leituras de 1 s do intervalo:
 
 ## Ajustes mostrados na página
 
-Mínimos quadrados da leitura (mbar) contra a temperatura (°C), duas vezes: contra a ambiente e contra a do gás.
-Cada linha mostra: número de amostras, faixa de temperatura, **inclinação** (mbar/°C), seu erro-padrão, a temperatura em
+Mínimos quadrados da leitura sem compensação (mbar) contra a temperatura ambiente (°C). A tabela mostra: número de amostras, faixa de temperatura, **inclinação** (mbar/°C), seu erro-padrão, a temperatura em
 que a reta cruza zero, R², o desvio-padrão dos resíduos e a variação da reta ao longo da faixa. O ajuste só aparece com
 10 amostras e 0,5 °C de faixa.
 
@@ -54,4 +55,5 @@ temperatura que o sensor realmente sente.
 - A faixa de temperatura do ensaio é o que limita a conclusão: um dia comum varia 3–5 °C.
 - A temperatura ambiente pode vir de outro equipamento (ESP-NOW); se faltar, a coluna fica vazia e o ajuste correspondente
   não aparece.
-- O ensaio não corrige nada: só mede.
+- O ensaio não corrige nada: só mede. A leitura do ensaio (página e CSV) é sempre a da reta gravada, sem a
+  compensação.

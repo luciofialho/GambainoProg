@@ -67,7 +67,12 @@ struct FMTData_t {
   float pressure0Current;
   float pressure1Bar;
   float pressure1Current;
-  float maximumPressure;       // security pressure (valve opens above it)
+  // Thermal drift of the zero (docs/pressure-sensor-zero.md): ambient temperature at points A and B
+  // (NAN = unknown) and the change of the reading per degree, mbar/C (0 = no compensation).
+  float pressure0Celsius;
+  float pressure1Celsius;
+  float pressureDriftSlope;
+  float maximumPressure;      // security pressure (valve opens above it)
   float maxSetPointPressure;   // highest pressure set point accepted (NVS maxSetPress)
   float lastExpTankVolume;     // last expansion tank volume typed on the fermenter volume routine (NVS lastExpTankVol)
   int   nucleationWindow;
@@ -106,6 +111,10 @@ inline bool isValidMaxSetPointPressure(float bar, float securityBar) {
 // Povoto numbers are 0 (not set yet) to 99 (the cloud ids are site * 100 + number).
 inline bool isValidPovotoNumber(int number) { return number >= 0 && number <= 99; }
 inline bool isValidFlowLevelFactor(float factor) { return isfinite(factor) && factor >= 0.5f && factor <= 1.5f; }
+// Reference temperature of a pressure calibration point (ambient, C).
+inline bool isValidPressureCelsius(float celsius) { return isfinite(celsius) && celsius >= -10.0f && celsius <= 50.0f; }
+// Thermal drift of the zero, mbar/C (the sensor of FMT1 drifts about -7.5).
+inline bool isValidPressureDriftSlope(float slope) { return isfinite(slope) && fabsf(slope) <= 50.0f; }
 
 struct UserConfigurationData_t {
   int screensaverTime;

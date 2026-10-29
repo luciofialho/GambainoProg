@@ -129,6 +129,16 @@ bool pressureReadingValid();
 unsigned long pressureAcquisitionMillis();
 float convertCurrentToPressure(float current);          // clipped at zero
 float convertCurrentToPressureUnclipped(float current); // negative below the zero current
+// Thermal compensation of the zero (docs/pressure-sensor-zero.md): the line of points A and B
+// moved to the ambient temperature celsius; NAN gives the line as stored (no compensation).
+// The two functions above use pressureCompensationCelsius().
+float convertCurrentToPressureAt(float current, float celsius);
+// The slope and the reference temperatures of points A and B are set.
+bool pressureCompensationConfigured();
+// Ambient temperature of the compensation: the last valid reading, held 10 min; NAN = none.
+float pressureCompensationCelsius();
+// Change of a calibration current from fromCelsius to toCelsius, mA (0 without compensation).
+float pressureThermalShiftMilliamp(float fromCelsius, float toCelsius);
 void markPressureSetpointChanged(bool slow);
 const char *getPressStateLabel();
 extern float currentReading;

@@ -3,6 +3,7 @@
 
 
 #include "GambainoCommon.h"
+#include "PovotoAttention.h"
 #include "GambainoWiFi.h"
 #include <BrewCoreCommon.h>
 #include <Time.h>
@@ -206,6 +207,7 @@ void setup() {
   
   coredumpDownloadSetup(); 
   initBLEReader();
+  povotoAttentionBegin();
 
   Serial.println("Coredump download setup done. exiting setup().");
 }
@@ -221,7 +223,7 @@ void loop() {
     Serial.print(c);
     Serial.print("): ");
     Serial.println(cmd);
-    if (c==RCCOMMANDPACKET) {
+    if (c==RCCOMMANDPACKET && !povotoAttentionReceive(cmd)) {
       static unsigned long int lastC=0;
       Led1 = ON;
       Led1.setWithDelay(OFF,1);
@@ -235,8 +237,7 @@ void loop() {
               potCleanerWaterIn();
             }
             else {
-              Led2 = ON;
-              Led2.setWithDelay(OFF,1);        
+              requestAttentionLed(1000);
               potCleanerStop();
             }
           break;
@@ -244,8 +245,7 @@ void loop() {
         case 'B':
           if (Status!=STANDBY && Power12VOn.asBoolean()) {
             sound_Beep();
-            Led2 = ON;
-            Led2.setWithDelay(OFF,1);        
+            requestAttentionLed(1000);
             potCleanerWaterOut();
           }
           break;
@@ -318,6 +318,7 @@ void loop() {
 
   checkPerfSentinel("StateMachine and todos");  
 
+  attentionLedProcess();
   ProcVar::writeProcVars();
 
   checkPerfSentinel("WriteProcVars");  

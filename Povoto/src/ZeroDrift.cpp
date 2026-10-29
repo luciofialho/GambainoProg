@@ -54,15 +54,16 @@ static float gasCelsius() {
   return isfinite(t) && t > -20.0f && t < 60.0f ? t : NAN;
 }
 
-static float readingMbar(float current) { return 1000.0f * convertCurrentToPressureUnclipped(current); }
+// The stored line without the drift compensation: the test measures the drift itself.
+static float readingMbar(float current) { return 1000.0f * convertCurrentToPressureAt(current, NAN); }
 
-// Least squares of the reading (mbar) against a temperature (C), over the samples that have it.
-static ZeroDriftFit fit(uint16_t count, bool ambient) {
+// Least squares of the reading (mbar) against the ambient temperature (C), over the samples that have it.
+static ZeroDriftFit fit(uint16_t count) {
   ZeroDriftFit r = {};
   double n = 0, sx = 0, sy = 0;
   float lo = NAN, hi = NAN;
   for (uint16_t i = 0; i < count; ++i) {
-    const float t = ambient ? samples[i].ta : samples[i].tg;
+    const float t = samples[i].ta;
     if (!isfinite(t) || !(samples[i].current > 0.0f)) continue;
     n += 1; sx += t; sy += readingMbar(samples[i].current);
     lo = isfinite(lo) ? min(lo, t) : t;
@@ -75,7 +76,7 @@ static ZeroDriftFit fit(uint16_t count, bool ambient) {
   const double mx = sx / n, my = sy / n;
   double sxx = 0, sxy = 0, syy = 0;
   for (uint16_t i = 0; i < count; ++i) {
-    const float t = ambient ? samples[i].ta : samples[i].tg;
+    const float t = samples[i].ta;
     if (!isfinite(t) || !(samples[i].current > 0.0f)) continue;
     const double dx = t - mx, dy = readingMbar(samples[i].current) - my;
     sxx += dx * dx; sxy += dx * dy; syy += dy * dy;
@@ -105,7 +106,7 @@ ZeroDriftResult getZeroDriftResult() {
   r.samples = count;
   r.capacity = DRIFT_MAX_SAMPLES;
   r.intervalSeconds = (uint16_t)(sampleMs() / 1000UL);
-  r.ambient = r.gas = r.ambientMin = r.ambientMax = r.gasMin = r.gasMax = NAN;
+  r.ambient = r.ambientMin = r.ambientMax = NAN;
   if (!count) return r;
   for (uint16_t i = 0; i < count; ++i) {
     const DriftSample &s = samples[i];
@@ -113,19 +114,13 @@ ZeroDriftResult getZeroDriftResult() {
       r.ambientMin = isfinite(r.ambientMin) ? min(r.ambientMin, s.ta) : s.ta;
       r.ambientMax = isfinite(r.ambientMax) ? max(r.ambientMax, s.ta) : s.ta;
     }
-    if (isfinite(s.tg)) {
-      r.gasMin = isfinite(r.gasMin) ? min(r.gasMin, s.tg) : s.tg;
-      r.gasMax = isfinite(r.gasMax) ? max(r.gasMax, s.tg) : s.tg;
-    }
   }
   const DriftSample &last = samples[count - 1];
   r.elapsedSeconds = last.seconds;
   r.ambient = last.ta;
-  r.gas = last.tg;
   r.current = last.current;
   r.pressure = readingMbar(last.current);
-  r.byAmbient = fit(count, true);
-  r.byGas = fit(count, false);
+  r.byAmbient = fit(count);
   return r;
 }
 
@@ -169,7 +164,6 @@ static void finish(const char *outcome) {
                       f.tMax, f.slope, f.slopeError, f.zeroTemp, f.residual);
     };
     add("ambient", r.byAmbient);
-    add("tank", r.byGas);
     if (strcmp(outcome, "Completed") && n > 0 && n < (int)sizeof(details)) snprintf(details + n, sizeof(details) - n, " (%s)", outcome);
     calibrationEventAppend("zero-drift", details);
     snprintf(statusText, sizeof(statusText), "%s", outcome);
@@ -305,7 +299,7 @@ void handleZeroDriftCSV(AsyncWebServerRequest *request) {
               if (isfinite(s.tg)) snprintf(tg, sizeof(tg), "%.2f", s.tg);
               cursor->used = snprintf(cursor->line, sizeof(cursor->line), "%s;%lu;%s;%s;%.4f;%.4f;%.4f;%.6f;%.4f;%.4f;%.4f;%s\n", when,
                                       (unsigned long)s.seconds, ta, tg, s.current, s.currentMin, s.currentMax,
-                                      convertCurrentToPressureUnclipped(s.current), p0, pb, pbBar, BUILD_ID);
+                                      convertCurrentToPressureAt(s.current, NAN), p0, pb, pbBar, BUILD_ID);
               for (size_t i = 0; i < cursor->used; ++i)
                 if (cursor->line[i] == '.') cursor->line[i] = ','; // decimal comma, as the other calibration files
             } else {

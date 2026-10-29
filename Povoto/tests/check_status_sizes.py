@@ -82,6 +82,7 @@ stability = section(press, "static void appendStabilityStatus(")
 # Appended to the pressure section with the same limit (lines built in line[200]).
 pressure += section(atmospheric, "void appendAtmosphericPressureStatus(")
 own = section(povoto, "char * getPovotoStatus(char *st)") + section(povoto, "void handlePovotoStatus(")
+own += section(read("src/PovotoHealth.cpp"), "void povotoHealthStatus(")
 
 t = sum(w for w, _ in temperature)
 # appendStabilityStatus: one of its three branches, called twice.

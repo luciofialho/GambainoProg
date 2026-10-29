@@ -1,3 +1,4 @@
+#include "PovotoAttention.h"
 #include <stdio.h>
 #include <stdarg.h>
 #include <Arduino.h>
@@ -84,8 +85,7 @@ void internal_say_v(bool alert, const char *format, va_list args) {
       recentAlertPos = 0;
     if (recentAlertCount < RECENT_ALERTS_SIZE)
       recentAlertCount++;
-    Led2 = ON;
-    Led2.setWithDelay(OFF,3);
+    requestAttentionLed(3000);
     if (Status != STANDBY) {
       sound_Attention();
       Buzzer = ON;

@@ -71,6 +71,10 @@ String savePovotoSettingsBackup() {
   appendNumber(json, "pressure0Current", FMTData.pressure0Current, 6);
   appendNumber(json, "pressure1Bar", FMTData.pressure1Bar, 6);
   appendNumber(json, "pressure1Current", FMTData.pressure1Current, 6);
+  // An unknown reference temperature (NAN) has no key: the import keeps the device's value.
+  if (isfinite(FMTData.pressure0Celsius)) appendNumber(json, "pressure0Celsius", FMTData.pressure0Celsius, 3);
+  if (isfinite(FMTData.pressure1Celsius)) appendNumber(json, "pressure1Celsius", FMTData.pressure1Celsius, 3);
+  appendNumber(json, "pressureDriftSlope", FMTData.pressureDriftSlope, 4);
   appendNumber(json, "maximumPressure", FMTData.maximumPressure, 6);
   appendNumber(json, "maxSetPointPressure", FMTData.maxSetPointPressure, 6);
   appendNumber(json, "lastExpTankVolume", FMTData.lastExpTankVolume, 6);
@@ -246,6 +250,10 @@ bool loadPovotoSettingsBackup(const String &settings) {
   READ_BACKUP_FLOAT("pressure0Current", loadedFmt.pressure0Current);
   READ_BACKUP_FLOAT("pressure1Bar", loadedFmt.pressure1Bar);
   READ_BACKUP_FLOAT("pressure1Current", loadedFmt.pressure1Current);
+  READ_BACKUP_FLOAT("pressure0Celsius", loadedFmt.pressure0Celsius);
+  READ_BACKUP_FLOAT("pressure1Celsius", loadedFmt.pressure1Celsius);
+  READ_BACKUP_FLOAT("pressureDriftSlope", loadedFmt.pressureDriftSlope);
+  if (!isValidPressureDriftSlope(loadedFmt.pressureDriftSlope)) return false;
   READ_BACKUP_FLOAT("maximumPressure", loadedFmt.maximumPressure);
   READ_BACKUP_FLOAT("maxSetPointPressure", loadedFmt.maxSetPointPressure);
   READ_BACKUP_FLOAT("lastExpTankVolume", loadedFmt.lastExpTankVolume);

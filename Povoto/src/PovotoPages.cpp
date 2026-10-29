@@ -1109,6 +1109,12 @@ static String ventSettingsHtml() {
   return html;
 }
 
+// Reference temperature of a calibration point (empty = unknown).
+static String pointCelsiusFieldHtml(const char *id, float celsius) {
+  return String("<div class='form-group'><label for='") + id + "'>Ref. temp (&deg;C):</label><input type='number' id='" + id +
+    "' name='" + id + "' form='calForm' value='" + (isfinite(celsius) ? String(celsius, 2) : String()) + "' step='0.01'></div>";
+}
+
 // Pressure sensor: points A and B (a straight line) and the sensor zero
 // routine (docs/pressure-sensor-zero.md).
 static String pressureSensorSectionHtml(float pageCurrentReading, bool usingAverageCurrent) {
@@ -1125,8 +1131,9 @@ static String pressureSensorSectionHtml(float pageCurrentReading, bool usingAver
     "<div class='form-group'><label for='pressure0Current'>Current (mA):</label><div class='input-row'>"
     "<input type='number' id='pressure0Current' name='pressure0Current' form='calForm' value='%.3f' step='0.001'>"
     "<button type='button' class='btn-use' onclick=\"document.getElementById('pressure0Current').value='%.3f'\">Use actual</button>"
-    "</div></div></div>", FMTData.pressure0Current, pageCurrentReading);
+    "</div></div>", FMTData.pressure0Current, pageCurrentReading);
   html += buffer;
+  html += pointCelsiusFieldHtml("pressure0Celsius", FMTData.pressure0Celsius) + "</div>";
   snprintf(buffer, sizeof(buffer),
     "<div class='point-row'><div class='point-caption'>Point B</div><div class='form-group'>"
     "<label for='pressure1Bar'>Pressure (bar):</label>"
@@ -1137,8 +1144,9 @@ static String pressureSensorSectionHtml(float pageCurrentReading, bool usingAver
     "<div class='form-group'><label for='pressure1Current'>Current (mA):</label><div class='input-row'>"
     "<input type='number' id='pressure1Current' name='pressure1Current' form='calForm' value='%.3f' step='0.001'>"
     "<button type='button' class='btn-use' onclick=\"document.getElementById('pressure1Current').value='%.3f'\">Use actual</button>"
-    "</div></div></div>", FMTData.pressure1Current, pageCurrentReading);
+    "</div></div>", FMTData.pressure1Current, pageCurrentReading);
   html += buffer;
+  html += pointCelsiusFieldHtml("pressure1Celsius", FMTData.pressure1Celsius) + "</div>";
 
   const SensorZeroResult r = getSensorZeroResult();
   // The routines start here: a title, the requirements as a centred subtitle, and a line each side.
@@ -1160,9 +1168,10 @@ static String pressureSensorSectionHtml(float pageCurrentReading, bool usingAver
   }
   if (r.available) {
     html += "<p>Mean current " + num(r.meanCurrent, 4) + " mA over " + num(r.minutes, 1) + " min (" + String(r.samples) +
-      " samples); sd " + num(r.sdCurrent * r.barPerMilliamp * 1000.0f, 2) + " mbar; range of 10-s means " +
+      " samples), ambient " + num(r.celsius, 2) + " &deg;C; sd " + num(r.sdCurrent * r.barPerMilliamp * 1000.0f, 2) + " mbar; range of 10-s means " +
       num(r.blockAmplitude * r.barPerMilliamp * 1000.0f, 2) + " mbar; trend " + num(r.trend * r.barPerMilliamp * 1000.0f, 2) +
-      " mbar.<br>Stored zero " + num(r.storedCurrent, 4) + " mA; difference <b>" + (r.difference >= 0 ? "+" : "") +
+      " mbar.<br>Stored zero " + num(r.storedCurrent, 4) + " mA" + (pressureCompensationConfigured() ? " (drift compensated)" : "") +
+      "; difference <b>" + (r.difference >= 0 ? "+" : "") +
       num(r.difference, 4) + " mA = " + (r.difference >= 0 ? "+" : "") + num(r.difference * r.barPerMilliamp * 1000.0f, 2) +
       " mbar</b> (no clipping).</p>";
     if (!r.stable)
@@ -1170,7 +1179,7 @@ static String pressureSensorSectionHtml(float pageCurrentReading, bool usingAver
     if (r.saved) html += "<p>Saved.</p>";
     if (r.canSave)
       html += "<form action='/calibration/zero/save' method='POST'><button>Save zero</button> "
-        "(shifts the two calibration currents by the difference; the gain is kept)</form>";
+        "(point A takes the mean current and the temperature; point B moves by the difference; the gain is kept)</form>";
   }
 
   // Point B: the current at a steady pressure read on the reference manometer.
@@ -1193,18 +1202,19 @@ static String pressureSensorSectionHtml(float pageCurrentReading, bool usingAver
   if (b.available) {
     const float mbar = b.barPerMilliamp * 1000.0f;
     html += "<p>Mean current " + num(b.meanCurrent, 4) + " mA over " + num(b.minutes, 1) + " min (" + String(b.samples) +
-      " samples); sd " + num(b.sdCurrent * mbar, 2) + " mbar; range of 10-s means " + num(b.blockAmplitude * mbar, 2) +
+      " samples), ambient " + num(b.celsius, 2) + " &deg;C; sd " + num(b.sdCurrent * mbar, 2) + " mbar; range of 10-s means " + num(b.blockAmplitude * mbar, 2) +
       " mbar; trend " + num(b.trend * mbar, 2) + " mbar.<br>Reference " + num(b.referenceBar, 3) +
       " bar; the stored line reads <b>" + num(b.readingBar, 3) + " bar</b> at this current (" +
       (b.readingBar >= b.referenceBar ? "+" : "") + num((b.readingBar - b.referenceBar) * 1000.0f, 1) +
-      " mbar).<br>Stored point B " + num(b.storedCurrent, 4) + " mA; difference " + (b.difference >= 0 ? "+" : "") +
+      " mbar).<br>Stored point B " + num(b.storedCurrent, 4) + " mA" + (pressureCompensationConfigured() ? " (drift compensated)" : "") +
+      "; difference " + (b.difference >= 0 ? "+" : "") +
       num(b.difference, 4) + " mA.</p>";
     if (!b.stable)
       html += "<p><b>Unstable reading: pressure not steady, gas flowing or sensor drifting.</b> Check and repeat.</p>";
     if (b.saved) html += "<p>Saved.</p>";
     if (b.canSave)
       html += "<form action='/calibration/pointb/save' method='POST'><button>Save point B</button> "
-        "(point B becomes the reference pressure and the mean current)</form>";
+        "(point B becomes the reference pressure, the mean current and the temperature)</form>";
   }
   return html;
 }
@@ -1454,14 +1464,48 @@ static String holdTestSectionHtml() {
   return html;
 }
 
-// Zero drift tab (docs/zero-drift.md).
-static String zeroDriftSectionHtml() {
+// The test slope can be the compensation: conservative limits (docs/pressure-sensor-zero.md).
+static bool driftSlopeUsable(const ZeroDriftResult &r, const char *&why) {
+  const ZeroDriftFit &f = r.byAmbient;
+  why = nullptr;
+  if (r.running) why = "the test is running";
+  else if (!f.valid) why = "no fit";
+  else if (!(f.tMax - f.tMin >= 2.0f)) why = "temperature range below 2 &deg;C";
+  else if (!(f.r2 >= 0.8f)) why = "R&sup2; below 0.8";
+  else if (!(fabsf(f.slope) >= 3.0f * f.slopeError)) why = "slope within 3 standard errors of zero";
+  else if (!isValidPressureDriftSlope(f.slope)) why = "slope out of range";
+  return !why;
+}
+
+// Last section of the Pressure tab: the compensation and the zero drift test (docs/zero-drift.md).
+static String driftCompensationSectionHtml() {
   const ZeroDriftResult r = getZeroDriftResult();
   auto num = [](float v, int d) { return isfinite(v) ? String(v, d) : String("n/a"); };
-  String html = "<h2>Zero drift</h2><ul>"
+  String html = "<hr><h2>Temperature drift compensation</h2><div class='form-group'><label for='pressureDriftSlope'>"
+    "Zero drift (mbar/&deg;C, 0 = off):</label><div class='input-row'><input type='number' id='pressureDriftSlope' "
+    "name='pressureDriftSlope' form='calForm' value='" + String(FMTData.pressureDriftSlope, 2) + "' step='0.01'>";
+  const char *why = nullptr;
+  if (driftSlopeUsable(r, why))
+    html += "<button type='button' class='btn-use' onclick=\"document.getElementById('pressureDriftSlope').value='" +
+      String(r.byAmbient.slope, 2) + "'\">Use test slope</button>";
+  html += "</div></div>";
+  if (r.available && why) html += "<p>Test slope not usable: " + String(why) + ".</p>";
+  const float t = pressureCompensationCelsius();
+  if (FMTData.pressureDriftSlope == 0.0f) {
+    html += "<p>Off.</p>";
+  } else if (!pressureCompensationConfigured()) {
+    html += "<p><b>Off: points A and B need their reference temperatures.</b></p>";
+  } else if (!isfinite(t)) {
+    html += "<p><b>No ambient temperature: no compensation.</b></p>";
+  } else {
+    html += "<p>Ambient " + num(t, 2) + " &deg;C: " + num(FMTData.pressureDriftSlope * (t - FMTData.pressure0Celsius), 1) +
+      " mbar of zero drift taken off the reading.</p>";
+  }
+
+  html += "<h3>Zero drift test</h3><ul>"
     "<li>With the fermenter open to the atmosphere the real pressure is zero: the change of the reading is the sensor.</li>"
-    "<li>Open the fermenter (mode OFF) and press Start. It logs once a minute until Stop, and fits the reading against the "
-    "ambient and the tank temperature.</li></ul>";
+    "<li>Open the fermenter (mode OFF) and press Start. It logs once a minute until Stop, and fits the reading, without "
+    "the compensation, against the ambient temperature.</li></ul>";
   if (zeroDriftActive()) {
     html += "<form action='/calibration/zerodrift/stop' method='POST'><button>Stop</button></form>";
   } else {
@@ -1474,32 +1518,22 @@ static String zeroDriftSectionHtml() {
     html += "<p><a href='/calibration/zerodrift.csv'>" + String(zeroDriftActive() ? "Current run CSV" : "CSV") + "</a></p>";
   if (!r.available) return html;
   const uint32_t e = r.elapsedSeconds;
+  const ZeroDriftFit &f = r.byAmbient;
   html += "<p>" + String(e / 3600UL) + " h " + String((e / 60UL) % 60UL) + " min logged, " + String(r.samples) +
-    " samples (one every " + String(r.intervalSeconds) + " s).</p>"
-    "<table class='grid'><tr><th></th><th>now</th><th>min</th><th>max</th></tr>"
-    "<tr><td>Ambient C</td><td>" + num(r.ambient, 2) + "</td><td>" + num(r.ambientMin, 2) + "</td><td>" + num(r.ambientMax, 2) + "</td></tr>"
-    "<tr><td>Tank C</td><td>" + num(r.gas, 2) + "</td><td>" + num(r.gasMin, 2) + "</td><td>" + num(r.gasMax, 2) + "</td></tr></table>"
-    "<p>Current " + num(r.current, 4) + " mA, reading " + num(r.pressure, 1) + " mbar (not clipped).</p>"
-    "<table class='grid'><tr><th>Fit against</th><th>n</th><th>range C</th><th>mbar/C</th><th>&plusmn;</th>"
-    "<th>zero at C</th><th>R&sup2;</th><th>sd mbar</th><th>over range mbar</th></tr>";
-  auto row = [&](const char *name, const ZeroDriftFit &f) {
-    html += String("<tr><td>") + name + "</td><td>" + String(f.samples) + "</td>";
-    if (!f.valid) {
-      html += "<td colspan='7'>needs 10 samples and a 0.5 C span</td></tr>";
-      return;
-    }
-    html += "<td>" + num(f.tMin, 1) + " to " + num(f.tMax, 1) + "</td><td>" + num(f.slope, 2) + "</td><td>" + num(f.slopeError, 2) +
-      "</td><td>" + num(f.zeroTemp, 1) + "</td><td>" + num(f.r2, 3) + "</td><td>" + num(f.residual, 2) + "</td><td>" + num(f.spread, 1) + "</td></tr>";
-  };
-  row("Ambient", r.byAmbient);
-  row("Tank", r.byGas);
-  html += "</table>";
+    " samples (one every " + String(r.intervalSeconds) + " s). Ambient " + num(r.ambient, 2) + " &deg;C (" +
+    num(r.ambientMin, 2) + " to " + num(r.ambientMax, 2) + "); current " + num(r.current, 4) + " mA, reading " +
+    num(r.pressure, 1) + " mbar (not clipped).</p>";
+  if (!f.valid) return html + "<p>The fit needs 10 samples and a 0.5 &deg;C span.</p>";
+  html += "<table class='grid'><tr><th>n</th><th>range &deg;C</th><th>mbar/&deg;C</th><th>&plusmn;</th><th>zero at &deg;C</th>"
+    "<th>R&sup2;</th><th>sd mbar</th><th>over range mbar</th></tr><tr><td>" + String(f.samples) + "</td><td>" +
+    num(f.tMin, 1) + " to " + num(f.tMax, 1) + "</td><td>" + num(f.slope, 2) + "</td><td>" + num(f.slopeError, 2) +
+    "</td><td>" + num(f.zeroTemp, 1) + "</td><td>" + num(f.r2, 3) + "</td><td>" + num(f.residual, 2) + "</td><td>" +
+    num(f.spread, 1) + "</td></tr></table>";
   return html;
 }
 
 // Tabs of the Calibration page: where each routine returns to.
-static const char *const CAL_TAB_DRIFT = "/calibration?tab=drift";
-static const char *const CAL_TAB_SENSOR = "/calibration?tab=sensor";
+static const char *const CAL_TAB_PRESSURE = "/calibration?tab=pressure";
 static const char *const CAL_TAB_VOLUME = "/calibration?tab=volume";
 static const char *const CAL_TAB_VENT = "/calibration?tab=vent";
 static const char *const CAL_TAB_LEAKS = "/calibration?tab=leaks";
@@ -1517,15 +1551,15 @@ static void sendCalibrationMessage(AsyncWebServerRequest *request, const char *t
 
 void handleSensorZeroStart(AsyncWebServerRequest *request) {
   if (!request->hasParam("open", true)) {
-    sendCalibrationMessage(request, "Sensor zero not started", "Confirm that the fermenter is open to the atmosphere.", CAL_TAB_SENSOR);
+    sendCalibrationMessage(request, "Sensor zero not started", "Confirm that the fermenter is open to the atmosphere.", CAL_TAB_PRESSURE);
     return;
   }
   char reason[100];
   if (!startSensorZero(reason, sizeof(reason))) {
-    sendCalibrationMessage(request, "Sensor zero not started", reason, CAL_TAB_SENSOR);
+    sendCalibrationMessage(request, "Sensor zero not started", reason, CAL_TAB_PRESSURE);
     return;
   }
-  request->redirect(CAL_TAB_SENSOR);
+  request->redirect(CAL_TAB_PRESSURE);
 }
 
 // Always air, in the fermenter with the configured FMT volume.
@@ -1628,57 +1662,57 @@ void handleHoldTestAbort(AsyncWebServerRequest *request) {
 
 void handleZeroDriftStart(AsyncWebServerRequest *request) {
   if (!request->hasParam("open", true)) {
-    sendCalibrationMessage(request, "Zero drift not started", "Confirm that the fermenter is open to the atmosphere.", CAL_TAB_DRIFT);
+    sendCalibrationMessage(request, "Zero drift not started", "Confirm that the fermenter is open to the atmosphere.", CAL_TAB_PRESSURE);
     return;
   }
   char reason[100];
   if (!startZeroDrift(reason, sizeof(reason))) {
-    sendCalibrationMessage(request, "Zero drift not started", reason, CAL_TAB_DRIFT);
+    sendCalibrationMessage(request, "Zero drift not started", reason, CAL_TAB_PRESSURE);
     return;
   }
-  request->redirect(CAL_TAB_DRIFT);
+  request->redirect(CAL_TAB_PRESSURE);
 }
 
 void handleZeroDriftStop(AsyncWebServerRequest *request) {
   stopZeroDrift();
-  request->redirect(CAL_TAB_DRIFT);
+  request->redirect(CAL_TAB_PRESSURE);
 }
 
 void handleSensorZeroAbort(AsyncWebServerRequest *request) {
   abortSensorZero();
-  request->redirect(CAL_TAB_SENSOR);
+  request->redirect(CAL_TAB_PRESSURE);
 }
 
 void handleSensorZeroSave(AsyncWebServerRequest *request) {
   char reason[100];
   if (!saveSensorZero(reason, sizeof(reason))) {
-    sendCalibrationMessage(request, "Zero not saved", reason, CAL_TAB_SENSOR);
+    sendCalibrationMessage(request, "Zero not saved", reason, CAL_TAB_PRESSURE);
     return;
   }
-  request->redirect(CAL_TAB_SENSOR);
+  request->redirect(CAL_TAB_PRESSURE);
 }
 
 void handleSensorPointBStart(AsyncWebServerRequest *request) {
   if (!request->hasParam("steady", true) || !request->hasParam("reference", true)) {
-    sendCalibrationMessage(request, "Point B not started", "Type the reference pressure and confirm that it has been steady for 5 min.", CAL_TAB_SENSOR);
+    sendCalibrationMessage(request, "Point B not started", "Type the reference pressure and confirm that it has been steady for 5 min.", CAL_TAB_PRESSURE);
     return;
   }
   const float reference = request->getParam("reference", true)->value().toFloat();
   char reason[100];
   if (!startSensorPointB(reference, reason, sizeof(reason))) {
-    sendCalibrationMessage(request, "Point B not started", reason, CAL_TAB_SENSOR);
+    sendCalibrationMessage(request, "Point B not started", reason, CAL_TAB_PRESSURE);
     return;
   }
-  request->redirect(CAL_TAB_SENSOR);
+  request->redirect(CAL_TAB_PRESSURE);
 }
 
 void handleSensorPointBSave(AsyncWebServerRequest *request) {
   char reason[120];
   if (!saveSensorPointB(reason, sizeof(reason))) {
-    sendCalibrationMessage(request, "Point B not saved", reason, CAL_TAB_SENSOR);
+    sendCalibrationMessage(request, "Point B not saved", reason, CAL_TAB_PRESSURE);
     return;
   }
-  request->redirect(CAL_TAB_SENSOR);
+  request->redirect(CAL_TAB_PRESSURE);
 }
 
 void handleCalibrationDataPage(AsyncWebServerRequest *request) {
@@ -1700,7 +1734,7 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
     ".form-group { margin-bottom: 15px; }"
     "label { display: block; margin-bottom: 5px; color: #666; font-weight: bold; }"
     ".input-row { display: flex; gap: 8px; align-items: center; }"
-    ".point-row { display: grid; grid-template-columns: 80px 1fr 1.35fr; gap: 12px; align-items: end; }"
+    ".point-row { display: grid; grid-template-columns: 64px 0.9fr 1.35fr 0.8fr; gap: 10px; align-items: end; }"
     ".point-row > .form-group { margin-bottom: 15px; } .point-caption { font-weight: bold; padding-bottom: 24px; }"
     ".input-row input { flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }"
     "input[type='number']:not(.input-row input) { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }"
@@ -1722,10 +1756,10 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
     "<form id='calForm' action='/calibration/update' method='POST'></form>";
   // One tab at a time (?tab=): a smaller page, and the 10-s refresh of a running routine keeps the tab.
   // Fields of the other tabs are not posted: the update handler keeps the stored value of a missing field.
-  const String requested = request->hasParam("tab") ? request->getParam("tab")->value() : String("sensor");
-  const char *const tabIds[] = {"sensor", "volume", "leaks", "vent", "physical", "feedback", "drift", "events"};
-  const char *const tabNames[] = {"Sensor", "Volume", "Leaks", "Vent", "Physical", "Feedback", "Drift", "Events"};
-  constexpr uint8_t tabCount = 8;
+  const String requested = request->hasParam("tab") ? request->getParam("tab")->value() : String("pressure");
+  const char *const tabIds[] = {"pressure", "volume", "leaks", "vent", "physical", "feedback", "events"};
+  const char *const tabNames[] = {"Pressure", "Volume", "Leaks", "Vent", "Physical", "Feedback", "Events"};
+  constexpr uint8_t tabCount = 7;
   uint8_t tab = 0;
   for (uint8_t i = 0; i < tabCount; ++i)
     if (requested == tabIds[i]) tab = i;
@@ -1736,7 +1770,8 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   bool running = false, editable = true;
   if (tab == 0) {
     page += pressureSensorSectionHtml(pageCurrentReading, usingAverageCurrent);
-    running = sensorZeroActive();
+    page += driftCompensationSectionHtml();
+    running = sensorZeroActive() || zeroDriftActive();
   } else if (tab == 1) {
     page += expansionTankFieldHtml();
     page += leakHoldSectionHtml();
@@ -1757,10 +1792,6 @@ void handleCalibrationDataPage(AsyncWebServerRequest *request) {
   } else if (tab == 5) {
     page += feedbackTabHtml();
     running = true; // the leak window and the vents move on
-    editable = false;
-  } else if (tab == 6) {
-    page += zeroDriftSectionHtml();
-    running = zeroDriftActive();
     editable = false;
   } else {
     editable = false;
@@ -1802,6 +1833,30 @@ void handleCalibrationDataUpdate(AsyncWebServerRequest *request) {
                   "pressure, and its current above that of point A.");
     return;
   }
+  // Drift compensation: an empty reference temperature is unknown (NAN). The page shows 2 decimals:
+  // a value within that rounding of the stored one is kept (the routines store more digits).
+  const auto postedCelsius = [request](const char *name, float stored) {
+    if (!request->hasParam(name, true)) return stored;
+    String text = request->getParam(name, true)->value();
+    text.trim();
+    if (!text.length()) return NAN;
+    const float posted = text.toFloat();
+    return isfinite(stored) && fabsf(posted - stored) <= 6e-3f ? stored : posted;
+  };
+  const float t0 = postedCelsius("pressure0Celsius", FMTData.pressure0Celsius);
+  const float t1 = postedCelsius("pressure1Celsius", FMTData.pressure1Celsius);
+  float driftSlope = value("pressureDriftSlope", FMTData.pressureDriftSlope);
+  if (fabsf(driftSlope - FMTData.pressureDriftSlope) <= 6e-3f) driftSlope = FMTData.pressureDriftSlope;
+  if ((!isnan(t0) && !isValidPressureCelsius(t0)) || (!isnan(t1) && !isValidPressureCelsius(t1)) ||
+      !isValidPressureDriftSlope(driftSlope)) {
+    request->send(400, "text/plain", "Invalid drift compensation: reference temperatures from -10 to 50 C (or empty), "
+                  "zero drift from -50 to 50 mbar/C.");
+    return;
+  }
+  if (driftSlope != 0.0f && (isnan(t0) || isnan(t1))) {
+    request->send(400, "text/plain", "The drift compensation needs the reference temperatures of points A and B.");
+    return;
+  }
   // Flow curve typed on the page (or taken from the last venting test). The page shows the
   // numbers rounded: a field that differs from the stored value by less than that rounding is left alone.
   VentModel::Curve curve = FMTData.ventCurve;
@@ -1838,6 +1893,16 @@ void handleCalibrationDataUpdate(AsyncWebServerRequest *request) {
   FMTData.pressure0Current = keepIfRounded(FMTData.pressure0Current, c0);
   FMTData.pressure1Bar = keepIfRounded(FMTData.pressure1Bar, p1);
   FMTData.pressure1Current = keepIfRounded(FMTData.pressure1Current, c1);
+  const bool sameCelsius = (isnan(t0) ? isnan(FMTData.pressure0Celsius) : t0 == FMTData.pressure0Celsius) &&
+                           (isnan(t1) ? isnan(FMTData.pressure1Celsius) : t1 == FMTData.pressure1Celsius);
+  if (driftSlope != FMTData.pressureDriftSlope || !sameCelsius) {
+    char details[120];
+    snprintf(details, sizeof(details), "typed on the page: %.2f mbar/C, point A %.2f C, point B %.2f C", driftSlope, t0, t1);
+    calibrationEventAppend("drift-compensation-edited", details);
+  }
+  FMTData.pressure0Celsius = t0;
+  FMTData.pressure1Celsius = t1;
+  FMTData.pressureDriftSlope = driftSlope;
   FMTData.flowLevelFactor = level;
   FMTData.FMTEffectiveVentingExponent = exponent;
   if (curveChanged) {
