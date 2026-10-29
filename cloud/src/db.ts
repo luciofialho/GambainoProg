@@ -173,9 +173,12 @@ export async function listPovotos(db: D1Database, ids: number[] | null): Promise
   return results;
 }
 
-export async function getPovoto(db: D1Database, id: number): Promise<{ id: number; site: number; num: number } | null> {
-  return db.prepare('SELECT id, site, num FROM povotos WHERE id = ?').bind(id)
-    .first<{ id: number; site: number; num: number }>();
+// site_name: the SideKick's name (sidekicks table), null when none registered.
+export async function getPovoto(db: D1Database, id: number):
+    Promise<{ id: number; site: number; num: number; site_name: string | null } | null> {
+  return db.prepare('SELECT p.id, p.site, p.num, s.name AS site_name FROM povotos p' +
+    ' LEFT JOIN sidekicks s ON s.site = p.site WHERE p.id = ?').bind(id)
+    .first<{ id: number; site: number; num: number; site_name: string | null }>();
 }
 
 export async function latestLog(db: D1Database, povotoId: number): Promise<LogRow | null> {

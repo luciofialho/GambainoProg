@@ -28,8 +28,7 @@
     [hidden] { display: none !important; }
     .panel { background: #22272e; border: 1px solid #343d48; border-radius: 12px; padding: 14px; }
     canvas { display: block; }
-    #updated { margin-top: 8px; font-size: 12px; color: #9aa3ad; text-align: right; }
-    #updated:empty { display: none; }
+    #updated { margin-top: 8px; font-size: 12px; color: #9aa3ad; display: flex; justify-content: space-between; gap: 12px; }
     /* Povoto logo on the left, Brewtal on the right (both black: inverted). */
     .signature { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; }
     .signature img { height: 64px; width: auto; max-width: 40%; display: block; filter: invert(1); opacity: .7; }
@@ -57,7 +56,7 @@
     </div>
     <section class="panel">
       <canvas id="screen" width="480" height="320" aria-label="Povoto screen"></canvas>
-      <div id="updated"></div>
+      <div id="updated" hidden><span id="site"></span><span id="age"></span></div>
     </section>
     <footer class="signature">
       <div class="povoto-logo"><img src="/assets/povoto.svg" alt="Povoto" onerror="this.style.visibility = 'hidden'"></div>

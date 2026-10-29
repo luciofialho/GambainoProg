@@ -408,7 +408,8 @@ app.get('/p/:id/dashboard/status.json', async c => {
   const log = await db.latestLog(c.env.DB, povoto.id);
   if (!log) return c.json({}, 404);
   const batch = await db.getBatch(c.env.DB, povoto.id, log.batch);
-  const status = dashboardStatus(log, batch, povoto.num, nowLocal(c.env));
+  const status = dashboardStatus(log, batch, povoto.num, povoto.site_name || `Site ${povoto.site}`,
+                                 nowLocal(c.env));
   if (isDevCloud(c.env)) status.back.label = 'Back · DEV cloud';
   return noStore(c.json(status));
 });

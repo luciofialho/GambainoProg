@@ -15,6 +15,8 @@
   const menu = document.getElementById('menu');
   const statsButton = document.getElementById('stats');
   const updated = document.getElementById('updated');
+  const siteText = document.getElementById('site');
+  const ageText = document.getElementById('age');
   const ctx = canvas.getContext('2d');
 
   const rgb = (r, g, b) => `rgb(${r},${g},${b})`;
@@ -294,11 +296,13 @@
 
   // Top line: on the cloud the link back to the list (status.back), on the
   // Povoto the menu icon (/menu); the statistics icon when there are stats.
-  // Cloud only: the data age below the screen.
+  // Cloud only: the site name and the data age below the screen.
   function applyPageTexts() {
     const text = status && typeof status.updated === 'string' ? status.updated : '';
-    const lineChanged = !text !== !updated.textContent;
-    updated.textContent = text;
+    const lineChanged = !text !== updated.hidden;
+    ageText.textContent = text;
+    siteText.textContent = text && typeof status.site === 'string' ? status.site : '';
+    updated.hidden = !text;
     const cloud = !!(status && status.back && typeof status.back.href === 'string');
     if (cloud) {
       back.href = status.back.href;

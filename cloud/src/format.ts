@@ -36,9 +36,10 @@ export function ageText(seconds: number): string {
 }
 
 // handleDashboardStatus(): texts formatted as the device sends them. The
-// page shows `updated` below the screen instead of the WiFi indicator; the
-// cloud is read-only.
-export function dashboardStatus(log: LogRow, batch: BatchRow | null, num: number, nowLocal: number) {
+// page shows `updated` below the screen instead of the WiFi indicator, with
+// `site` on the left of the same line; the cloud is read-only.
+export function dashboardStatus(log: LogRow, batch: BatchRow | null, num: number, site: string,
+                                nowLocal: number) {
   // gCO2/L/d with the graph's rule (null outside Fermenting or in a transition),
   // in the device's format (handleDashboardStatus).
   const co2Label = log.mode !== MODE_FERMENTING ? 'g CO2'
@@ -66,6 +67,7 @@ export function dashboardStatus(log: LogRow, batch: BatchRow | null, num: number
     abv: noBatch ? '' : fixed(log.abv, 2, ''),
     wifiText: '',
     updated: `Updated ${ageText(Math.max(0, nowLocal - log.epoch))}`,
+    site,
     wifiBars: 0,
     calibration: ['', '', ''],
     readOnly: true,
