@@ -9,6 +9,8 @@
 #include "Sidekick-log.h"
 #include "Sidekick-cloud.h"
 #include "Sidekick-ambient.h"
+#include "Sidekick-health.h"
+#include "HealthProtocol.h"
 #include "IOTK.h"
 #include <RCSwitch.h>
 #include <esp_now.h>
@@ -92,6 +94,7 @@ struct EspNowFrame {
   uint8_t data[ESPNOW_MAX_FRAME];
   int     len;
   uint8_t senderMac[6];
+  uint32_t receivedAt;
 };
 static EspNowFrame espnowQueueStorage[ESPNOW_QUEUE_SLOTS];
 static StaticQueue_t espnowQueueControl;
@@ -139,6 +142,9 @@ static void handleReconnectNetwork(AsyncWebServerRequest *request) {
 
 static void handlePacket(char type, const char *payload) {
   switch (type) {
+    case RCCOMMANDPACKET:
+      healthSerial(payload);
+      break;
     case LOGPACKET: {
       const size_t length = strlen(payload);
       if (length == 0) break;
@@ -187,8 +193,11 @@ static void handlePacket(char type, const char *payload) {
 }
 
 // Wrapper called from loop with senderMac context
-static void handlePacketWithMac(char type, const char *payload, const uint8_t *senderMac) {
-  if (type == PEERBROADCASTPACKET || type == PEERREPLYPACKET) {
+static void handlePacketWithMac(char type, const char *payload, const uint8_t *senderMac, uint32_t receivedAt) {
+  if (type == HEALTH_PACKET) {
+    // A health packet fits one frame. Queued old data cannot prove current life.
+    if (uint32_t(millis() - receivedAt) <= 5000) healthReceive(payload, senderMac);
+  } else if (type == PEERBROADCASTPACKET || type == PEERREPLYPACKET) {
     handlePeerEspNow(type, payload, senderMac);
   } else {
     handlePacket(type, payload);
@@ -203,6 +212,7 @@ static void onEspNowRecv(const uint8_t *mac, const uint8_t *data, int len) {
   EspNowFrame frame = {};
   memcpy(frame.data, data, len);
   frame.len = len;
+  frame.receivedAt = millis();
   if (mac) memcpy(frame.senderMac, mac, sizeof(frame.senderMac));
   if (xQueueSend(espnowQueue, &frame, 0) != pdTRUE) ++espnowQueueDrops;
 }
@@ -212,6 +222,7 @@ void logSendTask(void *pvParameters) {
   const TickType_t xDelay = pdMS_TO_TICKS(15000); // 15 segundos
   
   for(;;) {
+    healthSendMail();
     sendLogToGoogleSheets();
     sendLogToBrewfather();
     sendCloudLog();
@@ -303,6 +314,7 @@ char *getSideKickStatus(char *st) {
            espnowQueueDrops.load());
   strcat(st, buf2);
 
+  healthStatus(st, MAXSTATUSLEN);
   appendCloudLogStatus(st, MAXSTATUSLEN);
   appendAmbientSensorsStatus(st, MAXSTATUSLEN);
   if (logSendTaskHandle) {
@@ -334,6 +346,7 @@ void setup() {
   delay(500);
 
   // Initialize all storage before web callbacks, LogSend or ESP-NOW can run.
+  healthBegin();
   const bool logQueuesReady = initLogQueues();
   if (!logQueuesReady) Serial.println("[LOG] Could not initialize log queues");
   espnowQueue = xQueueCreateStatic(ESPNOW_QUEUE_SLOTS, sizeof(EspNowFrame),
@@ -374,7 +387,7 @@ void setup() {
   BaseType_t taskCreated = logQueuesReady ? xTaskCreatePinnedToCore(
     logSendTask,           // Função da task
     "LogSend",             // Nome da task (para debug)
-    12288,                 // Stack size in bytes (three TLS clients run here)
+    16384,                 // Stack size in bytes (SMTP and HTTPS run sequentially)
     NULL,                  // Parâmetros (não usado)
     1,                     // Prioridade (1 = baixa)
     &logSendTaskHandle,    // Handle da task
@@ -452,12 +465,16 @@ void loop() {
        xQueueReceive(espnowQueue, &frame, 0) == pdTRUE; ++pass) {
     // Store sender MAC in a static so the non-capturing lambda can access it
     static uint8_t espnowCurrentSenderMac_[6];
+    static uint32_t espnowReceivedAt;
+    espnowReceivedAt = frame.receivedAt;
     memcpy(espnowCurrentSenderMac_, frame.senderMac, 6);
     processEspNowData(frame.data, frame.len, frame.senderMac, [](char type, const char *payload) {
-      handlePacketWithMac(type, payload, espnowCurrentSenderMac_);
+      handlePacketWithMac(type, payload, espnowCurrentSenderMac_, espnowReceivedAt);
     });
   }
 
+
+  healthProcess();
 
   if (rf.available()) {
     // Obtém o valor recebido
