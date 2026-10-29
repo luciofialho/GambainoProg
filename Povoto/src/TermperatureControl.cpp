@@ -259,7 +259,7 @@ long int fermenterOnOffCycle(float temperature, byte targetMode) {
 }
 
 // Fermenting or conditioning with a temperature target and no fermenter
-// thermometer (not assigned, or no valid reading for 60 s): the control is
+// thermometer (not assigned, or no valid reading for 120 s): the control is
 // idle. Signalled by PovotoAlarms.cpp (docs/alarms.md). In debug mode it
 // follows the considered temperature: 85 or -127 (debug page) trigger it.
 static bool thermometerAlarmActive = false;
@@ -284,16 +284,22 @@ String describeFermenterThermometer() {
 
 static void fermenterThermometerAlarm() {
   static constexpr unsigned long INVALID_TOLERANCE_MS = 120000UL;
-  static unsigned long invalidSince = 0; // 0 = valid reading
+  // A flag, not a 0 sentinel: "now | 1" can be now + 1, and now - (now + 1)
+  // wraps to ULONG_MAX, which fired the alarm on the first invalid reading.
+  static bool invalid = false;
+  static unsigned long invalidSince = 0;
   const unsigned long now = millis();
   // Debug mode: only the considered temperature counts (the debug page value
   // or the fake 18 C), so the alarm is tested by setting 85 or -127 there.
   const float t = debugging ? ControlData.temperature : dallasTemperature;
   const bool valid = isfinite(t) && t != NOTaTEMP && t != 85;
-  if (valid) invalidSince = 0;
-  else if (invalidSince == 0) invalidSince = now | 1;
+  if (valid) invalid = false;
+  else if (!invalid) {
+    invalid = true;
+    invalidSince = now;
+  }
   const bool missing = (!debugging && !dallasRoleAssigned(DALLAS_ROLE_FERMENTER)) ||
-      (invalidSince != 0 && now - invalidSince >= INVALID_TOLERANCE_MS);
+      (invalid && now - invalidSince >= INVALID_TOLERANCE_MS);
   const bool controlling = (SetPointData.mode == MODE_FERMENTING || SetPointData.mode == MODE_CONDITIONING ||
                             SetPointData.mode == MODE_MANUAL) &&
       SetPointData.setPointTemp != NOTaTEMP;

@@ -136,14 +136,15 @@ void processPovotoAlarms() {
       : reliefCheckAlarmActive() ? ALARM_RELIEF
       : fermenterThermometerAlarmActive() ? ALARM_FERMENTER_THERMOMETER : ALARM_NONE;
   const unsigned long now = millis();
-  static unsigned long lastBeeps = 0; // 0 = not beeping
+  static bool beeping = false;
+  static unsigned long lastBeeps = 0;
   static unsigned long alarmSince = 0;
   static unsigned long lastMail = 0;
 
   if (alarm != activeAlarm) {
     Serial.printf("[ALARM] %s -> %s\n", povotoAlarmLabel(activeAlarm), povotoAlarmLabel(alarm));
     activeAlarm = alarm;
-    lastBeeps = 0;
+    beeping = false;
     alarmSince = now;
     lastMail = now;
     if (alarm != ALARM_NONE) sendAlarmMail(alarm, 0);
@@ -162,8 +163,9 @@ void processPovotoAlarms() {
   }
 
   // Silent in debug mode (bench boards); screen and LEDs still signal.
-  if (alarm != ALARM_NONE && (lastBeeps == 0 || now - lastBeeps >= alarmBeepInterval(now - alarmSince))) {
-    lastBeeps = now | 1;
+  if (alarm != ALARM_NONE && (!beeping || now - lastBeeps >= alarmBeepInterval(now - alarmSince))) {
+    beeping = true;
+    lastBeeps = now;
     if (!debugging)
       buzzerBeepRequest = alarm == ALARM_PRESSURE_SENSOR ? 4 : alarm == ALARM_VALVE_STUCK_OPEN ? 6
           : alarm == ALARM_RELIEF ? 5 : 3;

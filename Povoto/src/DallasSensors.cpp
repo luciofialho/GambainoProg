@@ -172,8 +172,9 @@ static struct {
   bool seenValid;      // ignores the boot, before the first reading
   bool active;
   unsigned long since; // millis
+  bool attempted;      // lastAttempt is set (a flag: "now | 1" wrapped the difference)
   unsigned long lastAttempt;
-  uint16_t attempts;   // in the current fault
+  uint16_t attempts;  // in the current fault
   uint32_t events;
   uint32_t startEpoch; // of the last fault (NTP, 0 = unknown)
   unsigned long lastMs;
@@ -188,7 +189,8 @@ static struct {
 
 static void diagnoseFermenterThermometer(unsigned long now) {
   const uint8_t *address = slotAddress[DALLAS_ROLE_FERMENTER];
-  fault.lastAttempt = now | 1;
+  fault.attempted = true;
+  fault.lastAttempt = now;
   ++fault.attempts;
   memset(fault.scratchpad, 0, sizeof(fault.scratchpad));
   fault.present = oneWire.reset();
@@ -229,12 +231,12 @@ static void fermenterFaultProcess(unsigned long now) {
     fault.active = true;
     fault.since = now;
     fault.attempts = 0;
-    fault.lastAttempt = 0;
+    fault.attempted = false;
     ++fault.events;
     fault.startEpoch = NTPEpoch();
   }
   if (now - fault.since >= FAULT_RECOVER_AFTER_MS &&
-      (fault.lastAttempt == 0 || now - fault.lastAttempt >= FAULT_RECOVER_EVERY_MS))
+      (!fault.attempted || now - fault.lastAttempt >= FAULT_RECOVER_EVERY_MS))
     diagnoseFermenterThermometer(now);
 }
 

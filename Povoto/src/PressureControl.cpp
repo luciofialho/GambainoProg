@@ -1999,11 +1999,16 @@ static float pressureSensorCurrentHigh() {
 
 // Main loop only (I2C probe).
 void checkPressureSensor() {
+  // Flags, not 0 sentinels: "now | 1" can be now + 1, which wraps the
+  // differences below (it fired the alarm on the first invalid reading).
+  static bool probed = false;
   static unsigned long lastProbe = 0;
-  static unsigned long invalidSince = 0; // 0 = valid reading
+  static bool invalid = false;
+  static unsigned long invalidSince = 0;
   const unsigned long now = millis();
-  if (pressureSensorConnected && (lastProbe == 0 || now - lastProbe >= INA226_PROBE_INTERVAL_MS)) {
-    lastProbe = now | 1;
+  if (pressureSensorConnected && (!probed || now - lastProbe >= INA226_PROBE_INTERVAL_MS)) {
+    probed = true;
+    lastProbe = now;
     ina226Responding = ina226.isConnected();
   }
   // Debug mode: only the considered pressure counts (the debug page value or
@@ -2014,15 +2019,18 @@ void checkPressureSensor() {
       ? ControlData.pressure >= 0.0f
       : responding && isfinite(currentReading) && isfinite(high) &&
         currentReading >= pressureSensorCurrentLow() && currentReading <= high;
-  if (inRange) invalidSince = 0;
-  else if (invalidSince == 0) invalidSince = now | 1;
+  if (inRange) invalid = false;
+  else if (!invalid) {
+    invalid = true;
+    invalidSince = now;
+  }
   pressureSensorNoResponse = !responding;
   pressureSensorProblemText = !responding ? "INA226 not responding"
       : inRange ? "" : debugging ? "negative pressure (debug)" : "current out of range";
   const bool controlling = (SetPointData.mode == MODE_FERMENTING || SetPointData.mode == MODE_CONDITIONING ||
                             SetPointData.mode == MODE_MANUAL) &&
       SetPointData.setPointPressure != NOTaTEMP;
-  pressureSensorAlarm = controlling && invalidSince != 0 && now - invalidSince >= PRESSURE_SENSOR_INVALID_TOLERANCE_MS;
+  pressureSensorAlarm = controlling && invalid && now - invalidSince >= PRESSURE_SENSOR_INVALID_TOLERANCE_MS;
 }
 
 bool pressureSensorAlarmActive() {
