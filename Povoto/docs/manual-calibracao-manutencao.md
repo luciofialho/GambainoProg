@@ -543,6 +543,13 @@ envio (`AAAA-MM-DDThh:mm:ss`, local).
 | gCO2Source | Origem de `gCO2/L/d`: `calculated`, `held` (valor retido depois de um reboot) ou `transition` (pressão ou temperatura em transição) |
 | GasCO2Rate | Taxa da fase gasosa que decide o estado do dissolvido (g/L/d); vazia sem decisão |
 | HeadspaceTemperature | Temperatura do termômetro do headspace; vazia sem sensor ou sem leitura |
+| TempAdaptiveState | Estado do controle adaptativo: `disabled`, `debug`, `waiting`, `learning` ou `regulating` |
+| TempAdaptiveDrop / TempAdaptiveRise / TempAdaptiveCenter | Queda/subida aprendidas e correção do centro, em °C; estimativas indisponíveis ficam vazias |
+| TempTrend | Tendência confirmada em °C/min; vazia se indefinida ou adaptativo inativo |
+| TempChillOn / TempChillOff | Limiares de acionamento/corte realmente usados na última decisão do controle (°C) |
+| TempLegacyOn / TempLegacyOff | Limiares originais para a mesma decisão (°C), para comparar a antecipação |
+| TempHeatBlocked | 1 se a recuperação adaptativa vetou um aquecimento que já seria permitido pelos critérios originais; 0 caso contrário |
+| TempDropSamples / TempRiseSamples | Quantidade de atualizações de queda/subida; zero se adaptativo inativo; [detalhes](adaptive-temperature.md) |
 
 **Nota: as três colunas do equilíbrio de Henry.** O dissolvido (`CO2MolsSol`) em `initial` e `immediate`
 é a média de 30 min de Henry, e não o Henry na pressão de agora: com o dente de serra dos reliefs a

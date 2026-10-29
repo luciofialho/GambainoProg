@@ -16,6 +16,13 @@ bool fermenterThermometerAlarmActive(); // target set, no fermenter thermometer 
 String describeFermenterThermometer();  // several lines, for the alarm e-mail
 void resetChillHeatCycle();
 void getAdaptiveTemperatureStatus(char *out, size_t size);
+struct TemperatureControlLogData {
+  const char *state;
+  float drop, rise, center, trend;
+  float chillOn, chillOff, legacyOn, legacyOff;
+  int heatBlocked, dropSamples, riseSamples;
+};
+TemperatureControlLogData getTemperatureControlLogData();
 char *getTemperatureModeLabel();
 char *getTemperatureControlStatus(char *st);
 unsigned long int holdPressureDueToTemperatureRelays();

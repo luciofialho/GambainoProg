@@ -10,8 +10,12 @@
 #include "PressureControl.h"
 #include "DallasSensors.h"
 #include "AdaptiveTemperature.h"
+#include "TemperatureControl.h"
 
 static AdaptiveTemperature::Controller adaptiveTemperature;
+static float lastChillOn = NAN, lastChillOff = NAN;
+static float lastLegacyOn = NAN, lastLegacyOff = NAN;
+static bool lastHeatBlocked = false;
 
 
 
@@ -411,6 +415,8 @@ void temperatureControl() {
       FMTData.adaptiveTemperature, adaptiveEligible, relayState, interruptedCooling,
       debugging || debugTemperatureOverride);
   bool anticipatedStop = false;
+  lastChillOn = lastChillOff = lastLegacyOn = lastLegacyOff = NAN;
+  lastHeatBlocked = false;
   newMode = mode;
 
   if (ControlData.temperature == NOTaTEMP || SetPointData.setPointTemp == NOTaTEMP) {
@@ -431,8 +437,12 @@ void temperatureControl() {
     if (SetPointData.setPointSlowTemp != NOTaTEMP && ControlData.temperature > SetPointData.setPointSlowTemp)
       minTarget -= FMTOFFSET;
     
-    const float adaptiveUpper = adaptiveTemperature.onThreshold(maxTarget, minTarget);
-    const float adaptiveLower = adaptiveTemperature.offThreshold(minTarget, maxTarget);
+    const float adaptiveUpper = FMTData.adaptiveTemperature
+        ? adaptiveTemperature.onThreshold(maxTarget, minTarget) : maxTarget;
+    const float adaptiveLower = FMTData.adaptiveTemperature
+        ? adaptiveTemperature.offThreshold(minTarget, maxTarget) : minTarget;
+    lastChillOn = adaptiveUpper; lastChillOff = adaptiveLower;
+    lastLegacyOn = maxTarget; lastLegacyOff = minTarget;
     switch (mode) {
       case FMTIDLE: {
         if (ControlData.temperature > adaptiveUpper  || (ControlData.temperature>minTarget && interruptedCooling)) {
@@ -456,12 +466,13 @@ void temperatureControl() {
         }
         const float heatRestartThreshold = SetPointData.setPointTemp -
             heatRestartAlpha * FMTOFFSET;
-        if (newMode != FMTCHILL && FMTData.heater.enabled &&
+        const bool heatRequested = newMode != FMTCHILL && FMTData.heater.enabled &&
             ControlData.temperature < heatRestartThreshold &&
-            adaptiveTemperature.allowHeat(millis(), ControlData.temperature, SetPointData.setPointTemp)) {
-          if (lastModeChange==0 || (!millisOverflowWindow && MILLISPAST(nextModeChange))) // anti boucing Constante
-            newMode = FMTHEAT; 
-        }
+            (lastModeChange == 0 || (!millisOverflowWindow && MILLISPAST(nextModeChange)));
+        const bool heatAllowed = !FMTData.adaptiveTemperature ||
+            adaptiveTemperature.allowHeat(millis(), ControlData.temperature, SetPointData.setPointTemp);
+        lastHeatBlocked = heatRequested && !heatAllowed;
+        if (heatRequested && heatAllowed) newMode = FMTHEAT;
       break;
       }
 
@@ -598,6 +609,24 @@ void temperatureControl() {
     else
       digitalWrite(PINLEDHEATER, LOW);
   }
+}
+
+TemperatureControlLogData getTemperatureControlLogData() {
+  const bool enabled = FMTData.adaptiveTemperature;
+  const bool debug = debugging || debugTemperatureOverride;
+  const bool active = enabled && !debug && adaptiveTemperature.active();
+  return {
+    !enabled ? "disabled" : debug ? "debug" : !active ? "waiting" :
+        adaptiveTemperature.learning() ? "learning" : "regulating",
+    active && adaptiveTemperature.dropSamples() ? adaptiveTemperature.drop() : NAN,
+    active && adaptiveTemperature.riseSamples() ? adaptiveTemperature.rise() : NAN,
+    active ? adaptiveTemperature.center() : NAN,
+    active && adaptiveTemperature.trendKnown() ? adaptiveTemperature.velocity() : NAN,
+    lastChillOn, lastChillOff, lastLegacyOn, lastLegacyOff,
+    int(enabled && !debug && lastHeatBlocked),
+    active ? int(adaptiveTemperature.dropSamples()) : 0,
+    active ? int(adaptiveTemperature.riseSamples()) : 0
+  };
 }
 
 void getAdaptiveTemperatureStatus(char *out, size_t size) {

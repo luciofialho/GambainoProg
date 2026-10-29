@@ -122,9 +122,9 @@ Assim, ambiente frio persistente pode exigir calor. Se ele ligar, a observação
 do vale é interrompida e não usa a ação do aquecedor como recuperação natural.
 
 Desabilitar a opção volta aos limiares originais sem alterar o estado ou os
-timers do ciclo. A espera de recuperação já iniciada é preservada, com limite
-de tempo e liberação por desvio, para a desativação não provocar calor imediato
-sobre frio residual. A janela de tendência é descartada na desativação. O
+timers do ciclo. O bypass é completo: apaga estimativas, tendência e qualquer
+espera adaptativa de recuperação. Não resta bloqueio adaptativo de aquecimento
+com a opção desabilitada; as proteções originais ainda se aplicam. O
 controle de corte do aquecedor continua sendo o original; não foi implementado
 aprendizado de inércia do aquecedor.
 
@@ -137,9 +137,38 @@ partições ou formato de arquivo da persist. Estimativas não são gravadas na 
 a cada ciclo.
 
 O diagnóstico separado `/temperaturestatus` mantém o orçamento de `/getstatus`
-e o esquema dos logs. Valores **unknown** de velocidade são diagnósticos sem
+sem acrescentar campos nessa página. Valores **unknown** de velocidade são diagnósticos sem
 autorização de tendência para o controle. Os ganhos são conferíveis em
 `include/AdaptiveTemperature.h`.
+
+O log Cold acrescenta as colunas abaixo ao final, preservando as posições
+anteriores. Os valores refletem a última decisão do controle, na cadência já
+configurada para o log; não é um registro de cada transição do relé.
+
+| Coluna | Significado |
+|---|---|
+| TempAdaptiveState | `disabled`, `debug`, `waiting`, `learning` ou `regulating` |
+| TempAdaptiveDrop / TempAdaptiveRise | Estimativas aprendidas em °C; vazio antes da primeira observação ou sem atuação adaptativa |
+| TempAdaptiveCenter | Correção atual do centro em °C; vazio se o recurso não está apto |
+| TempTrend | Velocidade em °C/min, positiva aquecendo e negativa resfriando; vazia sem tendência confirmada |
+| TempChillOn / TempChillOff | Limiares de acionamento e corte utilizados na última decisão, em °C |
+| TempLegacyOn / TempLegacyOff | Limiares que a regra original usaria naquela mesma decisão, em °C |
+| TempHeatBlocked | 1 quando o aquecimento seria permitido pelos critérios originais, mas foi bloqueado pela recuperação adaptativa; 0 nos demais casos |
+| TempDropSamples / TempRiseSamples | Contagem das atualizações do aprendizado de queda/subida; zero se inativo |
+
+`TempChillOn` é o limiar para novas demandas. Retomadas de `CHILL (paused)`
+continuam usando o limiar inferior e o descanso da regra original. Os limiares
+são os avaliados pelo controle automático, mesmo quando um override posterior
+força a saída; nesse caso o aprendizado fica em `waiting`.
+
+`TempAdaptiveRise` mostra a estimativa, que ainda pode estar aguardando a
+confirmação de repetição para antecipar a partida. Os limiares mostram a ação
+efetiva e permitem essa distinção. O corte é sempre maior ou igual ao corte
+original, e o limiar de partida nunca é superior ao original. Com a opção
+desabilitada, os pares de limiares coincidem e `TempHeatBlocked` é zero.
+Temperatura/alvo inválidos deixam os limiares vazios, em vez de reutilizar uma
+decisão anterior. Essas comparações não reconstroem a temperatura que ocorreria
+com comandos diferentes, nem garantem menor tempo total ligado.
 
 Teste do mesmo C++ usado no firmware: `tests/adaptive_temperature_test.hpp`.
 É `.hpp` porque `src_dir=.` do PlatformIO não deve incorporar o main de teste

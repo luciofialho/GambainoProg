@@ -16,6 +16,7 @@ src = (root / "src/datalog.cpp").read_text(encoding="utf-8").replace("\r\n", "\n
 # Longest possible text of the string-valued arguments (checked in the sources).
 STRING_MAX = {
     "getTemperatureModeLabel()": 14,              # "CHILL (paused)"
+    "tempControl.state": 10,                     # "regulating"
     "taskWindowTypeToText(taskWindowType)": 15,   # "Dynamic Hopping"
     "getTempStateLabel()": 15,                    # "CHANGING_DIRECT"
     "tempStableSinceText": 19,                    # ISO local time

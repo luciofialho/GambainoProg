@@ -86,7 +86,11 @@ int main() {
     assert(!r.c.allowHeat(stopped + 10 * Controller::Minute, 12.6f, 13));
     assert(r.c.allowHeat(stopped + 10 * Controller::Minute, 12.0f, 13));
     r.enabled = false; r.tick(12.65f);
-    assert(!r.c.allowHeat(stopped + 10 * Controller::Minute, 12.6f, 13));
+    assert(r.c.allowHeat(stopped + 10 * Controller::Minute, 12.6f, 13));
+    assert(r.c.onThreshold(13.3f, 12.8f) == 13.3f);
+    assert(r.c.offThreshold(12.8f, 13.3f) == 12.8f);
+    r.tick(NAN); // Even a missing sensor cannot retain a gate while disabled.
+    assert(r.c.allowHeat(stopped + 10 * Controller::Minute, 12.6f, 13));
     assert(r.c.allowHeat(stopped + 61 * Controller::Minute, 12.6f, 13));
   }
   {

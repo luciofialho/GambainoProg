@@ -28,9 +28,9 @@ class Controller {
 
   void observe(uint32_t now, float temperature, float target, bool enabled,
                bool eligible, State state, bool timedPause, bool simulated = false) {
-    if (simulated) {
-      // Artificial temperatures must neither train nor operate the controller.
-      // Clear even a pending recovery gate: debug uses only the legacy rules.
+    if (simulated || !enabled) {
+      // Debug and an unchecked Settings option are complete bypasses, including
+      // pending recovery gates. Neither may affect the legacy controller.
       reset(); state_ = state; return;
     }
     if (!isfinite(target) || !isfinite(temperature)) {
@@ -39,7 +39,7 @@ class Controller {
     if (!targetKnown_ || target != target_) {
       reset(); targetKnown_ = true; target_ = target; state_ = state;
     }
-    if (!enabled || !eligible) {
+    if (!eligible) {
       if (available_) reset(true);
       state_ = state; available_ = false; return;
     }
