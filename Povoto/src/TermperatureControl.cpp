@@ -631,7 +631,7 @@ TemperatureControlLogData getTemperatureControlLogData() {
 
 void getAdaptiveTemperatureStatus(char *out, size_t size) {
   snprintf(out, size,
-      "Adaptive temperature control: %s\nState: %s\n"
+      "Adaptive hysteresis control: %s\nState: %s\n"
       "Learned residual drop: %.3f C (%u observations)\n"
       "Learned startup rise: %.3f C (%u observations)\n"
       "Center correction: %.3f C\nTrend: %s (%.4f C/min)\n"

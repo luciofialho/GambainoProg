@@ -1,6 +1,6 @@
 # Controle adaptativo de temperatura
 
-A opção **Adaptive temperature control**, em Settings, aprende a resposta do
+A opção **Adaptive hysteresis control**, em Settings, aprende a resposta do
 fermentador durante a operação normal. É desabilitada por padrão. O botão liga
 ou desliga o recurso; os tempos de Cooling cycle e Heating cycle continuam
 configurados como antes. `/temperaturestatus` mostra habilitação, estado,

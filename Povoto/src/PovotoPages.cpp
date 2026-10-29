@@ -812,10 +812,9 @@ void handleFMTDataPage(AsyncWebServerRequest *request) {
   }
   strncat(html, "</tbody></table>", BUFFER_SIZE - strlen(html) - 1);
   strncat(html, "<input type='hidden' name='adaptiveConfig' value='1'>"
-    "<p><label><input type='checkbox' name='adaptiveTemperature' value='1'", BUFFER_SIZE - strlen(html) - 1);
+    "<p><label style='display:inline'><input type='checkbox' name='adaptiveTemperature' value='1'", BUFFER_SIZE - strlen(html) - 1);
   if (FMTData.adaptiveTemperature) strncat(html, " checked", BUFFER_SIZE - strlen(html) - 1);
-  strncat(html, "> Adaptive temperature control</label><br>"
-    "Learns temperature overshoot at each target. Keeps the existing cooling cutoffs and rest times."
+  strncat(html, "> Adaptive hysteresis control</label>"
     " <a href='/temperaturestatus'>Learning status</a></p>", BUFFER_SIZE - strlen(html) - 1);
   strncat(html, "<hr><h2>Heating cycle</h2><input type='hidden' name='heaterConfig' value='1'>"
     "<table style='width:100%;table-layout:fixed'><tbody><tr><td style='text-align:center'>"
