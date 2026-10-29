@@ -85,11 +85,31 @@ erro restante.
 ## Mudança de alvo e situações sem aprendizado
 
 Qualquer mudança efetiva do alvo apaga subida, queda, centro, contagens e janela
-de velocidade. Não há transferência parcial entre 19 °C e 13 °C. Durante rampas
-ou aproximação ao novo alvo são usados os critérios originais. O modelo fica
-apto ao entrar na faixa de ±0,3 °C, mas não aprende a cauda de um pulso iniciado
-fora dela: espera transições completas em regulação. A oscilação normal ao
-redor de um alvo constante não apaga o aprendizado.
+de velocidade. Não há transferência parcial entre 19 °C e 13 °C. Rampas não
+geram aprendizado. Na aproximação a um alvo constante, começa a observar a
+partir de 2,5 °C acima dele (inclusive). Nessa fase aprende **somente a queda
+residual em pausas temporizadas do frio**, não em um IDLE comum. O desligamento
+precisa ser observado entre o alvo e alvo + 2,5 °C; entrar nessa faixa já durante
+uma pausa não reconstrói o evento anterior. Um pulso já ligado ao entrar na
+faixa pode fornecer essa observação, sem exigir uma nova partida.
+
+A queda aprendida nas pausas já pode antecipar o corte ao chegar perto do alvo,
+sempre limitada pelos critérios originais. Uma recuperação incompleta continua
+fornecendo apenas um limite inferior, nunca uma queda completa menor. O limite
+de resposta aceita continua sendo 0,6 °C: ampliar a faixa de observação não
+amplia a compensação máxima. Essa estimativa inicial é atualizada pelos eventos
+seguintes; pulsos de aproximação podem ter resposta diferente dos de manutenção.
+Observar pausas na aproximação, por si só, não inicia a espera adaptativa de
+aquecimento. O estado continua `learning` durante a aproximação, mesmo quando
+já existe uma estimativa provisória de queda.
+
+Ao entrar em ±0,3 °C, habilita o aprendizado de regulação. Subida e centro
+esperam uma nova demanda de frio, sem confundir a retomada de uma pausa com um
+ciclo novo. A média da aproximação não corrige o centro. A cauda de um pulso
+iniciado na aproximação só pode ensinar queda se terminar em pausa temporizada
+na faixa descrita acima; chegar a ±0,3 °C durante esse pulso não o transforma em
+um ciclo de regulação. A oscilação normal ao redor de um alvo constante não
+apaga o aprendizado.
 
 O aprendizado é RAM-only: reinício, falha de sensor, salto superior a 0,5 °C
 entre observações ou interrupção do acompanhamento superior a cinco segundos
@@ -103,7 +123,7 @@ adaptativo fica totalmente suspenso, mesmo que a opção esteja habilitada.
 Apaga estimativas, tendência e a espera adaptativa de recuperação; os critérios
 originais de controle de debug são usados. `/temperaturestatus` informa
 `suspended (debug)`. A opção persistida é preservada: ao sair do debug, o
-aprendizado recomeça do zero depois da aproximação ao alvo. Temperaturas
+aprendizado recomeça do zero, podendo observar pausas na aproximação ao alvo. Temperaturas
 artificiais nunca são reutilizadas na operação normal.
 
 ## Evitar a alternância frio/calor
@@ -182,5 +202,7 @@ c++ -std=c++11 -x c++ tests/adaptive_temperature_test.hpp -o adaptive-test
 O teste verifica limites originais, aprendizado e centro, mudanças de alvo,
 suspensão, oscilação de um degrau, tendência em todos os estados, dados
 interrompidos, recuperação com saída do modo adaptativo, falhas e rollover de
-millis. Compilar o firmware com `pio run -e Povoto`; nenhuma gravação em placa
+millis. Também verifica pausas na aproximação até 2,5 °C acima do alvo,
+observações parciais, exclusão de IDLE comum e separação de subida/centro.
+Compilar o firmware com `pio run -e Povoto`; nenhuma gravação em placa
 é parte dessa verificação.

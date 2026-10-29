@@ -44,11 +44,16 @@ class Controller {
       state_ = state; available_ = false; return;
     }
     available_ = true;
-    // Do not learn the pull-down or the tail of a pulse begun during approach.
-    if (!ready_) {
+    // Approach pauses can teach residual drop before regulation is reached.
+    // A pulse already on when entering this band may teach only at a timed stop.
+    if (!tracking_) {
       state_ = state;
-      if (fabsf(temperature - target) <= 0.3f) {
-        ready_ = true; lastSample_ = now; lastTemperature_ = temperature;
+      ready_ = fabsf(temperature - target) <= 0.3f;
+      if (ready_ || (temperature >= target && temperature <= target + 2.5f)) {
+        tracking_ = true; lastSample_ = now; lastTemperature_ = temperature;
+        pulseObserved_ = state == Cooling;
+        approachPulse_ = pulseObserved_;
+        lastTimedPause_ = timedPause;
         clearTrend(now, temperature);
       }
       return;
@@ -57,6 +62,7 @@ class Controller {
     if (elapsed > 5000 || fabsf(temperature - lastTemperature_) > 0.5f) {
       reset(true); state_ = state; return;
     }
+    if (fabsf(temperature - target) <= 0.3f) ready_ = true;
     if (state != state_) {
       transition(now, temperature, state, timedPause);
       state_ = state;
@@ -125,7 +131,7 @@ class Controller {
     return fmaxf(legacyLower, fminf(upper, target_ + center_ - 0.3f + drop_));
   }
   void coolingStopped(uint32_t now, bool anticipated) {
-    if (!active() && !anticipated) return;
+    if ((!active() || !ready_) && !anticipated) return;
     guard_ = true; guardSince_ = now;
     guardDuration_ = uint32_t(bound(float(recoveryMs_ + 2 * Minute), float(20 * Minute), float(60 * Minute)));
   }
@@ -139,8 +145,8 @@ class Controller {
     // persistent cold is allowed to heat. Unknown/negative trend is not warming.
     return !(trendKnown_ && velocity_ > 0 && temperature >= target - 0.6f);
   }
-  bool active() const { return available_ && ready_; }
-  bool learning() const { return active() && !dropSamples_; }
+  bool active() const { return available_ && tracking_; }
+  bool learning() const { return active() && (!ready_ || !dropSamples_); }
   float drop() const { return drop_; }
   float rise() const { return rise_; }
   float center() const { return center_; }
@@ -167,7 +173,9 @@ class Controller {
     if (state_ == Cooling) {
       // Do not treat a timeout/restart as a complete demand for center/rise.
       lastTimedPause_ = timedPause;
-      if (pulseObserved_) {
+      const bool approachPause = next == Idle && timedPause &&
+          temperature >= target_ && temperature <= target_ + 2.5f;
+      if (next == Idle && pulseObserved_ && (!approachPulse_ || approachPause)) {
         coast_ = true; offTemperature_ = valley_ = temperature;
         offSince_ = valleySince_ = now; valleyConfirm_ = 0;
       }
@@ -178,7 +186,7 @@ class Controller {
     }
     if (next == Cooling) {
       interruptCoast(now);
-      const bool fresh = !lastTimedPause_;
+      const bool fresh = ready_ && !lastTimedPause_;
       if (fresh) {
         if (cycle_ && cycleValid_ && duration_ >= 10 * Minute) {
           const float error = target_ - float(integral_ / duration_);
@@ -188,7 +196,7 @@ class Controller {
       }
       peakPending_ = fresh; peakConfirm_ = 0;
       peak_ = onTemperature_ = temperature; onSince_ = now;
-      pulseObserved_ = true; lastTimedPause_ = false;
+      pulseObserved_ = true; approachPulse_ = !ready_; lastTimedPause_ = false;
     }
     if (state_ == Heating && next == Idle) cycleValid_ = false;
   }
@@ -219,7 +227,7 @@ class Controller {
                   fabsf(last - first) >= Quantum * 0.5f && velocity_ * (last - first) > 0;
   }
 
-  bool targetKnown_ = false, available_ = false, ready_ = false;
+  bool targetKnown_ = false, available_ = false, tracking_ = false, ready_ = false;
   float target_ = 0, lastTemperature_ = 0;
   State state_ = Idle;
   uint32_t lastSample_ = 0, binSince_ = 0;
@@ -231,7 +239,7 @@ class Controller {
   float drop_ = 0, rise_ = 0, center_ = 0;
   uint16_t dropSamples_ = 0;
   uint8_t riseSamples_ = 0, risePositive_ = 0;
-  bool peakPending_ = false, pulseObserved_ = false, lastTimedPause_ = false;
+  bool peakPending_ = false, pulseObserved_ = false, approachPulse_ = false, lastTimedPause_ = false;
   float peak_ = 0, onTemperature_ = 0;
   uint8_t peakConfirm_ = 0;
   uint32_t onSince_ = 0;

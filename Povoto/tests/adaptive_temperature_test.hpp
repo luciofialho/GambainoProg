@@ -32,6 +32,77 @@ struct Rig {
 
 int main() {
   {
+    // Capture a timed stop even when cooling was already on at band entry.
+    Rig r; r.state = Cooling; r.tick(16); r.ramp(120, 15.5f);
+    assert(r.c.active()); // Exactly target + 2.5 C is eligible.
+    r.hold(30, 15.5f); r.state = Idle; r.timed = true; r.tick(15.5f);
+    r.c.coolingStopped(r.now, false);
+    assert(r.c.allowHeat(r.now, 12.6f, 13)); // Observation alone adds no recovery gate.
+    r.ramp(180, 15.2f); r.hold(60, 15.2f); r.ramp(120, 15.35f);
+    assert(r.c.dropSamples() == 1 && r.c.drop() > 0);
+    assert(r.c.learning()); // A provisional drop is not yet a regulation cycle.
+    assert(r.c.riseSamples() == 0 && r.c.center() == 0);
+    assert(r.c.offThreshold(12.7f, 13.3f) > 12.7f);
+    assert(r.c.offThreshold(12.8f, 13.3f) >= 12.8f);
+    assert(r.c.onThreshold(13.3f, 12.8f) == 13.3f);
+    // An incomplete second pause cannot teach a smaller drop.
+    r.state = Cooling; r.timed = false; r.tick(15.35f); r.ramp(180, 15.0f);
+    r.state = Idle; r.timed = true; r.tick(15.0f); r.ramp(60, 14.95f);
+    const float learned = r.c.drop();
+    r.state = Cooling; r.timed = false; r.tick(14.95f);
+    assert(r.c.drop() == learned && r.c.riseSamples() == 0 && r.c.center() == 0);
+    // Crossing the regulation band does not train the approach pulse's tail.
+    r.ramp(600, 12.8f); r.state = Idle; r.tick(12.8f);
+    r.ramp(180, 12.6f); r.hold(60, 12.6f); r.ramp(120, 12.75f);
+    assert(r.c.drop() == learned && r.c.riseSamples() == 0 && r.c.center() == 0);
+    // A new regulation demand starts rise/center learning normally.
+    r.ramp(300, 13.25f); r.state = Cooling; r.tick(13.25f);
+    r.ramp(120, 13.0f);
+    assert(r.c.riseSamples() == 1 && r.c.center() == 0);
+    r.target = 8; r.tick(13.0f);
+    assert(!r.c.active() && r.c.dropSamples() == 0 && r.c.drop() == 0);
+  }
+  {
+    Rig r; r.state = Cooling; r.tick(15); r.hold(30, 15);
+    r.state = Idle; r.timed = true; r.tick(15); r.ramp(90, 14.75f);
+    r.state = Cooling; r.timed = false; r.tick(14.75f);
+    assert(r.c.dropSamples() == 1 && r.c.drop() > 0); // Partial drop can raise the estimate.
+    assert(r.c.riseSamples() == 0 && r.c.center() == 0);
+    r.simulated = true; r.tick(14.75f);
+    assert(!r.c.active() && r.c.dropSamples() == 0); // Debug also clears approach learning.
+    r.simulated = false; r.tick(14.75f);
+    r.eligible = false; r.tick(14.75f);
+    assert(!r.c.active() && r.c.dropSamples() == 0);
+  }
+  {
+    // Merely being idle in the wider band does not supply a cooling event.
+    Rig r; r.tick(15); r.ramp(180, 14.7f); r.ramp(120, 14.85f);
+    assert(r.c.dropSamples() == 0 && r.c.riseSamples() == 0 && r.c.center() == 0);
+    r.state = Cooling; r.tick(14.85f); r.ramp(120, 14.7f);
+    r.state = Idle; r.timed = false; r.tick(14.7f); // Ordinary idle, not a timed pause.
+    r.ramp(180, 14.4f); r.hold(60, 14.4f); r.ramp(120, 14.55f);
+    assert(r.c.dropSamples() == 0 && r.c.riseSamples() == 0 && r.c.center() == 0);
+  }
+  {
+    Rig r; r.state = Cooling; r.tick(15.5625f); r.hold(30, 15.5625f);
+    assert(!r.c.active()); // Outside the approach band.
+    r.state = Idle; r.timed = true; r.tick(15.5625f);
+    r.ramp(180, 15.3f); r.ramp(120, 15.45f);
+    assert(r.c.dropSamples() == 0); // Entering during a pause cannot reconstruct its stop.
+  }
+  {
+    // A pulse observed in-band cannot train an out-of-band timed stop.
+    Rig r; r.state = Cooling; r.tick(15.4f); r.ramp(180, 15.6f);
+    r.state = Idle; r.timed = true; r.tick(15.6f);
+    r.ramp(180, 15.3f); r.hold(60, 15.3f); r.ramp(120, 15.45f);
+    assert(r.c.dropSamples() == 0 && r.c.riseSamples() == 0 && r.c.center() == 0);
+  }
+  {
+    // Starting below the target's regulation band does not enable approach learning.
+    Rig r; r.state = Cooling; r.tick(12); r.hold(30, 12);
+    assert(!r.c.active());
+  }
+  {
     Rig r; r.cycle();
     assert(r.c.active() && r.c.drop() > 0 && r.c.drop() <= .101f);
     assert(r.c.center() > 0); // Time spent below target shifts the center up.
