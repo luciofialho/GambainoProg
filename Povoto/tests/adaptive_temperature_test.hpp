@@ -10,10 +10,10 @@ struct Rig {
   uint32_t now = 1000;
   float temperature = 13, target = 13;
   State state = Idle;
-  bool enabled = true, eligible = true, timed = false;
+  bool enabled = true, eligible = true, timed = false, simulated = false;
   void tick(float t) {
     now += 1000; temperature = t;
-    c.observe(now, t, target, enabled, eligible, state, timed);
+    c.observe(now, t, target, enabled, eligible, state, timed, simulated);
   }
   void hold(unsigned seconds, float t) { for (unsigned i = 0; i < seconds; ++i) tick(t); }
   void ramp(unsigned seconds, float to) {
@@ -119,6 +119,21 @@ int main() {
   {
     Rig r; r.now = UINT32_MAX - 30000; r.hold(30, 13); r.ramp(180, 13.25f);
     assert(r.c.trendKnown() && r.c.velocity() > 0); // Clock rollover.
+  }
+  {
+    Rig r; r.cycle(); r.c.coolingStopped(r.now, true);
+    assert(r.c.drop() > 0 && !r.c.allowHeat(r.now, 12.6f, 13));
+    r.simulated = true; r.tick(13);
+    assert(!r.c.active() && r.c.drop() == 0 && r.c.center() == 0);
+    assert(r.c.allowHeat(r.now, 12.6f, 13)); // Debug clears an old recovery gate.
+    assert(r.c.onThreshold(13.3f, 12.7f) == 13.3f);
+    assert(r.c.offThreshold(12.8f, 13.3f) == 12.8f);
+    for (unsigned i = 0; i < 10; ++i) {
+      r.state = i & 1 ? Cooling : Idle; r.hold(30, i & 1 ? 12.5f : 13.5f);
+    }
+    assert(r.c.dropSamples() == 0 && r.c.riseSamples() == 0);
+    r.simulated = false; r.tick(13);
+    assert(r.c.active() && r.c.dropSamples() == 0 && r.c.riseSamples() == 0);
   }
   puts("Adaptive temperature: cutoffs, learning, noise, state changes, recovery and rollover passed.");
 }

@@ -408,7 +408,8 @@ void temperatureControl() {
   const auto relayState = digitalRead(PINHEATER) ? AdaptiveTemperature::Heating :
       digitalRead(PINCHILLER) ? AdaptiveTemperature::Cooling : AdaptiveTemperature::Idle;
   adaptiveTemperature.observe(millis(), ControlData.temperature, SetPointData.setPointTemp,
-      FMTData.adaptiveTemperature, adaptiveEligible, relayState, interruptedCooling);
+      FMTData.adaptiveTemperature, adaptiveEligible, relayState, interruptedCooling,
+      debugging || debugTemperatureOverride);
   bool anticipatedStop = false;
   newMode = mode;
 
@@ -607,7 +608,8 @@ void getAdaptiveTemperatureStatus(char *out, size_t size) {
       "Center correction: %.3f C\nTrend: %s (%.4f C/min)\n"
       "A target change discards learning. Existing cooling cutoffs and rest times remain limits.\n",
       FMTData.adaptiveTemperature ? "enabled" : "disabled",
-      adaptiveTemperature.active() ? (adaptiveTemperature.learning() ? "learning" : "regulating") : "waiting",
+      debugging || debugTemperatureOverride ? "suspended (debug)" :
+          adaptiveTemperature.active() ? (adaptiveTemperature.learning() ? "learning" : "regulating") : "waiting",
       adaptiveTemperature.drop(), unsigned(adaptiveTemperature.dropSamples()),
       adaptiveTemperature.rise(), unsigned(adaptiveTemperature.riseSamples()), adaptiveTemperature.center(),
       adaptiveTemperature.trendKnown() ? "confirmed" : "unknown", adaptiveTemperature.velocity());

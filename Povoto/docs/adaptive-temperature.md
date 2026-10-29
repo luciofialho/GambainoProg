@@ -98,6 +98,14 @@ suspendem o recurso e descartam observações. Retomar o automático começa pel
 regra anterior. Fermenting, Conditioning e Manual control sem overrides podem
 usar o adaptativo. Não modifica pressão, headspace, CO2 ou SG.
 
+No modo debug (`debugging`) ou com override artificial da temperatura, o
+adaptativo fica totalmente suspenso, mesmo que a opção esteja habilitada.
+Apaga estimativas, tendência e a espera adaptativa de recuperação; os critérios
+originais de controle de debug são usados. `/temperaturestatus` informa
+`suspended (debug)`. A opção persistida é preservada: ao sair do debug, o
+aprendizado recomeça do zero depois da aproximação ao alvo. Temperaturas
+artificiais nunca são reutilizadas na operação normal.
+
 ## Evitar a alternância frio/calor
 
 Depois de desligar o frio, além da regra original de descanso e tolerância do
